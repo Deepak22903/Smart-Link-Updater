@@ -1,0 +1,9 @@
+WP_BASE_URL: "https://minecraftcirclegenerater.com"
+WP_USERNAME: "deepakshitole4@gmail.com"
+WP_APPLICATION_PASSWORD: "T3IpO84Qjg6hFSokpOP3ADZl"
+TIMEZONE: "Asia/Kolkata"
+GEMINI_API_KEY: "AIzaSyCP1tbSLhJFh3e_aIAoxJdsJv1KaqQ6GHI"
+GEMINI_MIN_CONFIDENCE: "0.5"
+WP_SITES: '{"site_test":{"base_url":"https://example-site.com","username":"test@example.com","app_password":"test_pass_1234"}}'
+MONGODB_URI: "mongodb+srv://deepakshitole4_db_user:6KiH8syvWCTNhh2D@smartlinkupdater.rpo4hmt.mongodb.net/SmartLinkUpdater?appName=SmartLinkUpdater"
+MONGODB_DATABASE: "SmartLinkUpdater"

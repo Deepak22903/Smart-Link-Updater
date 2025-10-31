@@ -1,0 +1,340 @@
+{
+  "https://test-site.example.com/rewards": {
+    "source_url": "https://test-site.example.com/rewards",
+    "fingerprint": {
+      "dom_hash": "267be153610f5939",
+      "heading_structure": [
+        "h1:Daily Rewards",
+        "h2:26 October 2025",
+        "h2:25 October 2025"
+      ],
+      "critical_selectors": [
+        ".reward-link"
+      ],
+      "html_size": 489,
+      "last_updated": "2025-10-27T09:49:36.514356",
+      "heading_count": 3,
+      "link_count": 4
+    },
+    "extraction_history": [
+      {
+        "date": "2025-10-26",
+        "links_found": 3,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.513566",
+        "success": true,
+        "error": null
+      }
+    ],
+    "last_check": "2025-10-27T09:49:36.514377",
+    "status": "healthy",
+    "consecutive_failures": 0
+  },
+  "https://test-history.example.com/rewards": {
+    "source_url": "https://test-history.example.com/rewards",
+    "fingerprint": {
+      "dom_hash": "d4082ce5a27e9fd8",
+      "heading_structure": [
+        "h1:Daily Rewards",
+        "h2:26 October 2025"
+      ],
+      "critical_selectors": [],
+      "html_size": 126,
+      "last_updated": "2025-10-27T09:49:36.528487",
+      "heading_count": 2,
+      "link_count": 0
+    },
+    "extraction_history": [
+      {
+        "date": "2025-10-22",
+        "links_found": 8,
+        "confidence": 0.95,
+        "timestamp": "2025-10-27T09:49:36.517678",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-23",
+        "links_found": 8,
+        "confidence": 0.95,
+        "timestamp": "2025-10-27T09:49:36.519523",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-24",
+        "links_found": 8,
+        "confidence": 0.95,
+        "timestamp": "2025-10-27T09:49:36.522537",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-25",
+        "links_found": 8,
+        "confidence": 0.95,
+        "timestamp": "2025-10-27T09:49:36.525343",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-26",
+        "links_found": 0,
+        "confidence": 0.0,
+        "timestamp": "2025-10-27T09:49:36.527975",
+        "success": false,
+        "error": null
+      }
+    ],
+    "last_check": "2025-10-27T09:49:36.530002",
+    "status": "warning",
+    "consecutive_failures": 1
+  },
+  "https://test-alerts.example.com/rewards": {
+    "source_url": "https://test-alerts.example.com/rewards",
+    "fingerprint": {
+      "dom_hash": "d4082ce5a27e9fd8",
+      "heading_structure": [
+        "h1:Daily Rewards",
+        "h2:26 October 2025"
+      ],
+      "critical_selectors": [],
+      "html_size": 126,
+      "last_updated": "2025-10-27T09:49:36.547682",
+      "heading_count": 2,
+      "link_count": 0
+    },
+    "extraction_history": [
+      {
+        "date": "2025-10-21",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.530913",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-22",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.532754",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-23",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.535790",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-24",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.538215",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-25",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:36.541031",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-27",
+        "links_found": 2,
+        "confidence": 0.4,
+        "timestamp": "2025-10-27T09:49:36.543898",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-27",
+        "links_found": 0,
+        "confidence": 0.0,
+        "timestamp": "2025-10-27T09:49:36.547188",
+        "success": false,
+        "error": null
+      }
+    ],
+    "last_check": "2025-10-27T09:49:36.548863",
+    "status": "warning",
+    "consecutive_failures": 1
+  },
+  "https://simplegameguide.com/coin-master-free-spins-links/": {
+    "source_url": "https://simplegameguide.com/coin-master-free-spins-links/",
+    "fingerprint": {
+      "dom_hash": "06f59afa67b40958",
+      "heading_structure": [
+        "h1:Coin Master Spin Links \u2013 Updated Daily (SGG)",
+        "h2:Coin Master Spin Links",
+        "h3:How to Claim Rewards from Coin Master Spin Links?",
+        "h3:Why Are Spin Links Not Working?",
+        "h3:What is Coin Master Free Spin and Coin Reward Link",
+        "h3:Can You Hack Coin Master for Free Spins?",
+        "h3:How to Create Coin Master Free Spins Link?",
+        "h3:Is There a Way to Get Unlimited Spin Links?",
+        "h3:How Can Players Get 400 or 800 Spins in Coin Maste",
+        "h3:Different Ways to Get Coin Master Free Spins",
+        "h3:How to Send and Receive 100 Spin Gifts Daily in Co",
+        "h3:What Are Coin Master Email Spin Reward Links and H",
+        "h4:How to Get Coin Master Email Spin Reward Links?",
+        "strong:Oct 27, 2025:",
+        "strong:Oct 26, 2025:",
+        "strong:Oct 25, 2025:",
+        "strong:Oct 24, 2025:",
+        "strong:Oct 23, 2025:",
+        "strong:Oct 22, 2025:",
+        "strong:Oct 21, 2025:",
+        "strong:Oct 20, 2025:",
+        "strong:Oct 19, 2025:",
+        "strong:Oct 18, 2025:",
+        "strong:Oct 17, 2025:",
+        "strong:Oct 16, 2025:",
+        "strong:Oct 15, 2025:",
+        "strong:Oct 14, 2025:",
+        "strong:2 days",
+        "strong:send and receive up to 100 spins every day",
+        "strong:gift one spin per friend every 48 hours"
+      ],
+      "critical_selectors": [
+        "div[data-link]"
+      ],
+      "html_size": 62955,
+      "last_updated": "2025-10-27T09:49:37.779195",
+      "heading_count": 32,
+      "link_count": 53
+    },
+    "extraction_history": [
+      {
+        "date": "2025-10-27",
+        "links_found": 10,
+        "confidence": 0.9,
+        "timestamp": "2025-10-27T09:49:37.748426",
+        "success": true,
+        "error": null
+      },
+      {
+        "date": "2025-10-27",
+        "links_found": 4,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T17:26:10.790074",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-27",
+        "links_found": 4,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T17:29:02.263426",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-27",
+        "links_found": 4,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T17:34:27.650795",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:32:22.106514",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:38:11.875924",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:39:07.881426",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 3,
+        "confidence": 1.0,
+        "timestamp": "2025-10-28T10:46:56.805243",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 3,
+        "confidence": 1.0,
+        "timestamp": "2025-10-28T10:49:22.879783",
+        "success": false,
+        "error": null
+      }
+    ],
+    "last_check": "2025-10-28T10:49:22.880429",
+    "status": "healthy",
+    "consecutive_failures": 0
+  },
+  "https://simplegameguide.com/carnival-tycoon-free-spins/": {
+    "source_url": "https://simplegameguide.com/carnival-tycoon-free-spins/",
+    "fingerprint": null,
+    "extraction_history": [
+      {
+        "date": "2025-10-27",
+        "links_found": 17,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:29:22.874593",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:30:59.648575",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:39:07.900817",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:39:57.280821",
+        "success": false,
+        "error": null
+      },
+      {
+        "date": "2025-10-28",
+        "links_found": 0,
+        "confidence": 1.0,
+        "timestamp": "2025-10-27T18:40:40.518836",
+        "success": false,
+        "error": null
+      }
+    ],
+    "last_check": "2025-10-27T18:40:40.519298",
+    "status": "healthy",
+    "consecutive_failures": 0
+  }
+}

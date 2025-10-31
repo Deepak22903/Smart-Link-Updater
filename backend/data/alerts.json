@@ -1,0 +1,61 @@
+[
+  {
+    "alert_type": "structure_changed",
+    "source_url": "https://test-history.example.com/rewards",
+    "severity": "warning",
+    "message": "HTML structure changed for https://test-history.example.com/rewards",
+    "timestamp": "2025-10-27T09:49:36.529693",
+    "notified": true,
+    "details": {
+      "reasons": [
+        "DOM structure changed (hash: 267be153610f5939 \u2192 d4082ce5a27e9fd8)",
+        "Heading count changed significantly: 3 \u2192 2",
+        "Page size changed 74.2%: 489 \u2192 126 bytes",
+        "Missing selectors: .reward-link",
+        "Link count changed 100.0%: 4 \u2192 0"
+      ]
+    }
+  },
+  {
+    "alert_type": "structure_changed",
+    "source_url": "https://test-alerts.example.com/rewards",
+    "severity": "warning",
+    "message": "HTML structure changed for https://test-alerts.example.com/rewards",
+    "timestamp": "2025-10-27T09:49:36.545953",
+    "notified": true,
+    "details": {
+      "reasons": [
+        "DOM structure changed (hash: 267be153610f5939 \u2192 39b30485e7ecefe0)",
+        "Heading count changed significantly: 3 \u2192 2",
+        "Missing selectors: .reward-link",
+        "Link count changed 100.0%: 4 \u2192 0"
+      ]
+    }
+  },
+  {
+    "alert_type": "low_confidence",
+    "source_url": "https://test-alerts.example.com/rewards",
+    "severity": "warning",
+    "message": "Confidence dropped significantly for https://test-alerts.example.com/rewards",
+    "timestamp": "2025-10-27T09:49:36.546698",
+    "notified": true,
+    "details": {
+      "historical_avg": 0.9,
+      "today_avg": 0.4,
+      "date": "2025-10-27"
+    }
+  },
+  {
+    "alert_type": "link_count_drop",
+    "source_url": "https://simplegameguide.com/coin-master-free-spins-links/",
+    "severity": "warning",
+    "message": "Link count dropped significantly for https://simplegameguide.com/coin-master-free-spins-links/",
+    "timestamp": "2025-10-28T10:46:56.848747",
+    "notified": false,
+    "details": {
+      "old_average": 10.0,
+      "today_average": 0.75,
+      "drop_percentage": 92.5
+    }
+  }
+]
