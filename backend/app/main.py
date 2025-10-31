@@ -896,7 +896,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             progress=0,
             message=f"Error: {str(e)[:100]}",
             error=str(e),
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Update failed: {str(e)}"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Update failed: {repr(e)}"
         )
 
 

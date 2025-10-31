@@ -6,7 +6,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from .models import Link
 
-WP_BASE_URL = os.getenv
+WP_BASE_URL = os.getenv("WP_BASE_URL")
 WP_USERNAME = os.getenv("WP_USERNAME")
 WP_APPLICATION_PASSWORD = os.getenv("WP_APPLICATION_PASSWORD")
 WP_SITES_JSON = os.getenv("WP_SITES")  # JSON map of site_key -> {base_url, username, app_password}
