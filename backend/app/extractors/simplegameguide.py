@@ -50,22 +50,16 @@ class SimpleGameGuideExtractor(BaseExtractor):
         soup = BeautifulSoup(html, 'html.parser')
         links = []
         
-        # Convert ISO date (2025-10-26) to various display formats
+        # Convert ISO date (2025-11-04) to various display formats
         try:
             dt = datetime.fromisoformat(date)
             
-            # Format 1: "26 October 2025" (full month name)
-            format1 = dt.strftime("%d %B %Y").lstrip('0')
+            # Format 1: "4 November 2025" (full month name, no leading zero)
+            format1 = f"{dt.day} {dt.strftime('%B %Y')}"
             
-            # Format 2: "Oct 26, 2025:" (abbreviated month with colon)
-            format2 = dt.strftime("%b %d, %Y:").lstrip('0')
-            
-            # Calculate yesterday for boundary detection
-            from datetime import timedelta
-            yesterday = dt - timedelta(days=1)
-            yesterday_format1 = yesterday.strftime("%d %B %Y").lstrip('0')
-            yesterday_format2 = yesterday.strftime("%b %d, %Y:").lstrip('0')
-            
+            # Format 2: "Nov 4, 2025:" (abbreviated month, no leading zero)
+            format2 = f"{dt.strftime('%b')} {dt.day}, {dt.strftime('%Y')}:"
+
         except ValueError:
             return links
         
@@ -88,43 +82,47 @@ class SimpleGameGuideExtractor(BaseExtractor):
                 if strong_text and len(strong_text) > len(div_text) * 0.7:
                     date_elements.append(div)
         
-        # Process each date element
+        # Find the start element for today's date
+        start_element = None
         for elem in date_elements:
             elem_text = elem.get_text(strip=True)
-            
-            # Check if this is yesterday's date (stop boundary)
-            if yesterday_format1 in elem_text or yesterday_format2 in elem_text:
-                break
-            
-            # Check if this element contains today's date
             if format1 in elem_text or format2 in elem_text:
-                # Find the next sibling element (contains links)
-                next_elem = elem.find_next_sibling()
+                start_element = elem
+                break
+
+        # If today's date header is found, process all subsequent siblings
+        # until the next date header is encountered.
+        if start_element:
+            for sibling in start_element.find_next_siblings():
+                # If the sibling is another date header, stop processing.
+                if sibling in date_elements:
+                    break
+
+                # Find links within the current sibling element
                 
-                if next_elem:
-                    # Pattern A: Links with class containing "button"
-                    for a in next_elem.find_all('a', class_=lambda c: c and 'button' in c.lower()):
-                        href = a.get('href')
-                        title = a.get_text(strip=True) or "Link"
-                        
-                        if href and href.startswith('http'):
-                            links.append(Link(
-                                title=title,
-                                url=href,
-                                published_date_iso=date
-                            ))
+                # Pattern A: Links with class containing "button"
+                for a in sibling.find_all('a', class_=lambda c: c and 'button' in c.lower()):
+                    href = a.get('href')
+                    title = a.get_text(strip=True) or "Link"
                     
-                    # Pattern B: Divs with data-link attribute (Coin Master style)
-                    for div in next_elem.find_all('div', {'data-link': True}):
-                        href = div.get('data-link')
-                        span = div.find('span')
-                        title = span.get_text(strip=True) if span else "Link"
-                        
-                        if href and href.startswith('http'):
-                            links.append(Link(
-                                title=title,
-                                url=href,
-                                published_date_iso=date
-                            ))
+                    if href and href.startswith('http'):
+                        links.append(Link(
+                            title=title,
+                            url=href,
+                            published_date_iso=date
+                        ))
+                
+                # Pattern B: Divs with data-link attribute (Coin Master style)
+                for div in sibling.find_all('div', {'data-link': True}):
+                    href = div.get('data-link')
+                    span = div.find('span')
+                    title = span.get_text(strip=True) if span else "Link"
+                    
+                    if href and href.startswith('http'):
+                        links.append(Link(
+                            title=title,
+                            url=href,
+                            published_date_iso=date
+                        ))
         
         return links

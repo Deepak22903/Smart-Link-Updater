@@ -18,7 +18,7 @@ class MostTechsExtractor(BaseExtractor):
         soup = BeautifulSoup(html, 'html.parser')
         links = []
 
-        # Accept both '31 Oct 2025' and '31 October 2025' formats
+        # Parse the date and create multiple format variations
         try:
             date_obj = datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
@@ -26,49 +26,51 @@ class MostTechsExtractor(BaseExtractor):
                 date_obj = datetime.strptime(date, "%d %b %Y")
             except ValueError:
                 date_obj = None
+        
         if date_obj:
-            date_short = date_obj.strftime("%d %b %Y")
-            date_long = date_obj.strftime("%d %B %Y")
+            # Format variations: "4 Nov 2025", "4 November 2025", "04 Nov 2025", "04 November 2025"
+            date_short = date_obj.strftime("%d %b %Y").lstrip('0')  # "4 Nov 2025"
+            date_long = date_obj.strftime("%d %B %Y").lstrip('0')   # "4 November 2025"
+            date_iso = date_obj.isoformat()
         else:
             date_short = date
             date_long = date
+            date_iso = date
 
-        def is_date_heading(tag):
-            if tag.name != "span":
-                return False
-            text = tag.get_text(strip=True)
-            return (date_short in text) or (date_long in text)
+        # Find all <p> tags and check if they contain the target date
+        date_heading_p = None
+        for p_tag in soup.find_all("p"):
+            p_text = p_tag.get_text(strip=True)
+            if date_short in p_text or date_long in p_text:
+                date_heading_p = p_tag
+                break
 
-        date_heading = soup.find(is_date_heading)
-        if not date_heading:
+        if not date_heading_p:
             print(f"[MostTechsExtractor] No heading found for date: '{date_short}' or '{date_long}'")
             return links
 
-        try:
-            date_iso = date_obj.isoformat()
-        except Exception:
-            date_iso = None
-
-        # Find the parent <p> of the heading, then iterate over next siblings
-        parent_p = date_heading.find_parent("p")
-        if not parent_p:
-            return links
-        for sibling in parent_p.find_next_siblings():
-            # Stop at the next <p> containing a <span> with any date
-            if sibling.name == "p":
-                span = sibling.find("span")
-                if span:
-                    span_text = span.get_text(strip=True)
-                    # If the span contains a date (any day/month/year), stop
-                    import re
-                    if re.search(r"\d{1,2} (?:Oct|October|Nov|November|Sep|September|Aug|August|Jul|July|Jun|June|May|Apr|April|Mar|March|Feb|February|Jan|January) \d{4}", span_text):
-                        break
-                a_tag = sibling.find("a")
-                if a_tag and a_tag.get("href") and a_tag.get("href").startswith("http"):
-                    links.append(Link(
-                        title=a_tag.get_text(strip=True),
-                        url=a_tag.get("href"),
-                        date=date,
-                        published_date_iso=date_iso
-                    ))
+        # Extract links from following <p> siblings until we hit another date heading
+        import re
+        date_pattern = re.compile(r"\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+\d{4}", re.IGNORECASE)
+        
+        for sibling in date_heading_p.find_next_siblings():
+            if sibling.name != "p":
+                continue
+            
+            # Check if this sibling contains another date heading (stop boundary)
+            sibling_text = sibling.get_text(strip=True)
+            if date_pattern.search(sibling_text):
+                # This is another date heading, stop here
+                break
+            
+            # Extract link from this paragraph
+            a_tag = sibling.find("a")
+            if a_tag and a_tag.get("href") and a_tag.get("href").startswith("http"):
+                links.append(Link(
+                    title=a_tag.get_text(strip=True) or "Link",
+                    url=a_tag.get("href"),
+                    date=date,
+                    published_date_iso=date_iso
+                ))
+        
         return links

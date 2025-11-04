@@ -59,6 +59,14 @@ class BatchUpdateRequest(BaseModel):
     target: Optional[str] = "this"  # this, site_key, or all
 
 
+class PostConfigUpdate(BaseModel):
+    """Model for partial updates to post configuration"""
+    source_urls: Optional[List[HttpUrl]] = None
+    timezone: Optional[str] = None
+    extractor: Optional[str] = None
+    wp_site: Optional[Dict[str, str]] = None
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -181,6 +189,56 @@ async def list_configured_sites():
         base = conf.get("base_url")
         result[key] = {"base_url": base}
     return {"sites": result}
+
+
+@app.put("/config/post/{post_id}")
+async def update_post_config(post_id: int, config_update: PostConfigUpdate):
+    """Update configuration for a specific post."""
+    existing_config = mongo_storage.get_post_config(post_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
+
+    update_data = config_update.model_dump(exclude_unset=True)
+    
+    # Convert HttpUrl objects to strings if present
+    if 'source_urls' in update_data and update_data['source_urls'] is not None:
+        update_data['source_urls'] = [str(url) for url in update_data['source_urls']]
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No update data provided")
+
+    # Add/update the updated_at timestamp
+    update_data["updated_at"] = datetime.utcnow().isoformat()
+
+    # Create the full updated configuration object to be saved
+    # This ensures we don't accidentally remove fields
+    final_config = {**existing_config, **update_data}
+    
+    # Remove _id field as it's immutable in MongoDB and managed by the database
+    final_config.pop('_id', None)
+
+    if mongo_storage.set_post_config(final_config):
+        # Return the complete, updated configuration
+        return mongo_storage.get_post_config(post_id)
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update post configuration")
+
+
+@app.delete("/config/post/{post_id}")
+async def delete_post_config(post_id: int):
+    """Delete configuration for a specific post."""
+    existing_config = mongo_storage.get_post_config(post_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
+    
+    if mongo_storage.delete_post_config(post_id):
+        return {
+            "success": True,
+            "message": f"Post {post_id} configuration deleted successfully",
+            "post_id": post_id
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete post configuration")
 
 
 @app.get("/config/post/{post_id}")
