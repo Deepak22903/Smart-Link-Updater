@@ -131,26 +131,31 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # Keep only sections from the last 5 days
     cutoff_date = now - timedelta(days=5)
     
-    # Remove old link sections (older than 5 days)
-    # Pattern: Match the complete <div class="links-for-today">...</div> section
+    # Format today's date nicely
+    try:
+        date_obj = datetime.strptime(today_date, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%d %B %Y")  # "26 October 2025"
+    except:
+        formatted_date = today_date
+    
+    # Remove old link sections (older than 5 days) and check if today's section exists
     cleaned_content = content
+    today_section_exists = False
+    today_section_content = ""
     
     # Find all link sections with dates using a more robust pattern
-    # The structure is: <div class="links-for-today"> -> <h4> -> <div class="wp-block-columns">...</div> -> <p>...</p> -> </div>
-    # We need to match all of this as one unit
     section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
     date_pattern = r'<h4[^>]*>.*?(\d{2} \w+ \d{4}).*?</h4>'  # Match "26 October 2025" even with extra tags
     
-    def should_keep_section(match_text):
+    def should_keep_section(match_text, section_date_str):
         """Check if a section should be kept (within last 5 days)."""
-        date_match = re.search(date_pattern, match_text, re.DOTALL)
-        if not date_match:
-            return True  # Keep if we can't parse the date
+        # Check if this is today's section
+        if section_date_str == formatted_date:
+            return False  # We'll rebuild today's section with new links
         
-        date_str = date_match.group(1)
         try:
             # Parse date like "26 October 2025"
-            section_date = datetime.strptime(date_str, "%d %B %Y")
+            section_date = datetime.strptime(section_date_str, "%d %B %Y")
             # Compare dates (ignore time)
             return section_date.date() >= cutoff_date.date()
         except:
@@ -159,28 +164,72 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # Find and filter sections
     sections = re.finditer(section_pattern, content, re.DOTALL)
     sections_to_remove = []
+    existing_links = []
     
     for match in sections:
-        if not should_keep_section(match.group(0)):
-            sections_to_remove.append(match.group(0))
+        section_text = match.group(0)
+        date_match = re.search(date_pattern, section_text, re.DOTALL)
+        
+        if date_match:
+            section_date_str = date_match.group(1)
+            
+            # Check if this is today's section
+            if section_date_str == formatted_date:
+                today_section_exists = True
+                # Extract existing links from today's section to avoid duplicates
+                link_pattern = r'<a href="([^"]+)"[^>]*>(\d+)\.\s*([^<]+)</a>'
+                for link_match in re.finditer(link_pattern, section_text):
+                    existing_links.append({
+                        'url': link_match.group(1),
+                        'title': link_match.group(3).strip()
+                    })
+                sections_to_remove.append(section_text)
+            elif not should_keep_section(section_text, section_date_str):
+                sections_to_remove.append(section_text)
+        elif not re.search(date_pattern, section_text, re.DOTALL):
+            # Keep sections without dates
+            pass
     
-    # Remove old sections
+    # Remove old sections and today's section (we'll recreate it with all links)
     for old_section in sections_to_remove:
         cleaned_content = cleaned_content.replace(old_section, '', 1)
+    
+    # Merge new links with existing links from today (avoid duplicates)
+    all_links_map = {}  # Use dict to track by URL
+    
+    # Add existing links from today
+    for idx, existing_link in enumerate(existing_links, start=1):
+        all_links_map[existing_link['url']] = {
+            'url': existing_link['url'],
+            'title': existing_link['title'],
+            'order': idx
+        }
+    
+    # Add new links (skip duplicates)
+    for link in links:
+        if link.url not in all_links_map:
+            all_links_map[link.url] = {
+                'url': link.url,
+                'title': link.title,
+                'order': len(all_links_map) + 1
+            }
+    
+    # Convert back to list and sort by order
+    merged_links = sorted(all_links_map.values(), key=lambda x: x['order'])
     
     # Create styled buttons grouped in pairs (2 buttons per column block)
     column_blocks = []
     
-    for i in range(0, len(links), 2):
+    for i in range(0, len(merged_links), 2):
         # Get 2 links at a time
-        pair = links[i:i+2]
+        pair = merged_links[i:i+2]
         
         # Create button HTML for this pair
         buttons_in_pair = []
-        for j, link in enumerate(pair, start=i+1):
+        for link in pair:
             button_html = f'''<div class="wp-block-column is-layout-flow wp-block-column-is-layout-flow" style="flex-basis:50%">
     <div style="margin: 15px 0;">
-        <a href="{link.url}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{j:02d}. {link.title}</a>
+        <a href="{link['url']}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{link['order']:02d}. {link['title']}</a>
     </div>
 </div>'''
             buttons_in_pair.append(button_html)
@@ -192,13 +241,6 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
         column_blocks.append(column_block)
     
     buttons_html = "\n".join(column_blocks)
-    
-    # Format today's date nicely
-    try:
-        date_obj = datetime.strptime(today_date, "%Y-%m-%d")
-        formatted_date = date_obj.strftime("%d %B %Y")  # "26 October 2025"
-    except:
-        formatted_date = today_date
     
     new_section = f'''
 <div class="links-for-today" style="padding: 20px; margin: 20px 0;">
@@ -230,5 +272,9 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     return {
         "sections_pruned": len(sections_to_remove),
         "links_added": len(links),
+        "total_links_in_section": len(merged_links),
+        "existing_links_preserved": len(existing_links),
+        "new_links_added": len([url for url in [link.url for link in links] if url not in [el['url'] for el in existing_links]]),
+        "section_updated": today_section_exists,
         "updated": True
     }
