@@ -57,12 +57,21 @@ class PostConfig(MongoBaseModel):
     Indexes:
     - post_id (unique)
     - wp_site.base_url
+    
+    New in v2: extractor_map for per-source extractor configuration
+    - extractor_map: {"url": "extractor_name"} - Maps each source URL to its extractor
+    - Falls back to 'extractor' field for backward compatibility
+    
+    New in v2.3: insertion_point for custom link placement
+    - insertion_point: {"type": "prepend|after_heading_id|after_heading_text", "value": "target"}
     """
     post_id: int
     source_urls: List[str]
     timezone: str = "Asia/Kolkata"
-    extractor: Optional[str] = None
+    extractor: Optional[str] = None  # Legacy: single extractor for all sources
+    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "...", "username": "...", "app_password": "..."}
+    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target"}
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 

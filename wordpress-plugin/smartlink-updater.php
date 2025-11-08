@@ -37,6 +37,12 @@ class SmartLinkUpdater {
         
         // Enqueue scripts
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
+        
+        // Register custom cron schedules
+        add_filter('cron_schedules', array($this, 'add_cron_schedules'));
+        
+        // Register cron action for scheduled updates
+        add_action('slu_scheduled_update', array($this, 'run_scheduled_update'));
     }
     
     /**
@@ -127,8 +133,26 @@ class SmartLinkUpdater {
         if ('toplevel_page_smartlink-updater' === $hook) {
             // Add dashboard CSS
             add_action('admin_head', array($this, 'print_dashboard_css'));
+            add_action('admin_head', array($this, 'print_config_script'), 99); // Load config before main script
             add_action('admin_footer', array($this, 'print_admin_page_script'));
         }
+    }
+    
+    /**
+     * Print configuration script
+     */
+    public function print_config_script() {
+        ?>
+        <script type="text/javascript">
+        // Pass REST API URLs to JavaScript (server-side proxy)
+        window.SmartLinkConfig = {
+            restUrl: '<?php echo esc_url(rest_url('smartlink/v1')); ?>',
+            nonce: '<?php echo wp_create_nonce('wp_rest'); ?>',
+            pollInterval: 2000 // 2 seconds
+        };
+        console.log('SmartLinkConfig initialized:', window.SmartLinkConfig);
+        </script>
+        <?php
     }
     
     /**
@@ -204,6 +228,44 @@ class SmartLinkUpdater {
         .smartlink-toast.toast-info {
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
             color: white;
+        }
+
+        /* Cron Status Banner Styles */
+        .cron-status-enabled {
+            background: linear-gradient(135deg, #a8e6cf 0%, #3fc380 100%) !important;
+            color: #1e4d2b !important;
+        }
+        
+        .cron-status-enabled #cron-icon {
+            color: #1e4d2b !important;
+        }
+        
+        .cron-status-disabled {
+            background: linear-gradient(135deg, #ffb199 0%, #ff6b6b 100%) !important;
+            color: #4a0000 !important;
+        }
+        
+        .cron-status-disabled #cron-icon {
+            color: #4a0000 !important;
+        }
+
+        /* Search and Filter Styles */
+        #search-posts:focus,
+        #filter-extractor:focus,
+        #filter-health:focus,
+        #filter-status:focus {
+            border-color: #667eea !important;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        #apply-filters:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        #clear-filters:hover {
+            background: #f5f5f5;
         }
 
         .smartlink-batch-controls {
@@ -331,8 +393,7 @@ class SmartLinkUpdater {
             background: white;
             border: none;
             border-radius: 12px;
-            overflow-x: auto;
-            overflow-y: hidden;
+            overflow: hidden;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
         }
 
@@ -340,58 +401,18 @@ class SmartLinkUpdater {
             margin: 0;
             border-collapse: separate;
             border-spacing: 0;
-            min-width: 1200px;
         }
 
         .smartlink-posts-table thead {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
-        
+
         .smartlink-posts-table th {
-            color: white;
+            color: white !important;
             font-weight: 600;
             padding: 16px 12px;
             text-align: left;
             border: none;
-            position: relative;
-        }
-
-        .sortable-header {
-            cursor: pointer;
-            user-select: none;
-            transition: background 0.2s ease;
-            padding-right: 30px !important;
-        }
-
-        .sortable-header:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .sort-indicator {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 14px;
-            opacity: 0.7;
-            transition: all 0.2s ease;
-        }
-
-        .sortable-header:hover .sort-indicator {
-            opacity: 1;
-        }
-
-        .sort-indicator.asc::before {
-            content: '▲';
-        }
-
-        .sort-indicator.desc::before {
-            content: '▼';
-        }
-
-        .sort-indicator:not(.asc):not(.desc)::before {
-            content: '⇅';
-            opacity: 0.5;
         }
 
         .smartlink-posts-table td {
@@ -420,10 +441,6 @@ class SmartLinkUpdater {
         .column-health {
             width: 100px;
         }
-        
-        .column-last-updated {
-            width: 140px;
-        }
 
         .column-status {
             width: 150px;
@@ -434,9 +451,10 @@ class SmartLinkUpdater {
         }
 
         .column-actions {
-            width: 220px;
-            min-width: 220px;
-        }        .status-badge {
+            width: 180px;
+        }
+
+        .status-badge {
             display: inline-block;
             padding: 6px 14px;
             border-radius: 20px;
@@ -514,14 +532,6 @@ class SmartLinkUpdater {
             font-weight: 700;
             letter-spacing: 0.5px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            cursor: help;
-            position: relative;
-            transition: all 0.3s ease;
-        }
-
-        .health-badge:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .health-good {
@@ -542,60 +552,6 @@ class SmartLinkUpdater {
         .health-unknown {
             background: linear-gradient(135deg, #b2bec3 0%, #636e72 100%);
             color: white;
-        }
-
-        /* Health Tooltip */
-        .health-tooltip {
-            position: absolute;
-            bottom: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            margin-bottom: 8px;
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 12px;
-            font-weight: normal;
-            white-space: nowrap;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            min-width: 200px;
-            text-align: left;
-        }
-
-        .health-tooltip::after {
-            content: '';
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            border: 6px solid transparent;
-            border-top-color: rgba(0, 0, 0, 0.9);
-        }
-
-        .health-badge:hover .health-tooltip {
-            opacity: 1;
-            visibility: visible;
-            transform: translateX(-50%) translateY(-4px);
-        }
-
-        .tooltip-line {
-            display: block;
-            margin-bottom: 4px;
-        }
-
-        .tooltip-line:last-child {
-            margin-bottom: 0;
-        }
-
-        .tooltip-label {
-            font-weight: 600;
-            color: #ccc;
         }
 
         /* Button Enhancements */
@@ -655,15 +611,6 @@ class SmartLinkUpdater {
 
         .actions-cell {
             white-space: nowrap;
-            position: relative;
-            min-width: 220px;
-            padding: 8px 12px !important;
-        }
-        
-        .actions-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 8px;
         }
 
         .button-small {
@@ -671,118 +618,6 @@ class SmartLinkUpdater {
             padding: 4px 8px;
             height: auto;
             line-height: 1.4;
-            margin: 0;
-            flex-shrink: 0;
-        }
-        
-        /* Quick Actions Dropdown */
-        .actions-menu {
-            position: relative;
-            display: inline-block;
-            vertical-align: middle;
-            flex-shrink: 0;
-        }
-        
-        .actions-menu-btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: 1px solid #5a67d8;
-            border-radius: 4px;
-            padding: 6px 8px;
-            cursor: pointer;
-            font-size: 12px;
-            color: white;
-            transition: all 0.2s;
-            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 32px;
-            height: 28px;
-        }
-        
-        .actions-menu-btn:hover {
-            background: linear-gradient(135deg, #5a67d8 0%, #6b3fa0 100%);
-            border-color: #4c51bf;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
-        }
-        
-        .actions-menu-btn .dashicons {
-            font-size: 18px;
-            width: 18px;
-            height: 18px;
-            line-height: 18px;
-            color: white;
-            margin: 0;
-        }
-        
-        .actions-dropdown {
-            display: none;
-            position: absolute;
-            right: 0;
-            top: 100%;
-            margin-top: 4px;
-            background: white;
-            border: 1px solid #c3c4c7;
-            border-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-            min-width: 180px;
-        }
-        
-        .actions-dropdown.show {
-            display: block;
-            animation: dropdownSlide 0.15s ease-out;
-        }
-        
-        @keyframes dropdownSlide {
-            from {
-                opacity: 0;
-                transform: translateY(-8px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        .actions-dropdown-item {
-            display: block;
-            width: 100%;
-            padding: 8px 12px;
-            text-align: left;
-            border: none;
-            background: none;
-            cursor: pointer;
-            color: #2c3338;
-            font-size: 13px;
-            transition: background 0.15s;
-            border-bottom: 1px solid #f0f0f1;
-        }
-        
-        .actions-dropdown-item:last-child {
-            border-bottom: none;
-        }
-        
-        .actions-dropdown-item:hover {
-            background: #f6f7f7;
-        }
-        
-        .actions-dropdown-item.danger {
-            color: #d63638;
-        }
-        
-        .actions-dropdown-item.danger:hover {
-            background: #fcf0f1;
-        }
-        
-        .actions-dropdown-item .dashicons {
-            font-size: 16px;
-            width: 16px;
-            height: 16px;
-            line-height: 16px;
-            vertical-align: middle;
-            margin-right: 6px;
         }
 
         /* Modal */
@@ -875,261 +710,25 @@ class SmartLinkUpdater {
             padding: 25px 30px;
         }
 
-        /* Enhanced Log Content */
-        .enhanced-log-content {
+        .log-content {
             font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
             font-size: 13px;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            padding: 0;
-            border-radius: 8px;
-            max-height: 500px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            border-radius: 12px;
+            max-height: 450px;
             overflow-y: auto;
-            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
-            position: relative;
-        }
-
-        .log-loading {
-            padding: 40px;
-            text-align: center;
-            color: #888;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .log-line {
-            padding: 8px 16px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            line-height: 1.6;
-            position: relative;
-            transition: background 0.2s ease;
-        }
-
-        .log-line:hover {
-            background: rgba(255, 255, 255, 0.05);
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            line-height: 1.5;
         }
 
         .log-line:last-child {
             border-bottom: none;
-        }
-
-        .log-line.wrap-enabled {
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-
-        .log-line:not(.wrap-enabled) {
-            white-space: nowrap;
-            overflow-x: auto;
-        }
-
-        /* Log Level Styling */
-        .log-line.level-DEBUG {
-            border-left: 3px solid #6c757d;
-            background: rgba(108, 117, 125, 0.1);
-        }
-
-        .log-line.level-INFO {
-            border-left: 3px solid #17a2b8;
-            background: rgba(23, 162, 184, 0.1);
-        }
-
-        .log-line.level-WARNING {
-            border-left: 3px solid #ffc107;
-            background: rgba(255, 193, 7, 0.1);
-        }
-
-        .log-line.level-ERROR {
-            border-left: 3px solid #dc3545;
-            background: rgba(220, 53, 69, 0.1);
-        }
-
-        /* Syntax Highlighting */
-        .log-timestamp {
-            color: #9cdcfe;
-            font-weight: 600;
-        }
-
-        .log-level {
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 11px;
-        }
-
-        .log-level.DEBUG { background: #6c757d; color: white; }
-        .log-level.INFO { background: #17a2b8; color: white; }
-        .log-level.WARNING { background: #ffc107; color: #212529; }
-        .log-level.ERROR { background: #dc3545; color: white; }
-
-        .log-message {
-            margin-left: 10px;
-        }
-
-        /* JSON Syntax Highlighting */
-        .json-key {
-            color: #9cdcfe;
-        }
-
-        .json-string {
-            color: #ce9178;
-        }
-
-        .json-number {
-            color: #b5cea8;
-        }
-
-        .json-boolean {
-            color: #569cd6;
-        }
-
-        .json-null {
-            color: #569cd6;
-        }
-
-        .json-punctuation {
-            color: #d4d4d4;
-        }
-
-        /* Log Controls */
-        .log-controls select,
-        .log-controls input[type="checkbox"] {
-            transition: all 0.2s ease;
-        }
-
-        .log-controls select:focus {
-            border-color: #667eea;
-            outline: none;
-            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
-        }
-
-        /* Scrollbar Styling */
-        .enhanced-log-content::-webkit-scrollbar {
-            width: 12px;
-        }
-
-        .enhanced-log-content::-webkit-scrollbar-track {
-            background: #2d2d2d;
-        }
-
-        .enhanced-log-content::-webkit-scrollbar-thumb {
-            background: #555;
-            border-radius: 6px;
-        }
-
-        .enhanced-log-content::-webkit-scrollbar-thumb:hover {
-            background: #777;
-        }
-        
-        /* History Modal */
-        .history-content {
-            max-height: 450px;
-            overflow-y: auto;
-        }
-        
-        .history-timeline {
-            position: relative;
-            padding-left: 40px;
-        }
-        
-        .history-item {
-            position: relative;
-            padding: 16px 20px;
-            margin-bottom: 16px;
-            background: white;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-            transition: all 0.2s;
-        }
-        
-        .history-item:hover {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-            transform: translateX(4px);
-        }
-        
-        .history-item.success {
-            border-left-color: #10b981;
-        }
-        
-        .history-item.failed {
-            border-left-color: #ef4444;
-        }
-        
-        .history-item::before {
-            content: '';
-            position: absolute;
-            left: -44px;
-            top: 20px;
-            width: 12px;
-            height: 12px;
-            background: #667eea;
-            border: 3px solid white;
-            border-radius: 50%;
-            box-shadow: 0 0 0 2px #667eea;
-        }
-        
-        .history-item.success::before {
-            background: #10b981;
-            box-shadow: 0 0 0 2px #10b981;
-        }
-        
-        .history-item.failed::before {
-            background: #ef4444;
-            box-shadow: 0 0 0 2px #ef4444;
-        }
-        
-        .history-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        
-        .history-status {
-            font-weight: 600;
-            font-size: 14px;
-        }
-        
-        .history-status.success {
-            color: #10b981;
-        }
-        
-        .history-status.failed {
-            color: #ef4444;
-        }
-        
-        .history-time {
-            font-size: 12px;
-            color: #666;
-        }
-        
-        .history-details {
-            font-size: 13px;
-            color: #4b5563;
-            line-height: 1.6;
-        }
-        
-        .history-stats {
-            display: flex;
-            gap: 16px;
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #f0f0f0;
-            font-size: 12px;
-        }
-        
-        .history-stat {
-            color: #666;
-        }
-        
-        .history-stat strong {
-            color: #2c3338;
-            font-weight: 600;
-        }
-        
-        .history-empty {
-            text-align: center;
-            padding: 40px;
-            color: #666;
         }
 
         .smartlink-modal-footer {
@@ -1140,115 +739,6 @@ class SmartLinkUpdater {
             gap: 12px;
             background: #fafafa;
             border-radius: 0 0 16px 16px;
-        }
-
-        /* Search and Filter Styles */
-        #search-posts:focus {
-            border-color: #667eea;
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .filter-group select:focus,
-        .filter-group input:focus {
-            border-color: #667eea;
-            outline: none;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .no-results-row {
-            background: linear-gradient(135deg, #f8f9ff 0%, #fdf4ff 100%);
-        }
-
-        .no-results-row td {
-            font-style: italic;
-        }
-
-        /* Batch Operations Dropdown */
-        .batch-operations-dropdown {
-            position: relative;
-            display: inline-block;
-        }
-
-        #batch-operations-btn {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-            border: none;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            transition: all 0.3s ease;
-        }
-
-        #batch-operations-btn:hover:not(:disabled) {
-            background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(240, 147, 251, 0.4);
-        }
-
-        #batch-operations-btn:disabled {
-            background: #ddd;
-            color: #999;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .batch-dropdown-menu {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            margin-top: 4px;
-            background: white;
-            border: 1px solid #c3c4c7;
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            z-index: 1000;
-            min-width: 220px;
-            overflow: hidden;
-            animation: dropdownSlide 0.2s ease-out;
-        }
-
-        .batch-operation-item {
-            display: block;
-            width: 100%;
-            padding: 12px 16px;
-            text-align: left;
-            border: none;
-            background: none;
-            cursor: pointer;
-            color: #2c3338;
-            font-size: 14px;
-            transition: all 0.15s ease;
-            border-bottom: 1px solid #f0f0f1;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .batch-operation-item:last-child {
-            border-bottom: none;
-        }
-
-        .batch-operation-item:hover {
-            background: linear-gradient(135deg, #f8f9ff 0%, #fdf4ff 100%);
-            color: #667eea;
-        }
-
-        .batch-operation-item[data-action="delete-selected"] {
-            color: #d63638;
-        }
-
-        .batch-operation-item[data-action="delete-selected"]:hover {
-            background: #fcf0f1;
-            color: #d63638;
-        }
-
-        .batch-operation-item .dashicons {
-            font-size: 16px;
-            width: 16px;
-            height: 16px;
-            flex-shrink: 0;
         }
 
         /* Responsive */
@@ -1266,25 +756,6 @@ class SmartLinkUpdater {
             .smartlink-modal-content {
                 width: 95%;
                 max-height: 90vh;
-            }
-
-            .smartlink-filters-container {
-                flex-direction: column;
-                align-items: stretch !important;
-            }
-
-            .filter-group {
-                flex-direction: column;
-                align-items: stretch !important;
-            }
-
-            .filter-group label {
-                margin-bottom: 5px;
-            }
-
-            #search-posts {
-                min-width: auto !important;
-                width: 100%;
             }
         }
         </style>
@@ -1393,6 +864,7 @@ class SmartLinkUpdater {
             function init() {
                 loadPosts();
                 attachEventListeners();
+                loadCronStatus();
             }
             
             function attachEventListeners() {
@@ -1405,94 +877,373 @@ class SmartLinkUpdater {
                 $('.close-modal').on('click', closeLogsModal);
                 $('#refresh-logs').on('click', refreshLogs);
                 
-                // Enhanced log controls
-                $('#log-level-filter').on('change', filterLogsByLevel);
-                $('#clear-log-display').on('click', clearLogDisplay);
-                $('#wrap-lines-logs').on('change', toggleLineWrap);
-                $('#export-logs').on('click', exportLogs);
+                // Cron management
+                console.log('Attaching cron event listeners...');
+                console.log('Configure button exists:', $('#configure-cron-btn').length);
+                console.log('Toggle button exists:', $('#toggle-cron-btn').length);
+                console.log('Save button exists:', $('#save-cron-btn').length);
                 
-                // Batch operations dropdown
-                $('#batch-operations-btn').on('click', toggleBatchOperationsMenu);
-                $(document).on('click', '.batch-operation-item', handleBatchOperation);
+                $('#view-cron-history-btn').on('click', openCronHistory);
+                $('#configure-cron-btn').on('click', openCronModal);
+                $('#toggle-cron-btn').on('click', toggleCron);
+                $('#save-cron-btn').on('click', saveCronSettings);
+                $('#refresh-cron-history').on('click', loadCronHistory);
                 
-                // Edit Config Modal
-                $('.close-edit-modal').on('click', closeEditModal);
-                $('#save-config-btn').on('click', saveConfigChanges);
+                // Search and filter
+                $('#apply-filters').on('click', applyFilters);
+                $('#clear-filters').on('click', clearFilters);
+                $('#search-posts').on('keypress', function(e) {
+                    if (e.which === 13) { // Enter key
+                        applyFilters();
+                    }
+                });
                 
-                // History Modal
-                $('.close-history-modal').on('click', closeHistoryModal);
-                $('#refresh-history').on('click', refreshHistory);
+                // Post configuration
+                $('#add-new-config-btn').on('click', openAddConfigModal);
+                $('#save-config-btn').on('click', savePostConfig);
+                $('#add-url-btn').on('click', addSourceUrlField);
+                $('input[name="extractor-mode"]').on('change', toggleExtractorMode);
                 
                 // Delegate checkbox change event
                 $(document).on('change', '.post-checkbox', updateSelectedCount);
                 $(document).on('click', '.view-logs-btn', viewLogs);
                 $(document).on('click', '.single-update-btn', singleUpdate);
-                
-                // Quick Actions Menu
-                $(document).on('click', '.actions-menu-btn', toggleActionsMenu);
-                $(document).on('click', '.edit-config-btn', editConfig);
-                $(document).on('click', '.view-history-btn', viewHistory);
-                $(document).on('click', '.reset-health-btn', resetHealth);
-                $(document).on('click', '.delete-config-btn', deleteConfig);
-                
-                // Filter and search event listeners
-                $('#search-posts').on('input', debounce(applyFilters, 300));
-                $('#filter-health').on('change', applyFilters);
-                $('#filter-extractor').on('change', applyFilters);
-                $('#clear-filters').on('click', clearFilters);
-                
-                // Sortable headers
-                $(document).on('click', '.sortable-header', handleSort);
-                
-                // Close dropdown when clicking outside
-                $(document).on('click', function(e) {
-                    if (!$(e.target).closest('.actions-menu').length) {
-                        $('.actions-dropdown').removeClass('show');
-                    }
-                    if (!$(e.target).closest('.batch-operations-dropdown').length) {
-                        $('#batch-operations-menu').hide();
+                $(document).on('click', '.edit-config-btn', openEditConfigModal);
+                $(document).on('click', '.remove-url-btn', removeSourceUrlField);
+            }
+            
+            // ========== CRON MANAGEMENT ==========
+            
+            function loadCronStatus() {
+                console.log('loadCronStatus called');
+                console.log('Cron status URL:', config.restUrl + '/cron/status');
+                $.ajax({
+                    url: config.restUrl + '/cron/status',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        console.log('Cron status response:', response);
+                        // REST API returns data directly, not wrapped in {success: true, data: ...}
+                        updateCronStatusDisplay(response);
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('Failed to load cron status:', status, error);
+                        console.error('Response:', xhr.responseText);
+                        console.error('Status code:', xhr.status);
                     }
                 });
             }
             
+            function updateCronStatusDisplay(data) {
+                const banner = $('#cron-status-banner');
+                const statusText = $('#cron-status-text');
+                const scheduleDisplay = $('#cron-schedule-display');
+                const postsDisplay = $('#cron-posts-display');
+                const lastRunDisplay = $('#cron-last-run-display');
+                const nextRunDisplay = $('#cron-next-run-display');
+                const toggleBtn = $('#toggle-cron-btn');
+                const toggleText = $('#toggle-cron-text');
+                
+                // Show/hide info sections
+                const infoSections = ['#cron-schedule-info', '#cron-posts-info', '#cron-lastrun-info', '#cron-nextrun-info'];
+                
+                if (data.enabled) {
+                    // Enabled - Green theme
+                    banner.removeClass('cron-status-disabled').addClass('cron-status-enabled');
+                    statusText.text('Enabled').css('color', '#1e4d2b').css('font-weight', '600');
+                    scheduleDisplay.text(data.schedule_label || data.schedule || '-');
+                    postsDisplay.text(data.total_posts || '0');
+                    lastRunDisplay.text(data.last_run || 'Never');
+                    nextRunDisplay.text(data.next_run || '-');
+                    toggleText.text('Disable');
+                    toggleBtn.removeClass('button-secondary').addClass('button-primary');
+                    
+                    // Show all info sections
+                    infoSections.forEach(selector => $(selector).show());
+                } else {
+                    // Disabled - Red theme
+                    banner.removeClass('cron-status-enabled').addClass('cron-status-disabled');
+                    statusText.text('Disabled').css('color', '#4a0000').css('font-weight', '600');
+                    toggleText.text('Enable');
+                    toggleBtn.removeClass('button-primary').addClass('button-secondary');
+                    
+                    // Hide info sections when disabled
+                    infoSections.forEach(selector => $(selector).hide());
+                }
+            }
+            
+            function openCronModal() {
+                console.log('openCronModal called');
+                $.ajax({
+                    url: config.restUrl + '/cron/settings',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(settings) {
+                        console.log('Cron settings loaded:', settings);
+                        $('#cron-enabled').prop('checked', settings.enabled);
+                        $('#cron-schedule').val(settings.schedule);
+                        $('#cron-modal').fadeIn();
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to load cron settings:', xhr);
+                        alert('Failed to load cron settings: ' + xhr.responseText);
+                    }
+                });
+            }
+            
+            function toggleCron() {
+                console.log('toggleCron called');
+                $.ajax({
+                    url: config.restUrl + '/cron/settings',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(settings) {
+                        settings.enabled = !settings.enabled;
+                        saveCronSettingsData(settings);
+                    },
+                    error: function(xhr) {
+                        alert('Failed to toggle cron: ' + xhr.responseText);
+                    }
+                });
+            }
+            
+            function saveCronSettings() {
+                const settings = {
+                    enabled: $('#cron-enabled').is(':checked'),
+                    schedule: $('#cron-schedule').val()
+                };
+                
+                saveCronSettingsData(settings);
+            }
+            
+            function saveCronSettingsData(settings) {
+                $.ajax({
+                    url: config.restUrl + '/cron/settings',
+                    method: 'POST',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                        xhr.setRequestHeader('Content-Type', 'application/json');
+                    },
+                    data: JSON.stringify(settings),
+                    success: function(response) {
+                        console.log('Save response:', response);
+                        $('#cron-modal').fadeOut();
+                        loadCronStatus();
+                        alert('Cron settings saved successfully!');
+                    },
+                    error: function(xhr) {
+                        alert('Failed to save cron settings: ' + xhr.responseText);
+                    }
+                });
+            }
+            
+            function openCronHistory() {
+                $('#cron-history-modal').fadeIn();
+                loadCronHistory();
+            }
+            
+            function loadCronHistory() {
+                const contentDiv = $('#cron-history-content');
+                contentDiv.html('<div style="text-align: center; padding: 40px;"><span class="spinner is-active" style="float: none;"></span><p>Loading history...</p></div>');
+                
+                $.ajax({
+                    url: config.restUrl + '/cron/history',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(history) {
+                        renderCronHistory(history);
+                    },
+                    error: function(xhr) {
+                        contentDiv.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load history</p></div>');
+                    }
+                });
+            }
+            
+            function renderCronHistory(history) {
+                const contentDiv = $('#cron-history-content');
+                
+                if (!history || history.length === 0) {
+                    contentDiv.html('<div style="text-align: center; padding: 40px; color: #666;"><span class="dashicons dashicons-clock" style="font-size: 48px; opacity: 0.3;"></span><p>No scheduled update history yet</p></div>');
+                    return;
+                }
+                
+                let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+                
+                history.forEach(function(entry) {
+                    const statusColors = {
+                        'success': { bg: '#d4edda', border: '#27ae60', text: '#155724', icon: 'yes-alt' },
+                        'error': { bg: '#f8d7da', border: '#e74c3c', text: '#721c24', icon: 'dismiss' },
+                        'warning': { bg: '#fff3cd', border: '#ffc107', text: '#856404', icon: 'warning' }
+                    };
+                    
+                    const style = statusColors[entry.status] || statusColors['warning'];
+                    
+                    html += '<div style="background: ' + style.bg + '; border-left: 4px solid ' + style.border + '; padding: 15px 20px; border-radius: 8px;">';
+                    html += '<div style="display: flex; justify-content: space-between; align-items: start; gap: 15px;">';
+                    html += '<div style="flex: 1;">';
+                    html += '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">';
+                    html += '<span class="dashicons dashicons-' + style.icon + '" style="color: ' + style.text + ';"></span>';
+                    html += '<strong style="color: ' + style.text + '; text-transform: uppercase; font-size: 12px;">' + entry.status + '</strong>';
+                    html += '</div>';
+                    html += '<p style="margin: 0 0 8px 0; color: ' + style.text + ';">' + entry.message + '</p>';
+                    html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #666;">';
+                    html += '<div><strong>Posts:</strong> ' + entry.post_count + '</div>';
+                    if (entry.request_id) {
+                        html += '<div><strong>Request ID:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 3px; font-size: 11px;">' + entry.request_id + '</code></div>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                    html += '<div style="text-align: right; min-width: 140px;">';
+                    html += '<div style="font-size: 13px; color: #666;">' + entry.formatted_time + '</div>';
+                    html += '<div style="font-size: 12px; color: #999; margin-top: 4px;">' + entry.time_ago + '</div>';
+                    html += '</div>';
+                    html += '</div>';
+                    html += '</div>';
+                });
+                
+                html += '</div>';
+                contentDiv.html(html);
+            }
+            
+            // ========== SEARCH AND FILTER ==========
+            
+            let activeFilters = {
+                search: '',
+                extractor: '',
+                health: '',
+                status: ''
+            };
+            
+            function applyFilters() {
+                activeFilters.search = $('#search-posts').val().toLowerCase().trim();
+                activeFilters.extractor = $('#filter-extractor').val();
+                activeFilters.health = $('#filter-health').val();
+                activeFilters.status = $('#filter-status').val();
+                
+                const filteredPosts = postsData.filter(post => {
+                    // Search filter
+                    if (activeFilters.search) {
+                        const titleMatch = post.title.toLowerCase().includes(activeFilters.search);
+                        const idMatch = post.post_id.toString().includes(activeFilters.search);
+                        if (!titleMatch && !idMatch) return false;
+                    }
+                    
+                    // Extractor filter
+                    if (activeFilters.extractor && post.extractor_type !== activeFilters.extractor) {
+                        return false;
+                    }
+                    
+                    // Health filter
+                    if (activeFilters.health && post.health_status !== activeFilters.health) {
+                        return false;
+                    }
+                    
+                    // Status filter
+                    if (activeFilters.status && post.status !== activeFilters.status) {
+                        return false;
+                    }
+                    
+                    return true;
+                });
+                
+                renderPostsTable(filteredPosts);
+                updateActiveFiltersDisplay();
+            }
+            
+            function clearFilters() {
+                $('#search-posts').val('');
+                $('#filter-extractor').val('');
+                $('#filter-health').val('');
+                $('#filter-status').val('');
+                
+                activeFilters = {
+                    search: '',
+                    extractor: '',
+                    health: '',
+                    status: ''
+                };
+                
+                renderPostsTable(postsData);
+                updateActiveFiltersDisplay();
+            }
+            
+            function updateActiveFiltersDisplay() {
+                const activeFiltersDiv = $('#active-filters');
+                const filterTagsDiv = $('#filter-tags');
+                filterTagsDiv.empty();
+                
+                let hasFilters = false;
+                
+                if (activeFilters.search) {
+                    hasFilters = true;
+                    filterTagsDiv.append(createFilterTag('Search', activeFilters.search, 'search'));
+                }
+                
+                if (activeFilters.extractor) {
+                    hasFilters = true;
+                    const label = $('#filter-extractor option:selected').text();
+                    filterTagsDiv.append(createFilterTag('Extractor', label, 'extractor'));
+                }
+                
+                if (activeFilters.health) {
+                    hasFilters = true;
+                    const label = $('#filter-health option:selected').text();
+                    filterTagsDiv.append(createFilterTag('Health', label, 'health'));
+                }
+                
+                if (activeFilters.status) {
+                    hasFilters = true;
+                    const label = $('#filter-status option:selected').text();
+                    filterTagsDiv.append(createFilterTag('Status', label, 'status'));
+                }
+                
+                if (hasFilters) {
+                    activeFiltersDiv.show();
+                } else {
+                    activeFiltersDiv.hide();
+                }
+            }
+            
+            function createFilterTag(label, value, type) {
+                const tag = $('<span>').css({
+                    'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    'color': 'white',
+                    'padding': '4px 12px',
+                    'border-radius': '20px',
+                    'font-size': '12px',
+                    'display': 'inline-flex',
+                    'align-items': 'center',
+                    'gap': '6px'
+                }).html(`<strong>${label}:</strong> ${value}`);
+                
+                const removeBtn = $('<span>').css({
+                    'cursor': 'pointer',
+                    'font-weight': 'bold',
+                    'margin-left': '4px'
+                }).text('×').on('click', function() {
+                    if (type === 'search') {
+                        $('#search-posts').val('');
+                    } else {
+                        $(`#filter-${type}`).val('');
+                    }
+                    applyFilters();
+                });
+                
+                tag.append(removeBtn);
+                return tag;
+            }
+            
             // ========== LOAD POSTS ==========
             
-            function showLoadingState() {
-                $('#posts-table-body').html(`
-                    <tr>
-                        <td colspan="9" style="text-align: center; padding: 40px;">
-                            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
-                                <span class="spinner is-active" style="float: none; margin: 0;"></span>
-                                <span style="color: #666; font-size: 16px;">Loading posts...</span>
-                            </div>
-                        </td>
-                    </tr>
-                `);
-                
-                // Also disable refresh button during loading
-                $('#refresh-posts').prop('disabled', true);
-            }
-            
-            function formatRelativeTime(timestamp) {
-                if (!timestamp) return 'Never';
-                
-                const now = new Date();
-                const date = new Date(timestamp);
-                const seconds = Math.floor((now - date) / 1000);
-                
-                if (seconds < 60) return 'Just now';
-                if (seconds < 3600) return Math.floor(seconds / 60) + ' mins ago';
-                if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
-                if (seconds < 604800) return Math.floor(seconds / 86400) + ' days ago';
-                if (seconds < 2592000) return Math.floor(seconds / 604800) + ' weeks ago';
-                if (seconds < 31536000) return Math.floor(seconds / 2592000) + ' months ago';
-                return Math.floor(seconds / 31536000) + ' years ago';
-            }
-            
             function loadPosts() {
-                // Show loading state
-                showLoadingState();
-                
                 $.ajax({
                     url: config.restUrl + '/posts',
                     method: 'GET',
@@ -1502,38 +1253,9 @@ class SmartLinkUpdater {
                     success: function(response) {
                         postsData = response.posts || [];
                         renderPostsTable(postsData);
-                        showToast('Posts loaded successfully', 'success');
-                        $('#refresh-posts').prop('disabled', false);
                     },
                     error: function(xhr) {
-                        console.error('Failed to load posts:', xhr);
-                        const errorMsg = xhr.responseJSON && xhr.responseJSON.message 
-                            ? xhr.responseJSON.message 
-                            : 'Failed to load posts. Please check your connection.';
-                        showToast(errorMsg, 'error');
-                        
-                        // Show empty state with retry option
-                        $('#posts-table-body').html(`
-                            <tr>
-                                <td colspan="9" style="text-align: center; padding: 40px;">
-                                    <div style="color: #dc3232; margin-bottom: 15px;">
-                                        <span class="dashicons dashicons-warning" style="font-size: 24px;"></span><br>
-                                        Failed to load posts
-                                    </div>
-                                    <p style="margin-bottom: 20px; color: #666;">${errorMsg}</p>
-                                    <button type="button" id="retry-load-posts" class="button button-primary">
-                                        <span class="dashicons dashicons-update"></span> Retry
-                                    </button>
-                                </td>
-                            </tr>
-                        `);
-                        
-                        // Add retry functionality
-                        $(document).on('click', '#retry-load-posts', function() {
-                            loadPosts();
-                        });
-                        
-                        $('#refresh-posts').prop('disabled', false);
+                        showToast('Failed to load posts: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
                     }
                 });
             }
@@ -1543,24 +1265,12 @@ class SmartLinkUpdater {
                 tbody.empty();
                 
                 if (posts.length === 0) {
-                    tbody.append('<tr><td colspan="9" style="text-align: center; padding: 40px;">No configured posts found.</td></tr>');
+                    tbody.append('<tr><td colspan="8" style="text-align: center; padding: 40px;">No configured posts found.</td></tr>');
                     return;
                 }
                 
-                // Update statistics
-                updateStatistics(posts);
-                
-                // Initialize filtered data and populate extractor filter
-                filteredPostsData = [...posts];
-                populateExtractorFilter();
-                
                 posts.forEach(function(post) {
-                    renderSinglePost(post, tbody);
-                });
-            }
-            
-            function renderSinglePost(post, tbody) {
-                const row = $('<tr>').attr('data-post-id', post.post_id);
+                    const row = $('<tr>').attr('data-post-id', post.post_id);
                     
                     // Checkbox
                     row.append(
@@ -1576,12 +1286,9 @@ class SmartLinkUpdater {
                     // Post ID
                     row.append($('<td>').text(post.post_id));
                     
-                    // Title (fetch from WordPress)
-                    const titleCell = $('<td>').html('<span class="spinner is-active" style="float: none; margin: 0;"></span>');
+                    // Title (fetch from WordPress if available)
+                    const titleCell = $('<td>').text('Post ' + post.post_id);
                     row.append(titleCell);
-                    
-                    // Fetch post title from WordPress
-                    fetchPostTitle(post.post_id, titleCell);
                     
                     // Extractor
                     row.append($('<td>').text(post.extractor || 'default'));
@@ -1589,12 +1296,6 @@ class SmartLinkUpdater {
                     // Health Status
                     const healthBadge = getHealthBadge(post.health_status);
                     row.append($('<td>').html(healthBadge));
-                    
-                    // Last Updated
-                    const lastUpdated = formatRelativeTime(post.updated_at);
-                    row.append($('<td>').html(
-                        '<span style="color: #666; font-size: 12px;">' + lastUpdated + '</span>'
-                    ));
                     
                     // Status
                     const statusCell = $('<td>').addClass('status-cell').html(
@@ -1610,109 +1311,40 @@ class SmartLinkUpdater {
                     
                     // Actions
                     const actionsCell = $('<td>').addClass('actions-cell');
-                    
-                    // Create actions wrapper - horizontal layout
-                    const actionsWrapper = $('<div>').addClass('actions-wrapper');
-                    
-                    // Quick Actions Menu - FIRST (on the left)
-                    const actionsMenu = $('<div>').addClass('actions-menu');
-                    const menuBtn = $('<button>').addClass('actions-menu-btn').attr('data-post-id', post.post_id).html(
-                        '<span class="dashicons dashicons-menu"></span>'
-                    ).attr('title', 'More Actions');
-                    const dropdown = $('<div>').addClass('actions-dropdown').html(`
-                        <button class="actions-dropdown-item edit-config-btn" data-post-id="${post.post_id}">
-                            <span class="dashicons dashicons-edit"></span> Edit Config
-                        </button>
-                        <button class="actions-dropdown-item view-history-btn" data-post-id="${post.post_id}">
-                            <span class="dashicons dashicons-backup"></span> View History
-                        </button>
-                        <button class="actions-dropdown-item reset-health-btn" data-post-id="${post.post_id}">
-                            <span class="dashicons dashicons-heart"></span> Reset Health
-                        </button>
-                        <button class="actions-dropdown-item danger delete-config-btn" data-post-id="${post.post_id}">
-                            <span class="dashicons dashicons-trash"></span> Delete Config
-                        </button>
-                    `);
-                    actionsMenu.append(menuBtn).append(dropdown);
-                    
-                    // Primary action buttons - AFTER menu
-                    const updateBtn = $('<button>').addClass('button button-small single-update-btn').attr('data-post-id', post.post_id).html(
-                        '<span class="dashicons dashicons-update"></span> Update'
+                    actionsCell.append(
+                        $('<button>').addClass('button button-small single-update-btn').attr('data-post-id', post.post_id).html(
+                            '<span class="dashicons dashicons-update"></span> Update'
+                        )
                     );
-                    
-                    const logsBtn = $('<button>').addClass('button button-small view-logs-btn').attr({
-                        'data-post-id': post.post_id,
-                        'disabled': true
-                    }).html(
-                        '<span class="dashicons dashicons-media-text"></span> Logs'
+                    actionsCell.append(' ');
+                    actionsCell.append(
+                        $('<button>').addClass('button button-small edit-config-btn').attr('data-post-id', post.post_id).html(
+                            '<span class="dashicons dashicons-edit"></span> Edit'
+                        )
                     );
-                    
-                    // Assemble: Menu first, then buttons
-                    actionsWrapper.append(actionsMenu).append(updateBtn).append(logsBtn);
-                    actionsCell.append(actionsWrapper);
-                    
+                    actionsCell.append(' ');
+                    actionsCell.append(
+                        $('<button>').addClass('button button-small view-logs-btn').attr({
+                            'data-post-id': post.post_id,
+                            'disabled': true
+                        }).html(
+                            '<span class="dashicons dashicons-media-text"></span> Logs'
+                        )
+                    );
                     row.append(actionsCell);
                     
                     tbody.append(row);
-            }
-            
-            function getHealthBadge(healthData) {
-                // Handle both old string format and new object format
-                if (typeof healthData === 'string') {
-                    healthData = { status: healthData };
-                }
-                
-                const status = healthData.status || 'unknown';
-                const lastCheck = healthData.last_check || null;
-                const errorCount = healthData.error_count || 0;
-                const issues = healthData.issues || [];
-                
-                // Create tooltip content
-                let tooltipContent = '';
-                if (lastCheck) {
-                    tooltipContent += `<span class="tooltip-line"><span class="tooltip-label">Last Check:</span> ${formatRelativeTime(lastCheck)}</span>`;
-                }
-                tooltipContent += `<span class="tooltip-line"><span class="tooltip-label">Status:</span> ${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
-                if (errorCount > 0) {
-                    tooltipContent += `<span class="tooltip-line"><span class="tooltip-label">Errors:</span> ${errorCount}</span>`;
-                }
-                if (issues.length > 0) {
-                    tooltipContent += `<span class="tooltip-line"><span class="tooltip-label">Issues:</span> ${issues.join(', ')}</span>`;
-                }
-                
-                const badges = {
-                    'healthy': `<span class="health-badge health-good">✓ Healthy<div class="health-tooltip">${tooltipContent}</div></span>`,
-                    'warning': `<span class="health-badge health-warning">⚠ Warning<div class="health-tooltip">${tooltipContent}</div></span>`,
-                    'critical': `<span class="health-badge health-critical">✗ Critical<div class="health-tooltip">${tooltipContent}</div></span>`,
-                    'unknown': `<span class="health-badge health-unknown">? Unknown<div class="health-tooltip">${tooltipContent}</div></span>`
-                };
-                return badges[status] || badges['unknown'];
-            }
-            
-            function fetchPostTitle(postId, titleLink) {
-                $.ajax({
-                    url: '/wp-json/wp/v2/posts/' + postId,
-                    method: 'GET',
-                    success: function(response) {
-                        const title = response.title.rendered || 'Post ' + postId;
-                        const editLink = '/wp-admin/post.php?post=' + postId + '&action=edit';
-                        titleLink.attr('href', editLink).attr('target', '_blank').html(escapeHtml(title));
-                    },
-                    error: function() {
-                        titleLink.text('Post ' + postId + ' (Title not found)');
-                    }
                 });
             }
             
-            function updateStatistics(posts) {
-                const totalPosts = posts.length;
-                $('#stat-total-posts').text(totalPosts);
-                
-                // These will be updated dynamically during batch updates
-                // For now, show initial state
-                $('#stat-active-updates').text('0');
-                $('#stat-success-rate').text('-');
-                $('#stat-failed-updates').text('0');
+            function getHealthBadge(status) {
+                const badges = {
+                    'healthy': '<span class="health-badge health-good">✓ Healthy</span>',
+                    'warning': '<span class="health-badge health-warning">⚠ Warning</span>',
+                    'critical': '<span class="health-badge health-critical">✗ Critical</span>',
+                    'unknown': '<span class="health-badge health-unknown">? Unknown</span>'
+                };
+                return badges[status] || badges['unknown'];
             }
             
             // ========== SELECTION ==========
@@ -1739,7 +1371,6 @@ class SmartLinkUpdater {
                 const count = $('.post-checkbox:checked').length;
                 $('#selected-count').text(count);
                 $('#batch-update-btn').prop('disabled', count === 0);
-                $('#batch-operations-btn').prop('disabled', count === 0);
             }
             
             function getSelectedPostIds() {
@@ -1861,9 +1492,6 @@ class SmartLinkUpdater {
                 const postIds = Object.keys(posts);
                 const totalPosts = postIds.length;
                 let completedCount = 0;
-                let successCount = 0;
-                let failedCount = 0;
-                let activeCount = 0;
                 
                 // Update each row
                 postIds.forEach(function(postId) {
@@ -1885,15 +1513,9 @@ class SmartLinkUpdater {
                         row.find('.view-logs-btn').prop('disabled', false);
                     }
                     
-                    // Count statistics
-                    if (postState.status === 'success' || postState.status === 'no_changes') {
+                    // Count completed
+                    if (postState.status === 'success' || postState.status === 'failed') {
                         completedCount++;
-                        successCount++;
-                    } else if (postState.status === 'failed') {
-                        completedCount++;
-                        failedCount++;
-                    } else if (postState.status === 'running') {
-                        activeCount++;
                     }
                 });
                 
@@ -1901,14 +1523,6 @@ class SmartLinkUpdater {
                 const overallProgress = Math.round((completedCount / totalPosts) * 100);
                 $('#completed-posts').text(completedCount);
                 $('#overall-progress-fill').css('width', overallProgress + '%');
-                
-                // Update statistics cards
-                $('#stat-active-updates').text(activeCount);
-                $('#stat-failed-updates').text(failedCount);
-                if (completedCount > 0) {
-                    const successRate = Math.round((successCount / completedCount) * 100);
-                    $('#stat-success-rate').text(successRate + '%');
-                }
             }
             
             function getStatusBadge(status, message) {
@@ -1966,271 +1580,19 @@ class SmartLinkUpdater {
                 });
             }
             
-            // ========== QUICK ACTIONS MENU ==========
-            
-            function toggleActionsMenu(e) {
-                e.stopPropagation();
-                const dropdown = $(e.currentTarget).siblings('.actions-dropdown');
-                
-                // Close all other dropdowns
-                $('.actions-dropdown').not(dropdown).removeClass('show');
-                
-                // Toggle this dropdown
-                dropdown.toggleClass('show');
-            }
-            
-            function editConfig(e) {
-                e.stopPropagation();
-                const postId = parseInt($(e.currentTarget).data('post-id'));
-                
-                // Close dropdown
-                $('.actions-dropdown').removeClass('show');
-                
-                // Load current config
-                $.ajax({
-                    url: config.restUrl + '/post/' + postId,
-                    method: 'GET',
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(response) {
-                        const postConfig = response.config;
-                        
-                        // Populate form
-                        $('#edit-post-id').text(postId);
-                        $('#edit-extractor').val(postConfig.extractor || '');
-                        $('#edit-source-url').val(postConfig.source_urls?.[0] || '');
-                        $('#edit-timezone').val(postConfig.timezone || 'Asia/Kolkata');
-                        
-                        // Store post ID in form
-                        $('#edit-config-form').data('post-id', postId);
-                        
-                        // Show modal
-                        $('#edit-config-modal').fadeIn();
-                    },
-                    error: function(xhr) {
-                        showToast('Failed to load config: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
-                    }
-                });
-            }
-            
-            function closeEditModal() {
-                $('#edit-config-modal').fadeOut();
-            }
-            
-            function saveConfigChanges() {
-                const postId = $('#edit-config-form').data('post-id');
-                const extractor = $('#edit-extractor').val();
-                const sourceUrl = $('#edit-source-url').val();
-                const timezone = $('#edit-timezone').val();
-                
-                // Validate
-                if (!sourceUrl) {
-                    showToast('Source URL is required', 'error');
-                    return;
-                }
-                
-                // Prepare update data
-                const updateData = {
-                    source_urls: [sourceUrl],
-                    timezone: timezone || 'Asia/Kolkata'
-                };
-                
-                if (extractor) {
-                    updateData.extractor = extractor;
-                }
-                
-                // Disable button
-                const $btn = $('#save-config-btn');
-                $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
-                
-                $.ajax({
-                    url: config.restUrl + '/post/' + postId,
-                    method: 'PUT',
-                    contentType: 'application/json',
-                    data: JSON.stringify(updateData),
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(response) {
-                        showToast('Configuration updated for post ' + postId, 'success');
-                        closeEditModal();
-                        loadPosts(); // Reload to show updated config
-                    },
-                    error: function(xhr) {
-                        showToast('Failed to update config: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
-                    },
-                    complete: function() {
-                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-saved"></span> Save Changes');
-                    }
-                });
-            }
-            
-            function viewHistory(e) {
-                e.stopPropagation();
-                const postId = parseInt($(e.currentTarget).data('post-id'));
-                
-                // Close dropdown
-                $('.actions-dropdown').removeClass('show');
-                
-                // Show modal
-                $('#history-post-id').text(postId);
-                $('#history-content').html('<span class="spinner is-active"></span> Loading update history...');
-                $('#history-modal').fadeIn();
-                
-                // Load history
-                loadHistory(postId);
-            }
-            
-            function loadHistory(postId) {
-                // For now, we'll show a message that this feature requires backend support
-                // In the future, we can create an endpoint to track update history
-                
-                const historyHtml = `
-                    <div class="history-timeline">
-                        <div class="history-item success">
-                            <div class="history-header">
-                                <div class="history-status success">✓ Update Completed</div>
-                                <div class="history-time">2 hours ago</div>
-                            </div>
-                            <div class="history-details">
-                                Links successfully updated from source URL
-                            </div>
-                            <div class="history-stats">
-                                <div class="history-stat"><strong>12</strong> links found</div>
-                                <div class="history-stat"><strong>8</strong> links updated</div>
-                                <div class="history-stat"><strong>2</strong> links added</div>
-                            </div>
-                        </div>
-                        
-                        <div class="history-item success">
-                            <div class="history-header">
-                                <div class="history-status success">✓ Update Completed</div>
-                                <div class="history-time">1 day ago</div>
-                            </div>
-                            <div class="history-details">
-                                Links successfully updated from source URL
-                            </div>
-                            <div class="history-stats">
-                                <div class="history-stat"><strong>10</strong> links found</div>
-                                <div class="history-stat"><strong>7</strong> links updated</div>
-                                <div class="history-stat"><strong>1</strong> link added</div>
-                            </div>
-                        </div>
-                        
-                        <div class="history-item failed">
-                            <div class="history-header">
-                                <div class="history-status failed">✗ Update Failed</div>
-                                <div class="history-time">3 days ago</div>
-                            </div>
-                            <div class="history-details">
-                                Failed to extract links: Source page structure changed
-                            </div>
-                        </div>
-                        
-                        <div style="padding: 20px; text-align: center; background: #f0f8ff; border-radius: 8px; margin-top: 20px;">
-                            <p style="margin: 0; color: #666;">
-                                <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
-                                <strong>Note:</strong> Full update history tracking is coming soon!<br>
-                                <small>This is a preview of what the history feature will look like.</small>
-                            </p>
-                        </div>
-                    </div>
-                `;
-                
-                $('#history-content').html(historyHtml);
-            }
-            
-            function closeHistoryModal() {
-                $('#history-modal').fadeOut();
-            }
-            
-            function refreshHistory() {
-                const postId = parseInt($('#history-post-id').text());
-                if (postId) {
-                    loadHistory(postId);
-                }
-            }
-            
-            function resetHealth(e) {
-                e.stopPropagation();
-                const postId = parseInt($(e.currentTarget).data('post-id'));
-                
-                // Close dropdown
-                $('.actions-dropdown').removeClass('show');
-                
-                if (!confirm('Reset health status for post ' + postId + ' to Unknown?')) {
-                    return;
-                }
-                
-                $.ajax({
-                    url: config.restUrl + '/post/' + postId,
-                    method: 'PUT',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        health_status: 'unknown'
-                    }),
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(response) {
-                        showToast('Health status reset for post ' + postId, 'success');
-                        loadPosts(); // Reload to show updated health
-                    },
-                    error: function(xhr) {
-                        showToast('Failed to reset health: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
-                    }
-                });
-            }
-            
-            function deleteConfig(e) {
-                e.stopPropagation();
-                const postId = parseInt($(e.currentTarget).data('post-id'));
-                
-                // Close dropdown
-                $('.actions-dropdown').removeClass('show');
-                
-                if (!confirm('Are you sure you want to delete the configuration for post ' + postId + '?\n\nThis action cannot be undone.')) {
-                    return;
-                }
-                
-                $.ajax({
-                    url: config.restUrl + '/posts/' + postId,
-                    method: 'DELETE',
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(response) {
-                        showToast('Configuration deleted for post ' + postId, 'success');
-                        loadPosts(); // Reload to remove deleted post
-                    },
-                    error: function(xhr) {
-                        showToast('Failed to delete config: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
-                    }
-                });
-            }
-            
             // ========== LOGS MODAL ==========
-            
-            let currentLogData = [];
-            let filteredLogData = [];
             
             function viewLogs(e) {
                 const postId = parseInt($(e.currentTarget).data('post-id'));
                 
                 if (!currentBatchRequestId) {
-                    showToast('No active batch request. Start a batch update first.', 'warning');
+                    showToast('No active batch request', 'warning');
                     return;
                 }
                 
                 $('#log-post-id').text(postId);
-                $('#log-content').html('<div class="log-loading"><span class="spinner is-active"></span>Loading logs...</div>');
+                $('#log-content').html('<span class="spinner is-active"></span> Loading logs...');
                 $('#logs-modal').fadeIn();
-                
-                // Reset controls
-                $('#log-level-filter').val('');
-                $('#auto-scroll-logs').prop('checked', true);
-                $('#wrap-lines-logs').prop('checked', false);
                 
                 loadLogs(postId);
             }
@@ -2248,22 +1610,19 @@ class SmartLinkUpdater {
                         const logs = response.logs || [];
                         
                         if (logs.length === 0) {
-                            $('#log-content').html('<div style="text-align: center; color: #888; padding: 40px;">No logs available for this post</div>');
+                            $('#log-content').html('<p style="text-align: center; color: #666;">No logs available</p>');
                             return;
                         }
                         
-                        // Process and store log data
-                        currentLogData = logs.map(function(log, index) {
-                            return parseLogEntry(log, index);
-                        });
+                        const logHtml = logs.map(function(log) {
+                            return '<div class="log-line">' + escapeHtml(log) + '</div>';
+                        }).join('');
                         
-                        filteredLogData = [...currentLogData];
-                        renderLogs();
+                        $('#log-content').html(logHtml);
                         
-                        // Auto-scroll to bottom if enabled
-                        if ($('#auto-scroll-logs').prop('checked')) {
-                            autoScrollToBottom();
-                        }
+                        // Auto-scroll to bottom
+                        const logContainer = document.getElementById('log-content');
+                        logContainer.scrollTop = logContainer.scrollHeight;
                     },
                     error: function() {
                         $('#log-content').html('<p style="text-align: center; color: #dc3232;">Failed to load logs</p>');
@@ -2273,168 +1632,272 @@ class SmartLinkUpdater {
             
             function refreshLogs() {
                 const postId = parseInt($('#log-post-id').text());
-                if (postId) {
-                    $('#log-content').html('<div class="log-loading"><span class="spinner is-active"></span>Refreshing logs...</div>');
-                    loadLogs(postId);
-                }
-            }
-            
-            function parseLogEntry(logString, index) {
-                // Try to parse structured log entry
-                const timestampRegex = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/;
-                const levelRegex = /(DEBUG|INFO|WARNING|ERROR|WARN)/i;
-                
-                const timestampMatch = logString.match(timestampRegex);
-                const levelMatch = logString.match(levelRegex);
-                
-                let timestamp = timestampMatch ? timestampMatch[1] : null;
-                let level = levelMatch ? levelMatch[1].toUpperCase() : 'INFO';
-                let message = logString;
-                
-                // Remove timestamp and level from message
-                if (timestampMatch) {
-                    message = message.substring(timestampMatch[0].length).trim();
-                }
-                if (levelMatch) {
-                    message = message.replace(levelMatch[0], '').trim();
-                    message = message.replace(/^[:\-\s]*/, ''); // Remove separators
-                }
-                
-                return {
-                    id: index,
-                    timestamp: timestamp,
-                    level: level,
-                    message: message,
-                    original: logString
-                };
-            }
-            
-            function renderLogs() {
-                const container = $('#log-content');
-                const wrapLines = $('#wrap-lines-logs').prop('checked');
-                
-                if (filteredLogData.length === 0) {
-                    container.html('<div style="text-align: center; color: #888; padding: 40px;">No logs match the current filter</div>');
-                    return;
-                }
-                
-                const logHtml = filteredLogData.map(function(logEntry) {
-                    const wrapClass = wrapLines ? 'wrap-enabled' : '';
-                    const levelClass = 'level-' + logEntry.level;
-                    
-                    let content = '';
-                    if (logEntry.timestamp) {
-                        content += `<span class="log-timestamp">[${logEntry.timestamp}]</span> `;
-                    }
-                    content += `<span class="log-level ${logEntry.level}">${logEntry.level}</span>`;
-                    content += `<span class="log-message">${formatLogMessage(logEntry.message)}</span>`;
-                    
-                    return `<div class="log-line ${levelClass} ${wrapClass}">${content}</div>`;
-                }).join('');
-                
-                container.html(logHtml);
-            }
-            
-            function formatLogMessage(message) {
-                // Basic JSON syntax highlighting
-                if (message.trim().startsWith('{') && message.trim().endsWith('}')) {
-                    try {
-                        const parsed = JSON.parse(message);
-                        return syntaxHighlightJSON(parsed);
-                    } catch (e) {
-                        // Fall back to regular escaping
-                    }
-                }
-                
-                return escapeHtml(message);
-            }
-            
-            function syntaxHighlightJSON(obj) {
-                const json = JSON.stringify(obj, null, 2);
-                return json
-                    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-                        let cls = 'json-number';
-                        if (/^"/.test(match)) {
-                            if (/:$/.test(match)) {
-                                cls = 'json-key';
-                            } else {
-                                cls = 'json-string';
-                            }
-                        } else if (/true|false/.test(match)) {
-                            cls = 'json-boolean';
-                        } else if (/null/.test(match)) {
-                            cls = 'json-null';
-                        }
-                        return '<span class="' + cls + '">' + match + '</span>';
-                    })
-                    .replace(/([{}[\],:])/g, '<span class="json-punctuation">$1</span>');
-            }
-            
-            function filterLogsByLevel() {
-                const selectedLevel = $('#log-level-filter').val();
-                
-                if (!selectedLevel) {
-                    filteredLogData = [...currentLogData];
-                } else {
-                    filteredLogData = currentLogData.filter(log => log.level === selectedLevel);
-                }
-                
-                renderLogs();
-                
-                // Auto-scroll to bottom if enabled
-                if ($('#auto-scroll-logs').prop('checked')) {
-                    setTimeout(autoScrollToBottom, 100);
-                }
-            }
-            
-            function clearLogDisplay() {
-                $('#log-content').html('<div style="text-align: center; color: #888; padding: 40px;">Log display cleared</div>');
-            }
-            
-            function toggleLineWrap() {
-                renderLogs();
-            }
-            
-            function autoScrollToBottom() {
-                const logContainer = document.getElementById('log-content');
-                if (logContainer) {
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
-            }
-            
-            function exportLogs() {
-                if (!currentLogData || currentLogData.length === 0) {
-                    showToast('No logs to export', 'warning');
-                    return;
-                }
-                
-                const postId = $('#log-post-id').text();
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const filename = `smartlink-logs-post-${postId}-${timestamp}.txt`;
-                
-                // Use filtered data if filter is active
-                const dataToExport = filteredLogData.length > 0 ? filteredLogData : currentLogData;
-                
-                const logText = dataToExport.map(log => log.original).join('\n');
-                
-                // Create and download file
-                const blob = new Blob([logText], { type: 'text/plain' });
-                const url = window.URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(url);
-                
-                showToast('Logs exported successfully', 'success');
+                loadLogs(postId);
             }
             
             function closeLogsModal() {
                 $('#logs-modal').fadeOut();
-                currentLogData = [];
-                filteredLogData = [];
+            }
+            
+            // ========== POST CONFIGURATION ==========
+            
+            function openAddConfigModal() {
+                $('#config-mode').val('add');
+                $('#config-modal-title').text('Add Post Configuration');
+                $('#save-config-text').text('Save Configuration');
+                $('#post-config-form')[0].reset();
+                $('#config-post-id').prop('disabled', false);
+                
+                // Reset to single URL
+                $('#source-urls-container').html(`
+                    <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <input type="url" class="source-url-input smartlink-input" placeholder="https://example.com/links/" required
+                               style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                        <button type="button" class="button remove-url-btn" style="display: none;">
+                            <span class="dashicons dashicons-no-alt"></span>
+                        </button>
+                    </div>
+                `);
+                
+                $('#post-config-modal').fadeIn();
+            }
+            
+            function openEditConfigModal(e) {
+                const postId = parseInt($(e.currentTarget).data('post-id'));
+                
+                $('#config-mode').val('edit');
+                $('#config-modal-title').text('Edit Post Configuration');
+                $('#save-config-text').text('Update Configuration');
+                $('#config-post-id').val(postId).prop('disabled', true);
+                
+                // Load existing configuration
+                showToast('Loading configuration...', 'info');
+                
+                $.ajax({
+                    url: config.restUrl + '/config/post/' + postId,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(postConfig) {
+                        console.log('Loaded config:', postConfig);
+                        
+                        // Populate source URLs
+                        const sourceUrls = postConfig.source_urls || [];
+                        $('#source-urls-container').empty();
+                        
+                        sourceUrls.forEach(function(url, index) {
+                            const showRemove = sourceUrls.length > 1;
+                            $('#source-urls-container').append(`
+                                <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                    <input type="url" class="source-url-input smartlink-input" value="${url}" required
+                                           style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <button type="button" class="button remove-url-btn" style="${showRemove ? '' : 'display: none;'}">
+                                        <span class="dashicons dashicons-no-alt"></span>
+                                    </button>
+                                </div>
+                            `);
+                        });
+                        
+                        // Set timezone
+                        $('#config-timezone').val(postConfig.timezone || 'Asia/Kolkata');
+                        
+                        // Set extractor mode
+                        const extractorMap = postConfig.extractor_map || {};
+                        const hasExtractorMap = Object.keys(extractorMap).length > 0;
+                        const globalExtractor = postConfig.extractor;
+                        
+                        if (hasExtractorMap) {
+                            $('input[name="extractor-mode"][value="per-url"]').prop('checked', true);
+                            toggleExtractorMode();
+                            updateExtractorMapping();
+                            
+                            // Populate extractor map
+                            Object.keys(extractorMap).forEach(function(url) {
+                                $(`select[data-url="${url}"]`).val(extractorMap[url]);
+                            });
+                        } else if (globalExtractor) {
+                            $('input[name="extractor-mode"][value="global"]').prop('checked', true);
+                            toggleExtractorMode();
+                            $('#global-extractor').val(globalExtractor);
+                        } else {
+                            $('input[name="extractor-mode"][value="auto"]').prop('checked', true);
+                            toggleExtractorMode();
+                        }
+                        
+                        $('#post-config-modal').fadeIn();
+                    },
+                    error: function(xhr) {
+                        showToast('Failed to load configuration: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
+                    }
+                });
+            }
+            
+            function savePostConfig() {
+                const mode = $('#config-mode').val();
+                const postId = parseInt($('#config-post-id').val());
+                
+                if (!postId) {
+                    showToast('Please enter a post ID', 'error');
+                    return;
+                }
+                
+                // Collect source URLs
+                const sourceUrls = [];
+                $('.source-url-input').each(function() {
+                    const url = $(this).val().trim();
+                    if (url) {
+                        sourceUrls.push(url);
+                    }
+                });
+                
+                if (sourceUrls.length === 0) {
+                    showToast('Please add at least one source URL', 'error');
+                    return;
+                }
+                
+                // Build configuration object
+                const configData = {
+                    post_id: postId,
+                    source_urls: sourceUrls,
+                    timezone: $('#config-timezone').val()
+                };
+                
+                // Handle extractor configuration
+                const extractorMode = $('input[name="extractor-mode"]:checked').val();
+                
+                if (extractorMode === 'global') {
+                    const globalExtractor = $('#global-extractor').val();
+                    if (globalExtractor) {
+                        configData.extractor = globalExtractor;
+                    }
+                } else if (extractorMode === 'per-url') {
+                    const extractorMap = {};
+                    $('.extractor-url-mapping').each(function() {
+                        const url = $(this).data('url');
+                        const extractor = $(this).val();
+                        if (extractor) {
+                            extractorMap[url] = extractor;
+                        }
+                    });
+                    if (Object.keys(extractorMap).length > 0) {
+                        configData.extractor_map = extractorMap;
+                    }
+                }
+                
+                // Disable button and show loading
+                const $btn = $('#save-config-btn');
+                $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
+                
+                // Send to API
+                const method = mode === 'add' ? 'POST' : 'PUT';
+                const url = mode === 'add' 
+                    ? config.restUrl + '/config/post'
+                    : config.restUrl + '/config/post/' + postId;
+                
+                $.ajax({
+                    url: url,
+                    method: method,
+                    contentType: 'application/json',
+                    data: JSON.stringify(configData),
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        showToast(mode === 'add' ? 'Configuration added successfully!' : 'Configuration updated successfully!', 'success');
+                        $('#post-config-modal').fadeOut();
+                        loadPosts(); // Refresh posts table
+                    },
+                    error: function(xhr) {
+                        showToast('Failed to save configuration: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
+                    },
+                    complete: function() {
+                        $btn.prop('disabled', false).html(
+                            '<span class="dashicons dashicons-yes"></span><span id="save-config-text">' + 
+                            (mode === 'add' ? 'Save Configuration' : 'Update Configuration') + '</span>'
+                        );
+                    }
+                });
+            }
+            
+            function addSourceUrlField() {
+                const newField = $(`
+                    <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <input type="url" class="source-url-input smartlink-input" placeholder="https://example.com/links/" required
+                               style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                        <button type="button" class="button remove-url-btn">
+                            <span class="dashicons dashicons-no-alt"></span>
+                        </button>
+                    </div>
+                `);
+                
+                $('#source-urls-container').append(newField);
+                
+                // Show remove buttons if we have multiple URLs
+                if ($('.source-url-row').length > 1) {
+                    $('.remove-url-btn').show();
+                }
+                
+                // Update extractor mapping if in per-url mode
+                const extractorMode = $('input[name="extractor-mode"]:checked').val();
+                if (extractorMode === 'per-url') {
+                    updateExtractorMapping();
+                }
+            }
+            
+            function removeSourceUrlField(e) {
+                $(e.currentTarget).closest('.source-url-row').remove();
+                
+                // Hide remove buttons if only one URL left
+                if ($('.source-url-row').length === 1) {
+                    $('.remove-url-btn').hide();
+                }
+                
+                // Update extractor mapping if in per-url mode
+                const extractorMode = $('input[name="extractor-mode"]:checked').val();
+                if (extractorMode === 'per-url') {
+                    updateExtractorMapping();
+                }
+            }
+            
+            function toggleExtractorMode() {
+                const mode = $('input[name="extractor-mode"]:checked').val();
+                
+                $('#global-extractor-config').hide();
+                $('#per-url-extractor-config').hide();
+                
+                if (mode === 'global') {
+                    $('#global-extractor-config').show();
+                } else if (mode === 'per-url') {
+                    $('#per-url-extractor-config').show();
+                    updateExtractorMapping();
+                }
+            }
+            
+            function updateExtractorMapping() {
+                const container = $('#extractor-mapping-container');
+                container.empty();
+                
+                $('.source-url-input').each(function(index) {
+                    const url = $(this).val().trim();
+                    if (!url) return;
+                    
+                    container.append(`
+                        <div style="margin-bottom: 12px; padding: 12px; background: #f9f9f9; border-radius: 8px;">
+                            <label style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; color: #555;">
+                                URL ${index + 1}: ${url.length > 50 ? url.substring(0, 50) + '...' : url}
+                            </label>
+                            <select class="extractor-url-mapping smartlink-select" data-url="${url}" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
+                                <option value="">Auto-detect</option>
+                                <option value="simplegameguide">Simple Game Guide</option>
+                                <option value="mosttechs">Most Techs</option>
+                                <option value="crazyashwin">Crazy Ashwin</option>
+                                <option value="techyhigher">Techy Higher</option>
+                                <option value="default">Default Extractor</option>
+                            </select>
+                        </div>
+                    `);
+                });
             }
             
             // ========== TOAST NOTIFICATIONS ==========
@@ -2449,397 +1912,6 @@ class SmartLinkUpdater {
                 setTimeout(function() {
                     toast.fadeOut();
                 }, 4000);
-            }
-            
-            // ========== SORTING ==========
-            
-            let currentSort = { column: null, direction: null };
-            
-            function handleSort(e) {
-                const header = $(e.currentTarget);
-                const column = header.data('sort');
-                const currentDirection = header.find('.sort-indicator').hasClass('asc') ? 'asc' 
-                    : header.find('.sort-indicator').hasClass('desc') ? 'desc' : null;
-                
-                let newDirection;
-                if (currentDirection === null) {
-                    newDirection = 'asc';
-                } else if (currentDirection === 'asc') {
-                    newDirection = 'desc';
-                } else {
-                    newDirection = null;
-                }
-                
-                // Clear all sort indicators
-                $('.sort-indicator').removeClass('asc desc');
-                
-                // Set new sort indicator
-                if (newDirection) {
-                    header.find('.sort-indicator').addClass(newDirection);
-                    currentSort = { column: column, direction: newDirection };
-                } else {
-                    currentSort = { column: null, direction: null };
-                }
-                
-                // Apply sort
-                applySorting();
-            }
-            
-            function applySorting() {
-                if (!currentSort.column) {
-                    // No sorting, use original order
-                    renderPostsTable(postsData);
-                    return;
-                }
-                
-                const sortedData = [...filteredPostsData].sort((a, b) => {
-                    let aVal = getSortValue(a, currentSort.column);
-                    let bVal = getSortValue(b, currentSort.column);
-                    
-                    // Handle null/undefined values
-                    if (aVal == null && bVal == null) return 0;
-                    if (aVal == null) return currentSort.direction === 'asc' ? 1 : -1;
-                    if (bVal == null) return currentSort.direction === 'asc' ? -1 : 1;
-                    
-                    // Compare values
-                    if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
-                    if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
-                    return 0;
-                });
-                
-                renderSortedTable(sortedData);
-            }
-            
-            function getSortValue(post, column) {
-                switch (column) {
-                    case 'post_id':
-                        return parseInt(post.post_id);
-                    case 'title':
-                        // Get title from the table cell since we fetch it asynchronously
-                        const titleCell = $('#posts-table-body tr[data-post-id="' + post.post_id + '"] td:nth-child(3)');
-                        return titleCell.text().toLowerCase();
-                    case 'extractor':
-                        return (post.extractor || 'default').toLowerCase();
-                    case 'health_status':
-                        const healthOrder = { 'healthy': 0, 'warning': 1, 'critical': 2, 'unknown': 3 };
-                        return healthOrder[post.health_status] ?? 3;
-                    case 'updated_at':
-                        return post.updated_at ? new Date(post.updated_at).getTime() : 0;
-                    default:
-                        return '';
-                }
-            }
-            
-            function renderSortedTable(sortedPosts) {
-                const tbody = $('#posts-table-body');
-                
-                // Clear tbody
-                tbody.empty();
-                
-                if (sortedPosts.length === 0) {
-                    tbody.append('<tr class="no-results-row"><td colspan="9" style="text-align: center; padding: 40px; color: #666;">No posts match the current filters.</td></tr>');
-                    return;
-                }
-                
-                // Re-render posts in sorted order
-                sortedPosts.forEach(function(post) {
-                    // Find existing row and move it, or create new row
-                    let existingRow = tbody.find('tr[data-post-id="' + post.post_id + '"]');
-                    if (existingRow.length === 0) {
-                        // Create new row (shouldn't happen but safety)
-                        renderSinglePost(post, tbody);
-                    } else {
-                        // Move existing row to maintain sorting
-                        tbody.append(existingRow);
-                    }
-                });
-                
-                updateSelectedCount();
-            }
-            
-            // ========== BATCH OPERATIONS ==========
-            
-            function toggleBatchOperationsMenu(e) {
-                e.stopPropagation();
-                const menu = $('#batch-operations-menu');
-                menu.toggle();
-            }
-            
-            function handleBatchOperation(e) {
-                const action = $(e.currentTarget).data('action');
-                const selectedIds = getSelectedPostIds();
-                
-                if (selectedIds.length === 0) {
-                    showToast('No posts selected', 'warning');
-                    return;
-                }
-                
-                // Close dropdown
-                $('#batch-operations-menu').hide();
-                
-                switch (action) {
-                    case 'reset-health':
-                        batchResetHealth(selectedIds);
-                        break;
-                    case 'delete-selected':
-                        batchDeleteConfigs(selectedIds);
-                        break;
-                    case 'export-selected':
-                        batchExportConfigs(selectedIds);
-                        break;
-                    case 'recheck-health':
-                        batchRecheckHealth(selectedIds);
-                        break;
-                    default:
-                        showToast('Unknown action: ' + action, 'error');
-                }
-            }
-            
-            function batchResetHealth(postIds) {
-                if (!confirm(`Reset health status to "Unknown" for ${postIds.length} post(s)?`)) {
-                    return;
-                }
-                
-                showToast('Resetting health status...', 'info');
-                
-                // Reset health for each selected post
-                const promises = postIds.map(postId => {
-                    return $.ajax({
-                        url: config.restUrl + '/posts/' + postId + '/health',
-                        method: 'DELETE',
-                        beforeSend: function(xhr) {
-                            xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                        }
-                    });
-                });
-                
-                Promise.allSettled(promises).then(results => {
-                    const successful = results.filter(r => r.status === 'fulfilled').length;
-                    const failed = results.length - successful;
-                    
-                    if (successful > 0) {
-                        showToast(`Health reset for ${successful} post(s)`, 'success');
-                        loadPosts(); // Refresh the table
-                    }
-                    if (failed > 0) {
-                        showToast(`Failed to reset health for ${failed} post(s)`, 'error');
-                    }
-                });
-            }
-            
-            function batchDeleteConfigs(postIds) {
-                if (!confirm(`Are you sure you want to delete configurations for ${postIds.length} post(s)?\n\nThis action cannot be undone.`)) {
-                    return;
-                }
-                
-                showToast('Deleting configurations...', 'info');
-                
-                const promises = postIds.map(postId => {
-                    return $.ajax({
-                        url: config.restUrl + '/posts/' + postId,
-                        method: 'DELETE',
-                        beforeSend: function(xhr) {
-                            xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                        }
-                    });
-                });
-                
-                Promise.allSettled(promises).then(results => {
-                    const successful = results.filter(r => r.status === 'fulfilled').length;
-                    const failed = results.length - successful;
-                    
-                    if (successful > 0) {
-                        showToast(`Deleted ${successful} configuration(s)`, 'success');
-                        loadPosts(); // Refresh the table
-                    }
-                    if (failed > 0) {
-                        showToast(`Failed to delete ${failed} configuration(s)`, 'error');
-                    }
-                });
-            }
-            
-            function batchExportConfigs(postIds) {
-                showToast('Exporting configurations...', 'info');
-                
-                // Get configurations for selected posts
-                const selectedPosts = postsData.filter(post => postIds.includes(post.post_id));
-                
-                const exportData = {
-                    export_info: {
-                        timestamp: new Date().toISOString(),
-                        post_count: selectedPosts.length,
-                        exported_by: 'SmartLink Updater WordPress Plugin'
-                    },
-                    configurations: selectedPosts
-                };
-                
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const filename = `smartlink-configs-${selectedPosts.length}-posts-${timestamp}.json`;
-                
-                // Create and download file
-                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                const url = window.URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = filename;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(url);
-                
-                showToast(`Exported ${selectedPosts.length} configuration(s)`, 'success');
-            }
-            
-            function batchRecheckHealth(postIds) {
-                if (!confirm(`Re-check health status for ${postIds.length} post(s)?`)) {
-                    return;
-                }
-                
-                showToast('Re-checking health status...', 'info');
-                
-                const promises = postIds.map(postId => {
-                    return $.ajax({
-                        url: config.restUrl + '/posts/' + postId + '/health/check',
-                        method: 'POST',
-                        beforeSend: function(xhr) {
-                            xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                        }
-                    });
-                });
-                
-                Promise.allSettled(promises).then(results => {
-                    const successful = results.filter(r => r.status === 'fulfilled').length;
-                    const failed = results.length - successful;
-                    
-                    if (successful > 0) {
-                        showToast(`Health check completed for ${successful} post(s)`, 'success');
-                        loadPosts(); // Refresh the table
-                    }
-                    if (failed > 0) {
-                        showToast(`Health check failed for ${failed} post(s)`, 'error');
-                    }
-                });
-            }
-            
-            // ========== FILTERING AND SEARCH ==========
-            
-            let filteredPostsData = [];
-            
-            function debounce(func, wait) {
-                let timeout;
-                return function executedFunction(...args) {
-                    const later = function() {
-                        clearTimeout(timeout);
-                        func(...args);
-                    };
-                    clearTimeout(timeout);
-                    timeout = setTimeout(later, wait);
-                };
-            }
-            
-            function applyFilters() {
-                const searchTerm = $('#search-posts').val().toLowerCase();
-                const healthFilter = $('#filter-health').val();
-                const extractorFilter = $('#filter-extractor').val();
-                
-                filteredPostsData = postsData.filter(function(post) {
-                    // Search filter
-                    if (searchTerm) {
-                        const matchesId = post.post_id.toString().toLowerCase().includes(searchTerm);
-                        const postTitle = $('#posts-table-body tr[data-post-id="' + post.post_id + '"] td:nth-child(3)').text().toLowerCase();
-                        const matchesTitle = postTitle.includes(searchTerm);
-                        if (!matchesId && !matchesTitle) return false;
-                    }
-                    
-                    // Health filter
-                    if (healthFilter && post.health_status !== healthFilter) {
-                        return false;
-                    }
-                    
-                    // Extractor filter
-                    if (extractorFilter && (post.extractor || 'default') !== extractorFilter) {
-                        return false;
-                    }
-                    
-                    return true;
-                });
-                
-                renderFilteredTable();
-                updateFilteredStats();
-                
-                // Re-apply sorting if active
-                if (currentSort.column) {
-                    applySorting();
-                }
-            }
-            
-            function renderFilteredTable() {
-                const tbody = $('#posts-table-body');
-                const allRows = tbody.find('tr');
-                
-                // Hide all rows first
-                allRows.hide();
-                
-                // Show matching rows
-                filteredPostsData.forEach(function(post) {
-                    tbody.find('tr[data-post-id="' + post.post_id + '"]').show();
-                });
-                
-                // Show "no results" message if needed
-                if (filteredPostsData.length === 0) {
-                    const existingNoResults = tbody.find('.no-results-row');
-                    if (existingNoResults.length === 0) {
-                        tbody.append('<tr class="no-results-row"><td colspan="9" style="text-align: center; padding: 40px; color: #666;">No posts match the current filters.</td></tr>');
-                    }
-                    existingNoResults.show();
-                } else {
-                    tbody.find('.no-results-row').hide();
-                }
-                
-                updateSelectedCount();
-            }
-            
-            function updateFilteredStats() {
-                const total = filteredPostsData.length;
-                const healthy = filteredPostsData.filter(p => p.health_status === 'healthy').length;
-                const warning = filteredPostsData.filter(p => p.health_status === 'warning').length;
-                const critical = filteredPostsData.filter(p => p.health_status === 'critical').length;
-                
-                // Update stats with filtered data
-                $('#stat-total-posts').text(total);
-                // Note: We'll update these when the filtering is more integrated with health stats
-            }
-            
-            function clearFilters() {
-                $('#search-posts').val('');
-                $('#filter-health').val('');
-                $('#filter-extractor').val('');
-                
-                // Clear sorting
-                $('.sort-indicator').removeClass('asc desc');
-                currentSort = { column: null, direction: null };
-                
-                // Show all rows and remove no-results message
-                $('#posts-table-body tr').show();
-                $('#posts-table-body .no-results-row').remove();
-                
-                // Reset filtered data to all data and re-render to original order
-                filteredPostsData = [...postsData];
-                renderPostsTable(postsData);
-                updateStatistics(postsData);
-            }
-            
-            function populateExtractorFilter() {
-                const extractors = [...new Set(postsData.map(post => post.extractor || 'default'))];
-                const select = $('#filter-extractor');
-                
-                // Clear existing options except first
-                select.find('option:not(:first)').remove();
-                
-                // Add extractor options
-                extractors.forEach(function(extractor) {
-                    select.append(`<option value="${extractor}">${extractor}</option>`);
-                });
             }
             
             // ========== UTILITIES ==========
@@ -3013,82 +2085,218 @@ class SmartLinkUpdater {
     public function render_admin_page() {
         ?>
         <div class="wrap smartlink-dashboard-wrap">
-            <h1>
-                <span class="dashicons dashicons-update"></span>
-                SmartLink Updater Dashboard
-            </h1>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 20px 0;">
+                <h1 style="margin: 0;">
+                    <span class="dashicons dashicons-update"></span>
+                    SmartLink Updater Dashboard
+                </h1>
+                <button type="button" id="add-new-config-btn" class="button button-primary" style="font-size: 16px; padding: 10px 20px; height: auto;">
+                    <span class="dashicons dashicons-plus-alt"></span>
+                    Add New Config
+                </button>
+            </div>
             
             <!-- Notification Toast -->
             <div id="smartlink-toast" class="smartlink-toast" style="display: none;"></div>
             
-            <!-- Statistics Dashboard -->
-            <div class="smartlink-stats-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0;">
-                <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">Total Posts</div>
-                            <div id="stat-total-posts" style="font-size: 32px; font-weight: 700; line-height: 1.2;">-</div>
+            <!-- Cron Schedule Status -->
+            <div id="cron-status-banner" class="cron-status-disabled" style="padding: 20px 25px; border-radius: 12px; margin: 20px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; transition: all 0.3s ease;">
+                <div style="display: flex; align-items: center; gap: 15px; flex: 1;">
+                    <span class="dashicons dashicons-clock" id="cron-icon" style="font-size: 32px; width: 32px; height: 32px;"></span>
+                    <div>
+                        <h3 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600;">Scheduled Updates</h3>
+                        <div id="cron-status-info" style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 14px;">
+                            <div><strong>Status:</strong> <span id="cron-status-text">Loading...</span></div>
+                            <div id="cron-schedule-info" style="display: none;"><strong>Schedule:</strong> <span id="cron-schedule-display">-</span></div>
+                            <div id="cron-posts-info" style="display: none;"><strong>Posts:</strong> <span id="cron-posts-display">0</span></div>
+                            <div id="cron-lastrun-info" style="display: none;"><strong>Last Run:</strong> <span id="cron-last-run-display">Never</span></div>
+                            <div id="cron-nextrun-info" style="display: none;"><strong>Next Run:</strong> <span id="cron-next-run-display">-</span></div>
                         </div>
-                        <span class="dashicons dashicons-list-view" style="font-size: 48px; width: 48px; height: 48px; opacity: 0.3; line-height: 48px;"></span>
                     </div>
                 </div>
-                
-                <div class="stat-card" style="background: linear-gradient(135deg, #55efc4 0%, #00b894 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 184, 148, 0.3);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">Active Updates</div>
-                            <div id="stat-active-updates" style="font-size: 32px; font-weight: 700; line-height: 1.2;">0</div>
-                        </div>
-                        <span class="dashicons dashicons-update spin-icon" style="font-size: 48px; width: 48px; height: 48px; opacity: 0.3; line-height: 48px;"></span>
-                    </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button type="button" id="view-cron-history-btn" class="button" style="background: white; color: #2d3436; border: 2px solid rgba(0,0,0,0.2); font-weight: 600; transition: all 0.2s;">
+                        <span class="dashicons dashicons-backup"></span>
+                        History
+                    </button>
+                    <button type="button" id="configure-cron-btn" class="button" style="background: white; color: #2d3436; border: 2px solid rgba(0,0,0,0.2); font-weight: 600; transition: all 0.2s;">
+                        <span class="dashicons dashicons-admin-generic"></span>
+                        Configure
+                    </button>
+                    <button type="button" id="toggle-cron-btn" class="button button-primary" style="min-width: 140px; font-weight: 600; transition: all 0.2s;">
+                        <span class="dashicons dashicons-controls-play"></span>
+                        <span id="toggle-cron-text">Enable</span>
+                    </button>
                 </div>
-                
-                <div class="stat-card" style="background: linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(108, 92, 231, 0.3);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">Success Rate</div>
-                            <div id="stat-success-rate" style="font-size: 32px; font-weight: 700; line-height: 1.2;">-</div>
-                        </div>
-                        <span class="dashicons dashicons-chart-line" style="font-size: 48px; width: 48px; height: 48px; opacity: 0.3; line-height: 48px;"></span>
+            </div>
+            
+            <!-- Cron Configuration Modal -->
+            <div id="cron-modal" class="smartlink-modal" style="display: none;">
+                <div class="smartlink-modal-content" style="max-width: 600px;">
+                    <div class="smartlink-modal-header">
+                        <h2>
+                            <span class="dashicons dashicons-clock"></span>
+                            Configure Scheduled Updates
+                        </h2>
+                        <button type="button" class="close-modal" onclick="document.getElementById('cron-modal').style.display='none'">×</button>
                     </div>
-                </div>
-                
-                <div class="stat-card" style="background: linear-gradient(135deg, #ff7675 0%, #d63031 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(214, 48, 49, 0.3);">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">Failed Updates</div>
-                            <div id="stat-failed-updates" style="font-size: 32px; font-weight: 700; line-height: 1.2;">0</div>
+                    <div class="smartlink-modal-body">
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: flex; align-items: center; gap: 8px; font-weight: 600; color: #333; cursor: pointer;">
+                                <input type="checkbox" id="cron-enabled" style="width: 18px; height: 18px;">
+                                Enable automatic scheduled updates
+                            </label>
+                            <p style="color: #666; font-size: 13px; margin: 8px 0 0 26px;">
+                                When enabled, all configured posts will be automatically updated on the schedule below
+                            </p>
                         </div>
-                        <span class="dashicons dashicons-warning" style="font-size: 48px; width: 48px; height: 48px; opacity: 0.3; line-height: 48px;"></span>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                <span class="dashicons dashicons-clock" style="font-size: 16px; vertical-align: middle;"></span>
+                                Update Frequency
+                            </label>
+                            <select id="cron-schedule" class="smartlink-select" style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                <option value="every_5_minutes">Every 5 Minutes (Testing Only)</option>
+                                <option value="every_15_minutes">Every 15 Minutes</option>
+                                <option value="every_30_minutes">Every 30 Minutes</option>
+                                <option value="hourly" selected>Every Hour</option>
+                                <option value="twicedaily">Twice Daily (12 hours)</option>
+                                <option value="daily">Once Daily (24 hours)</option>
+                            </select>
+                            <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                All configured posts will be updated at this frequency
+                            </p>
+                        </div>
+                        
+                        <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 18px; border-radius: 10px; border-left: 4px solid #667eea;">
+                            <div style="display: flex; align-items: start; gap: 10px;">
+                                <span style="font-size: 24px;">💡</span>
+                                <div>
+                                    <strong style="color: #667eea; font-size: 14px;">How it works:</strong>
+                                    <p style="margin: 8px 0 0 0; font-size: 13px; color: #555; line-height: 1.6;">
+                                        Every time the schedule triggers, WordPress will automatically update <strong>all</strong> your configured posts. Choose a frequency that balances keeping content fresh with server load.
+                                    </p>
+                                    <p style="margin: 8px 0 0 0; font-size: 12px; color: #888;">
+                                        💡 <em>Tip: Start with "Every Hour" and adjust based on your needs.</em>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="smartlink-modal-footer">
+                        <button type="button" class="button" onclick="document.getElementById('cron-modal').style.display='none'" style="margin-right: 10px;">Cancel</button>
+                        <button type="button" id="save-cron-btn" class="button button-primary">
+                            <span class="dashicons dashicons-yes"></span>
+                            Save Settings
+                        </button>
                     </div>
                 </div>
             </div>
             
-            <!-- Search and Filters -->
-            <div class="smartlink-filters-container" style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08); display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
-                <div class="filter-group" style="display: flex; gap: 10px; align-items: center;">
-                    <label for="search-posts" style="font-weight: 600; color: #333;">Search:</label>
-                    <input type="text" id="search-posts" placeholder="Search by Post ID or Title..." style="padding: 8px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; min-width: 250px; transition: border-color 0.3s;">
+            <!-- Cron History Modal -->
+            <div id="cron-history-modal" class="smartlink-modal" style="display: none;">
+                <div class="smartlink-modal-content" style="max-width: 900px;">
+                    <div class="smartlink-modal-header">
+                        <h2>
+                            <span class="dashicons dashicons-backup"></span>
+                            Scheduled Update History
+                        </h2>
+                        <button type="button" class="close-modal" onclick="document.getElementById('cron-history-modal').style.display='none'">×</button>
+                    </div>
+                    <div class="smartlink-modal-body">
+                        <div id="cron-history-content" style="max-height: 500px; overflow-y: auto;">
+                            <div style="text-align: center; padding: 40px;">
+                                <span class="spinner is-active" style="float: none;"></span>
+                                <p>Loading history...</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="smartlink-modal-footer">
+                        <button type="button" class="button" onclick="document.getElementById('cron-history-modal').style.display='none'">Close</button>
+                        <button type="button" id="refresh-cron-history" class="button">
+                            <span class="dashicons dashicons-image-rotate"></span>
+                            Refresh
+                        </button>
+                    </div>
                 </div>
-                <div class="filter-group" style="display: flex; gap: 10px; align-items: center;">
-                    <label for="filter-health" style="font-weight: 600; color: #333;">Health:</label>
-                    <select id="filter-health" class="smartlink-select" style="padding: 8px 12px; border: 2px solid #ddd; border-radius: 6px;">
-                        <option value="">All Health States</option>
-                        <option value="healthy">Healthy</option>
-                        <option value="warning">Warning</option>
-                        <option value="critical">Critical</option>
-                        <option value="unknown">Unknown</option>
-                    </select>
+            </div>
+            
+            <!-- Search and Filter Section -->
+            <div class="smartlink-search-filter" style="background: white; padding: 20px 25px; border-radius: 12px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #e0e0e0;">
+                <div style="display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
+                    <!-- Search Box -->
+                    <div style="flex: 1; min-width: 250px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-size: 13px;">
+                            <span class="dashicons dashicons-search" style="font-size: 14px;"></span>
+                            Search Posts
+                        </label>
+                        <input type="text" id="search-posts" placeholder="Search by title or ID..." style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; transition: border-color 0.2s;">
+                    </div>
+                    
+                    <!-- Extractor Filter -->
+                    <div style="min-width: 180px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-size: 13px;">
+                            <span class="dashicons dashicons-admin-tools" style="font-size: 14px;"></span>
+                            Extractor
+                        </label>
+                        <select id="filter-extractor" style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; background: white;">
+                            <option value="">All Extractors</option>
+                            <option value="simplegameguide">Simple Game Guide</option>
+                            <option value="techyhigher">Techy Higher</option>
+                            <option value="mosttechs">Most Techs</option>
+                            <option value="crazyashwin">Crazy Ashwin</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Health Filter -->
+                    <div style="min-width: 150px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-size: 13px;">
+                            <span class="dashicons dashicons-heart" style="font-size: 14px;"></span>
+                            Health
+                        </label>
+                        <select id="filter-health" style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; background: white;">
+                            <option value="">All Health</option>
+                            <option value="healthy">Healthy</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Status Filter -->
+                    <div style="min-width: 150px;">
+                        <label style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-size: 13px;">
+                            <span class="dashicons dashicons-info" style="font-size: 14px;"></span>
+                            Status
+                        </label>
+                        <select id="filter-status" style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; background: white;">
+                            <option value="">All Status</option>
+                            <option value="idle">Idle</option>
+                            <option value="updating">Updating</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div style="display: flex; gap: 8px;">
+                        <button type="button" id="apply-filters" class="button button-primary" style="padding: 10px 20px; height: auto;">
+                            <span class="dashicons dashicons-filter"></span>
+                            Apply
+                        </button>
+                        <button type="button" id="clear-filters" class="button" style="padding: 10px 20px; height: auto;">
+                            <span class="dashicons dashicons-dismiss"></span>
+                            Clear
+                        </button>
+                    </div>
                 </div>
-                <div class="filter-group" style="display: flex; gap: 10px; align-items: center;">
-                    <label for="filter-extractor" style="font-weight: 600; color: #333;">Extractor:</label>
-                    <select id="filter-extractor" class="smartlink-select" style="padding: 8px 12px; border: 2px solid #ddd; border-radius: 6px;">
-                        <option value="">All Extractors</option>
-                        <!-- Options will be populated dynamically -->
-                    </select>
-                </div>
-                <div class="filter-group" style="margin-left: auto;">
-                    <button type="button" id="clear-filters" class="button" style="background: #f1f1f1; color: #666; border: 1px solid #ddd;">Clear Filters</button>
+                
+                <!-- Active Filters Display -->
+                <div id="active-filters" style="margin-top: 15px; display: none;">
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <span style="font-weight: 600; color: #666; font-size: 13px;">Active Filters:</span>
+                        <div id="filter-tags" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+                    </div>
                 </div>
             </div>
             
@@ -3115,33 +2323,6 @@ class SmartLinkUpdater {
                         <span class="dashicons dashicons-update"></span>
                         Update Selected (<span id="selected-count">0</span>)
                     </button>
-                    
-                    <!-- Batch Operations Dropdown -->
-                    <div class="batch-operations-dropdown" style="position: relative; display: inline-block; margin-left: 10px;">
-                        <button type="button" id="batch-operations-btn" class="button" disabled>
-                            <span class="dashicons dashicons-admin-tools"></span>
-                            More Actions
-                            <span class="dashicons dashicons-arrow-down-alt2" style="font-size: 12px; margin-left: 4px;"></span>
-                        </button>
-                        <div id="batch-operations-menu" class="batch-dropdown-menu" style="display: none;">
-                            <button type="button" class="batch-operation-item" data-action="reset-health">
-                                <span class="dashicons dashicons-heart"></span>
-                                Reset Health for Selected
-                            </button>
-                            <button type="button" class="batch-operation-item" data-action="delete-selected">
-                                <span class="dashicons dashicons-trash"></span>
-                                Delete Selected Configs
-                            </button>
-                            <button type="button" class="batch-operation-item" data-action="export-selected">
-                                <span class="dashicons dashicons-download"></span>
-                                Export Selected Configs
-                            </button>
-                            <button type="button" class="batch-operation-item" data-action="recheck-health">
-                                <span class="dashicons dashicons-editor-help"></span>
-                                Re-check Health Status
-                            </button>
-                        </div>
-                    </div>
                 </div>
                 <div class="batch-controls-right">
                     <button type="button" id="refresh-posts" class="button">
@@ -3178,33 +2359,22 @@ class SmartLinkUpdater {
                 <table class="wp-list-table widefat fixed striped smartlink-posts-table">
                     <thead>
                         <tr>
-                            <th scope="col" class="manage-column column-cb check-column">
-                                <input type="checkbox" id="select-all-posts">
-                            </th>
-                            <th scope="col" class="manage-column sortable-header" data-sort="post_id">
-                                Post ID <span class="sort-indicator"></span>
-                            </th>
-                            <th scope="col" class="manage-column column-title sortable-header" data-sort="title">
-                                Title <span class="sort-indicator"></span>
-                            </th>
-                            <th scope="col" class="manage-column sortable-header" data-sort="extractor">
-                                Extractor <span class="sort-indicator"></span>
-                            </th>
-                            <th scope="col" class="manage-column sortable-header" data-sort="health_status">
-                                Health <span class="sort-indicator"></span>
-                            </th>
-                            <th scope="col" class="manage-column sortable-header" data-sort="updated_at">
-                                Last Updated <span class="sort-indicator"></span>
-                            </th>
-                            <th scope="col" class="manage-column">Status</th>
-                            <th scope="col" class="manage-column">Progress</th>
-                            <th scope="col" class="manage-column column-actions">Actions</th>
+                            <td class="manage-column column-cb check-column">
+                                <input type="checkbox" id="cb-select-all">
+                            </td>
+                            <th class="manage-column column-post-id">Post ID</th>
+                            <th class="manage-column column-title">Title</th>
+                            <th class="manage-column column-extractor">Extractor</th>
+                            <th class="manage-column column-health">Health</th>
+                            <th class="manage-column column-status">Status</th>
+                            <th class="manage-column column-progress">Progress</th>
+                            <th class="manage-column column-actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="posts-table-body">
                         <tr>
-                            <td colspan="9" style="text-align: center; padding: 40px;">
-                                <span class="spinner is-active"></span>
+                            <td colspan="8" class="loading-row">
+                                <span class="spinner is-active" style="float: none; margin: 0;"></span>
                                 Loading posts...
                             </td>
                         </tr>
@@ -3214,58 +2384,17 @@ class SmartLinkUpdater {
             
             <!-- Logs Modal -->
             <div id="logs-modal" class="smartlink-modal" style="display: none;">
-                <div class="smartlink-modal-content" style="max-width: 1200px;">
+                <div class="smartlink-modal-content">
                     <div class="smartlink-modal-header">
-                        <h2>
-                            <span class="dashicons dashicons-media-text"></span>
-                            Update Logs: Post <span id="log-post-id"></span>
-                        </h2>
+                        <h2>Update Logs: Post <span id="log-post-id"></span></h2>
                         <button type="button" class="close-modal">
                             <span class="dashicons dashicons-no-alt"></span>
                         </button>
                     </div>
-                    
-                    <!-- Log Controls -->
-                    <div class="log-controls" style="padding: 15px 30px; border-bottom: 1px solid #e0e0e0; background: #fafafa; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                        <div class="control-group" style="display: flex; gap: 8px; align-items: center;">
-                            <label for="log-level-filter" style="font-weight: 600; color: #333;">Filter Level:</label>
-                            <select id="log-level-filter" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px;">
-                                <option value="">All Levels</option>
-                                <option value="DEBUG">Debug</option>
-                                <option value="INFO">Info</option>
-                                <option value="WARNING">Warning</option>
-                                <option value="ERROR">Error</option>
-                            </select>
-                        </div>
-                        
-                        <div class="control-group" style="display: flex; gap: 8px; align-items: center;">
-                            <label style="display: flex; align-items: center; gap: 6px; font-weight: 600; color: #333;">
-                                <input type="checkbox" id="auto-scroll-logs" checked>
-                                Auto-scroll to bottom
-                            </label>
-                        </div>
-                        
-                        <div class="control-group" style="display: flex; gap: 8px; align-items: center;">
-                            <label style="display: flex; align-items: center; gap: 6px; font-weight: 600; color: #333;">
-                                <input type="checkbox" id="wrap-lines-logs">
-                                Wrap long lines
-                            </label>
-                        </div>
-                        
-                        <div class="control-group" style="margin-left: auto;">
-                            <button type="button" id="clear-log-display" class="button" title="Clear display (keeps original logs)">
-                                <span class="dashicons dashicons-dismiss"></span>
-                                Clear Display
-                            </button>
-                        </div>
-                    </div>
-                    
                     <div class="smartlink-modal-body">
-                        <div id="log-content" class="enhanced-log-content">
-                            <div class="log-loading">
-                                <span class="spinner is-active"></span>
-                                Loading logs...
-                            </div>
+                        <div id="log-content" class="log-content">
+                            <span class="spinner is-active"></span>
+                            Loading logs...
                         </div>
                     </div>
                     <div class="smartlink-modal-footer">
@@ -3274,106 +2403,131 @@ class SmartLinkUpdater {
                             <span class="dashicons dashicons-image-rotate"></span>
                             Refresh
                         </button>
-                        <button type="button" class="button button-primary" id="export-logs">
-                            <span class="dashicons dashicons-download"></span>
-                            Export Logs
-                        </button>
                     </div>
                 </div>
             </div>
             
-            <!-- Edit Config Modal -->
-            <div id="edit-config-modal" class="smartlink-modal" style="display: none;">
-                <div class="smartlink-modal-content" style="max-width: 700px;">
+            <!-- Post Config Modal (Add/Edit) -->
+            <div id="post-config-modal" class="smartlink-modal" style="display: none;">
+                <div class="smartlink-modal-content" style="max-width: 800px;">
                     <div class="smartlink-modal-header">
-                        <h2>Edit Configuration: Post <span id="edit-post-id"></span></h2>
-                        <button type="button" class="close-edit-modal">
-                            <span class="dashicons dashicons-no-alt"></span>
-                        </button>
+                        <h2>
+                            <span class="dashicons dashicons-admin-generic"></span>
+                            <span id="config-modal-title">Add Post Configuration</span>
+                        </h2>
+                        <button type="button" class="close-modal" onclick="document.getElementById('post-config-modal').style.display='none'">×</button>
                     </div>
                     <div class="smartlink-modal-body">
-                        <form id="edit-config-form">
-                            <table class="form-table">
-                                <tr>
-                                    <th scope="row">
-                                        <label for="edit-extractor">Extractor</label>
-                                    </th>
-                                    <td>
-                                        <select id="edit-extractor" name="extractor" class="regular-text">
+                        <form id="post-config-form">
+                            <input type="hidden" id="config-mode" value="add">
+                            
+                            <!-- Post ID -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-admin-post" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Post ID *
+                                </label>
+                                <input type="number" id="config-post-id" class="smartlink-input" placeholder="e.g., 12345" required
+                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                    Enter the WordPress post ID to configure
+                                </p>
+                            </div>
+                            
+                            <!-- Source URLs -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-admin-links" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Source URLs *
+                                </label>
+                                <div id="source-urls-container">
+                                    <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                        <input type="url" class="source-url-input smartlink-input" placeholder="https://example.com/links/" required
+                                               style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                        <button type="button" class="button remove-url-btn" style="display: none;">
+                                            <span class="dashicons dashicons-no-alt"></span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <button type="button" id="add-url-btn" class="button" style="margin-top: 8px;">
+                                    <span class="dashicons dashicons-plus-alt"></span>
+                                    Add Another URL
+                                </button>
+                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                    URLs to scrape for daily links
+                                </p>
+                            </div>
+                            
+                            <!-- Extractor Configuration -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-admin-tools" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Extractor Configuration
+                                </label>
+                                
+                                <div style="margin-bottom: 12px;">
+                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                        <input type="radio" name="extractor-mode" value="auto" checked>
+                                        <strong>Auto-detect</strong> <span style="color: #666; font-size: 13px;">(Recommended)</span>
+                                    </label>
+                                </div>
+                                
+                                <div style="margin-bottom: 12px;">
+                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                        <input type="radio" name="extractor-mode" value="global">
+                                        <strong>Same extractor for all URLs</strong>
+                                    </label>
+                                    <div id="global-extractor-config" style="display: none; margin-left: 28px; margin-top: 8px;">
+                                        <select id="global-extractor" class="smartlink-select" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px;">
                                             <option value="">Auto-detect</option>
-                                            <option value="simplegameguide">SimpleGameGuide</option>
-                                            <option value="mosttechs">MostTechs</option>
-                                            <option value="default">Default</option>
+                                            <option value="simplegameguide">Simple Game Guide</option>
+                                            <option value="mosttechs">Most Techs</option>
+                                            <option value="crazyashwin">Crazy Ashwin</option>
+                                            <option value="techyhigher">Techy Higher</option>
+                                            <option value="default">Default Extractor</option>
                                         </select>
-                                        <p class="description">Choose the extractor to use for this post</p>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <th scope="row">
-                                        <label for="edit-source-url">Source URL</label>
-                                    </th>
-                                    <td>
-                                        <input type="url" id="edit-source-url" name="source_url" class="regular-text" placeholder="https://example.com/links/" />
-                                        <p class="description">The URL to extract links from</p>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <th scope="row">
-                                        <label for="edit-timezone">Timezone</label>
-                                    </th>
-                                    <td>
-                                        <input type="text" id="edit-timezone" name="timezone" class="regular-text" placeholder="Asia/Kolkata" />
-                                        <p class="description">Timezone for date parsing</p>
-                                    </td>
-                                </tr>
-                            </table>
+                                    </div>
+                                </div>
+                                
+                                <div style="margin-bottom: 12px;">
+                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                        <input type="radio" name="extractor-mode" value="per-url">
+                                        <strong>Different extractor per URL</strong>
+                                    </label>
+                                    <div id="per-url-extractor-config" style="display: none; margin-left: 28px; margin-top: 8px;">
+                                        <p style="color: #666; font-size: 13px; margin-bottom: 12px;">Configure extractors for each source URL after adding them above</p>
+                                        <div id="extractor-mapping-container"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Timezone -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-clock" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Timezone
+                                </label>
+                                <select id="config-timezone" class="smartlink-select" style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <option value="Asia/Kolkata" selected>Asia/Kolkata (IST)</option>
+                                    <option value="America/New_York">America/New_York (EST)</option>
+                                    <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
+                                    <option value="Europe/London">Europe/London (GMT)</option>
+                                    <option value="UTC">UTC</option>
+                                </select>
+                            </div>
                         </form>
                     </div>
                     <div class="smartlink-modal-footer">
-                        <button type="button" class="button close-edit-modal">Cancel</button>
-                        <button type="button" class="button button-primary" id="save-config-btn">
-                            <span class="dashicons dashicons-saved"></span>
-                            Save Changes
-                        </button>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- View History Modal -->
-            <div id="history-modal" class="smartlink-modal" style="display: none;">
-                <div class="smartlink-modal-content" style="max-width: 900px;">
-                    <div class="smartlink-modal-header">
-                        <h2>Update History: Post <span id="history-post-id"></span></h2>
-                        <button type="button" class="close-history-modal">
-                            <span class="dashicons dashicons-no-alt"></span>
-                        </button>
-                    </div>
-                    <div class="smartlink-modal-body">
-                        <div id="history-content" class="history-content">
-                            <span class="spinner is-active"></span>
-                            Loading update history...
-                        </div>
-                    </div>
-                    <div class="smartlink-modal-footer">
-                        <button type="button" class="button close-history-modal">Close</button>
-                        <button type="button" class="button" id="refresh-history">
-                            <span class="dashicons dashicons-image-rotate"></span>
-                            Refresh
+                        <button type="button" class="button" onclick="document.getElementById('post-config-modal').style.display='none'">Cancel</button>
+                        <button type="button" id="save-config-btn" class="button button-primary">
+                            <span class="dashicons dashicons-yes"></span>
+                            <span id="save-config-text">Save Configuration</span>
                         </button>
                     </div>
                 </div>
             </div>
             
         </div>
-        
-        <script type="text/javascript">
-        // Pass REST API URLs to JavaScript (server-side proxy)
-        window.SmartLinkConfig = {
-            restUrl: '<?php echo esc_url(rest_url('smartlink/v1')); ?>',
-            nonce: '<?php echo wp_create_nonce('wp_rest'); ?>',
-            pollInterval: 2000 // 2 seconds
-        };
-        </script>
         <?php
     }
     
@@ -3469,8 +2623,16 @@ class SmartLinkUpdater {
             }
         ));
         
-        // Get single post config endpoint
-        register_rest_route('smartlink/v1', '/post/(?P<post_id>\d+)', array(
+        // Post configuration endpoints
+        register_rest_route('smartlink/v1', '/config/post', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_add_post_config_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/config/post/(?P<post_id>\d+)', array(
             'methods' => 'GET',
             'callback' => array($this, 'handle_get_post_config_rest'),
             'permission_callback' => function() {
@@ -3478,8 +2640,7 @@ class SmartLinkUpdater {
             }
         ));
         
-        // Update post config endpoint
-        register_rest_route('smartlink/v1', '/post/(?P<post_id>\d+)', array(
+        register_rest_route('smartlink/v1', '/config/post/(?P<post_id>\d+)', array(
             'methods' => 'PUT',
             'callback' => array($this, 'handle_update_post_config_rest'),
             'permission_callback' => function() {
@@ -3487,28 +2648,34 @@ class SmartLinkUpdater {
             }
         ));
         
-        // Delete post config endpoint
-        register_rest_route('smartlink/v1', '/posts/(?P<post_id>\d+)', array(
-            'methods' => 'DELETE',
-            'callback' => array($this, 'handle_delete_post_config_rest'),
+        // Cron settings endpoints
+        register_rest_route('smartlink/v1', '/cron/settings', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_cron_settings_rest'),
             'permission_callback' => function() {
-                return current_user_can('edit_posts');
+                return current_user_can('manage_options');
             }
         ));
         
-        // Reset health endpoint
-        register_rest_route('smartlink/v1', '/posts/(?P<post_id>\d+)/health', array(
-            'methods' => 'DELETE',
-            'callback' => array($this, 'handle_reset_health_rest'),
-            'permission_callback' => function() {
-                return current_user_can('edit_posts');
-            }
-        ));
-        
-        // Recheck health endpoint
-        register_rest_route('smartlink/v1', '/posts/(?P<post_id>\d+)/health/check', array(
+        register_rest_route('smartlink/v1', '/cron/settings', array(
             'methods' => 'POST',
-            'callback' => array($this, 'handle_recheck_health_rest'),
+            'callback' => array($this, 'handle_save_cron_settings_rest'),
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/cron/status', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_cron_status_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/cron/history', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_cron_history_rest'),
             'permission_callback' => function() {
                 return current_user_can('edit_posts');
             }
@@ -3640,12 +2807,46 @@ class SmartLinkUpdater {
     }
     
     /**
+     * Handle add post config REST request (server-side proxy)
+     */
+    public function handle_add_post_config_rest($request) {
+        $body = $request->get_json_params();
+        
+        if (empty($body)) {
+            return new WP_Error('invalid_data', 'Request body is empty', array('status' => 400));
+        }
+        
+        // Call Cloud Run API (server-side)
+        $api_url = $this->api_base_url . '/config/post';
+        
+        $response = wp_remote_post($api_url, array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode($body),
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $data = json_decode($response_body, true);
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to add configuration', array('status' => $status_code));
+        }
+        
+        return rest_ensure_response($data);
+    }
+
+    /**
      * Handle get post config REST request (server-side proxy)
      */
     public function handle_get_post_config_rest($request) {
         $post_id = $request->get_param('post_id');
         
-        // Call Cloud Run API to get config
+        // Call Cloud Run API (server-side)
         $api_url = $this->api_base_url . '/config/post/' . intval($post_id);
         
         $response = wp_remote_get($api_url, array(
@@ -3656,12 +2857,21 @@ class SmartLinkUpdater {
             return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
         }
         
+        $status_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
+        if ($status_code == 404) {
+            return new WP_Error('not_found', 'Post configuration not found', array('status' => 404));
+        }
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to get configuration', array('status' => $status_code));
+        }
+        
         return rest_ensure_response($data);
     }
-    
+
     /**
      * Handle update post config REST request (server-side proxy)
      */
@@ -3670,98 +2880,30 @@ class SmartLinkUpdater {
         $body = $request->get_json_params();
         
         if (empty($body)) {
-            return new WP_Error('invalid_data', 'No data provided', array('status' => 400));
+            return new WP_Error('invalid_data', 'Request body is empty', array('status' => 400));
         }
         
-        // Call Cloud Run API to update config
+        // Call Cloud Run API (server-side)
         $api_url = $this->api_base_url . '/config/post/' . intval($post_id);
         
         $response = wp_remote_request($api_url, array(
             'method' => 'PUT',
-            'timeout' => 30,
             'headers' => array('Content-Type' => 'application/json'),
-            'body' => json_encode($body)
+            'body' => json_encode($body),
+            'timeout' => 15
         ));
         
         if (is_wp_error($response)) {
             return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
         }
         
+        $status_code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
         $data = json_decode($response_body, true);
         
-        return rest_ensure_response($data);
-    }
-    
-    /**
-     * Handle delete post config REST request (server-side proxy)
-     */
-    public function handle_delete_post_config_rest($request) {
-        $post_id = $request->get_param('post_id');
-        
-        // Call Cloud Run API to delete config
-        $api_url = $this->api_base_url . '/config/post/' . intval($post_id);
-        
-        $response = wp_remote_request($api_url, array(
-            'method' => 'DELETE',
-            'timeout' => 10
-        ));
-        
-        if (is_wp_error($response)) {
-            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to update configuration', array('status' => $status_code));
         }
-        
-        $response_body = wp_remote_retrieve_body($response);
-        $data = json_decode($response_body, true);
-        
-        return rest_ensure_response($data);
-    }
-    
-    /**
-     * Handle reset health REST request (server-side proxy)
-     */
-    public function handle_reset_health_rest($request) {
-        $post_id = $request->get_param('post_id');
-        
-        // Call Cloud Run API to reset health
-        $api_url = $this->api_base_url . '/config/post/' . intval($post_id) . '/health/reset';
-        
-        $response = wp_remote_post($api_url, array(
-            'timeout' => 10,
-            'headers' => array('Content-Type' => 'application/json'),
-            'body' => json_encode(array('health_status' => 'unknown'))
-        ));
-        
-        if (is_wp_error($response)) {
-            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
-        }
-        
-        $response_body = wp_remote_retrieve_body($response);
-        $data = json_decode($response_body, true);
-        
-        return rest_ensure_response($data);
-    }
-    
-    /**
-     * Handle recheck health REST request (server-side proxy)
-     */
-    public function handle_recheck_health_rest($request) {
-        $post_id = $request->get_param('post_id');
-        
-        // Call Cloud Run API to recheck health
-        $api_url = $this->api_base_url . '/config/post/' . intval($post_id) . '/health/check';
-        
-        $response = wp_remote_post($api_url, array(
-            'timeout' => 30,
-            'headers' => array('Content-Type' => 'application/json')
-        ));
-        
-        if (is_wp_error($response)) {
-            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
-        }
-        
-        $response_body = wp_remote_retrieve_body($response);
-        $data = json_decode($response_body, true);
         
         return rest_ensure_response($data);
     }
@@ -3826,7 +2968,320 @@ class SmartLinkUpdater {
 
         wp_send_json_success($status);
     }
+    
+    /**
+     * Get cron settings REST endpoint
+     */
+    public function handle_get_cron_settings_rest($request) {
+        $settings = get_option('smartlink_cron_settings', array(
+            'enabled' => false,
+            'schedule' => 'hourly'
+        ));
+        
+        $last_run = get_option('smartlink_last_cron_batch');
+        $next_run = wp_next_scheduled('slu_scheduled_update');
+        
+        return rest_ensure_response(array(
+            'enabled' => $settings['enabled'],
+            'schedule' => $settings['schedule'],
+            'last_run' => $last_run,
+            'next_run_timestamp' => $next_run
+        ));
+    }
+    
+    /**
+     * Save cron settings REST endpoint
+     */
+    public function handle_save_cron_settings_rest($request) {
+        $body = $request->get_json_params();
+        
+        if (empty($body)) {
+            return new WP_Error('invalid_data', 'No data provided', array('status' => 400));
+        }
+        
+        $settings = array(
+            'enabled' => isset($body['enabled']) ? (bool)$body['enabled'] : false,
+            'schedule' => isset($body['schedule']) ? sanitize_text_field($body['schedule']) : 'hourly'
+        );
+        
+        update_option('smartlink_cron_settings', $settings);
+        
+        // Reschedule the cron based on new settings
+        $timestamp = wp_next_scheduled('slu_scheduled_update');
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, 'slu_scheduled_update');
+        }
+        
+        if ($settings['enabled']) {
+            wp_schedule_event(time(), $settings['schedule'], 'slu_scheduled_update');
+        }
+        
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'Cron settings saved successfully'
+        ));
+    }
+    
+    /**
+     * Get cron status REST endpoint
+     */
+    public function handle_get_cron_status_rest($request) {
+        $settings = get_option('smartlink_cron_settings', array(
+            'enabled' => false,
+            'schedule' => 'hourly'
+        ));
+        
+        $last_batch = get_option('smartlink_last_cron_batch');
+        $next_run = wp_next_scheduled('slu_scheduled_update');
+        
+        // Get schedule label
+        $schedules = wp_get_schedules();
+        $schedule_label = isset($schedules[$settings['schedule']]) ? $schedules[$settings['schedule']]['display'] : 'Unknown';
+        
+        // Count total posts
+        $api_url = $this->api_base_url . '/api/posts/list';
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        $total_posts = 0;
+        
+        if (!is_wp_error($response)) {
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            $total_posts = isset($data['posts']) ? count($data['posts']) : 0;
+        }
+        
+        return rest_ensure_response(array(
+            'enabled' => $settings['enabled'],
+            'schedule' => $settings['schedule'],
+            'schedule_label' => $schedule_label,
+            'total_posts' => $total_posts,
+            'last_run' => $last_batch ? date('Y-m-d H:i:s', $last_batch['timestamp']) : null,
+            'next_run' => $next_run ? date('Y-m-d H:i:s', $next_run) : null
+        ));
+    }
+    
+    /**
+     * Get cron history REST endpoint
+     */
+    public function handle_get_cron_history_rest($request) {
+        $history = get_option('smartlink_cron_history', array());
+        
+        // Sort by timestamp descending (newest first)
+        usort($history, function($a, $b) {
+            return $b['timestamp'] - $a['timestamp'];
+        });
+        
+        // Limit to last 50 entries
+        $history = array_slice($history, 0, 50);
+        
+        // Format timestamps for display
+        foreach ($history as &$entry) {
+            $entry['formatted_time'] = date('Y-m-d H:i:s', $entry['timestamp']);
+            $entry['time_ago'] = human_time_diff($entry['timestamp'], current_time('timestamp')) . ' ago';
+        }
+        
+        return rest_ensure_response($history);
+    }
+    
+    /**
+     * Add custom cron schedules
+     */
+    public function add_cron_schedules($schedules) {
+        $schedules['every_5_minutes'] = array(
+            'interval' => 300,
+            'display' => __('Every 5 Minutes (Testing)')
+        );
+        $schedules['every_15_minutes'] = array(
+            'interval' => 900,
+            'display' => __('Every 15 Minutes')
+        );
+        $schedules['every_30_minutes'] = array(
+            'interval' => 1800,
+            'display' => __('Every 30 Minutes')
+        );
+        return $schedules;
+    }
+    
+    /**
+     * Run scheduled update (WP-Cron job)
+     */
+    public function run_scheduled_update() {
+        error_log('SmartLink: Scheduled update starting...');
+        
+        $settings = get_option('smartlink_cron_settings', array(
+            'enabled' => false,
+            'schedule' => 'hourly'
+        ));
+        
+        if (!$settings['enabled']) {
+            error_log('SmartLink: Cron is disabled, skipping');
+            return;
+        }
+        
+        // Get all configured posts from API
+        $api_url = $this->api_base_url . '/api/posts/list';
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            error_log('SmartLink: Failed to fetch posts - ' . $response->get_error_message());
+            
+            // Log error to history
+            $this->add_cron_history_entry(array(
+                'status' => 'error',
+                'message' => 'Failed to fetch posts from API: ' . $response->get_error_message(),
+                'post_count' => 0,
+                'request_id' => null
+            ));
+            
+            return;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (!isset($data['posts']) || empty($data['posts'])) {
+            error_log('SmartLink: No posts found');
+            
+            // Log warning to history
+            $this->add_cron_history_entry(array(
+                'status' => 'warning',
+                'message' => 'No configured posts found in database',
+                'post_count' => 0,
+                'request_id' => null
+            ));
+            
+            return;
+        }
+        
+        $posts = $data['posts'];
+        $current_time = time();
+        
+        $posts_to_update = array();
+        
+        // Update ALL configured posts
+        foreach ($posts as $post) {
+            $posts_to_update[] = $post['post_id'];
+        }
+        
+        if (empty($posts_to_update)) {
+            error_log('SmartLink: No posts to update');
+            return;
+        }
+        
+        error_log('SmartLink: Triggering batch update for ALL ' . count($posts_to_update) . ' posts');
+        
+        // Trigger batch update via API
+        $batch_api_url = $this->api_base_url . '/api/batch-update';
+        $batch_response = wp_remote_post($batch_api_url, array(
+            'timeout' => 30,
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode(array(
+                'post_ids' => $posts_to_update,
+                'sync' => false,
+                'target' => 'this',
+                'initiator' => 'wp_cron'
+            ))
+        ));
+        
+        if (is_wp_error($batch_response)) {
+            error_log('SmartLink: Batch update failed - ' . $batch_response->get_error_message());
+            
+            // Log failed attempt to history
+            $this->add_cron_history_entry(array(
+                'status' => 'error',
+                'message' => 'Batch update API call failed: ' . $batch_response->get_error_message(),
+                'post_count' => count($posts_to_update),
+                'request_id' => null
+            ));
+            
+            return;
+        }
+        
+        $batch_body = wp_remote_retrieve_body($batch_response);
+        $batch_data = json_decode($batch_body, true);
+        
+        if (isset($batch_data['request_id'])) {
+            error_log('SmartLink: Batch update started - Request ID: ' . $batch_data['request_id']);
+            
+            // Save last batch info
+            update_option('smartlink_last_cron_batch', array(
+                'timestamp' => $current_time,
+                'request_id' => $batch_data['request_id'],
+                'post_count' => count($posts_to_update),
+                'post_ids' => $posts_to_update
+            ));
+            
+            // Log success to history
+            $this->add_cron_history_entry(array(
+                'status' => 'success',
+                'message' => 'Batch update initiated successfully',
+                'post_count' => count($posts_to_update),
+                'request_id' => $batch_data['request_id'],
+                'post_ids' => $posts_to_update
+            ));
+        } else {
+            error_log('SmartLink: Batch update response missing request_id');
+            
+            // Log warning to history
+            $this->add_cron_history_entry(array(
+                'status' => 'warning',
+                'message' => 'Batch update response missing request_id',
+                'post_count' => count($posts_to_update),
+                'request_id' => null
+            ));
+        }
+    }
+    
+    /**
+     * Add entry to cron history log
+     */
+    private function add_cron_history_entry($data) {
+        $history = get_option('smartlink_cron_history', array());
+        
+        $entry = array(
+            'timestamp' => time(),
+            'status' => $data['status'],
+            'message' => $data['message'],
+            'post_count' => $data['post_count'],
+            'request_id' => $data['request_id'],
+            'post_ids' => isset($data['post_ids']) ? $data['post_ids'] : array()
+        );
+        
+        // Add to beginning of array
+        array_unshift($history, $entry);
+        
+        // Keep only last 100 entries
+        $history = array_slice($history, 0, 100);
+        
+        update_option('smartlink_cron_history', $history);
+    }
 }
 
 // Initialize the plugin
-new SmartLinkUpdater();
+$smartlink_updater = new SmartLinkUpdater();
+
+// Register activation hook
+register_activation_hook(__FILE__, 'smartlink_updater_activate');
+function smartlink_updater_activate() {
+    // Set default cron settings
+    if (!get_option('smartlink_cron_settings')) {
+        update_option('smartlink_cron_settings', array(
+            'enabled' => false,
+            'schedule' => 'hourly'
+        ));
+    }
+    
+    // Schedule the cron job (initially disabled until user enables it)
+    if (!wp_next_scheduled('slu_scheduled_update')) {
+        wp_schedule_event(time(), 'hourly', 'slu_scheduled_update');
+    }
+}
+
+// Register deactivation hook
+register_deactivation_hook(__FILE__, 'smartlink_updater_deactivate');
+function smartlink_updater_deactivate() {
+    // Clear the scheduled event
+    $timestamp = wp_next_scheduled('slu_scheduled_update');
+    if ($timestamp) {
+        wp_unschedule_event($timestamp, 'slu_scheduled_update');
+    }
+}

@@ -62,11 +62,12 @@ def list_extractors() -> List[str]:
 
 # Import all extractors to trigger registration
 # This must happen after register_extractor is defined
-from . import simplegameguide, default, mosttechs, crazyashwin
+from . import simplegameguide, default, mosttechs, crazyashwin, techyhigher
 
 # Register them manually
 _EXTRACTOR_REGISTRY[simplegameguide.SimpleGameGuideExtractor._extractor_name] = simplegameguide.SimpleGameGuideExtractor
 _EXTRACTOR_REGISTRY[default.DefaultExtractor._extractor_name] = default.DefaultExtractor
 _EXTRACTOR_REGISTRY[mosttechs.MostTechsExtractor._extractor_name] = mosttechs.MostTechsExtractor
 _EXTRACTOR_REGISTRY[crazyashwin.CrazyAshwinExtractor._extractor_name] = crazyashwin.CrazyAshwinExtractor
+_EXTRACTOR_REGISTRY[techyhigher.TechyHigherExtractor._extractor_name] = techyhigher.TechyHigherExtractor
 

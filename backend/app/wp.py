@@ -92,7 +92,11 @@ def get_configured_wp_sites() -> Dict[str, Dict[str, Any]]:
 
 async def update_post_links_section(post_id: int, links: List[Link], wp_site: Optional[Dict] = None) -> None:
     """
-    Update WordPress post by prepending a styled 'Links for Today' section with button-style links.
+    Update WordPress post by inserting a styled 'Links for Today' section.
+    
+    **New behavior:** Links are automatically inserted AFTER the first <h2> tag.
+    Falls back to prepending if no <h2> is found.
+    
     Automatically prunes sections older than 5 days to prevent content from piling up.
     
     Args:
@@ -249,7 +253,21 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
 <p style="font-size: 12px; color: #999; margin-top: 20px; margin-bottom: 0;"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
 </div>
 '''
-    new_content = new_section + cleaned_content
+    
+    # Simple logic: Insert after first <h2> tag
+    # Pattern matches: <h2 ...>content</h2>
+    h2_pattern = r'(<h2[^>]*>.*?</h2>)'
+    match = re.search(h2_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
+    
+    if match:
+        # Insert after the first H2
+        h2_end = match.end()
+        new_content = cleaned_content[:h2_end] + "\n" + new_section + "\n" + cleaned_content[h2_end:]
+        logging.info(f"[WP] Inserted links after first <h2> tag")
+    else:
+        # Fallback to prepend if no H2 found
+        new_content = new_section + cleaned_content
+        logging.warning(f"[WP] No <h2> tag found, prepending to beginning instead")
     
     # Update the post
     payload = {"content": new_content}

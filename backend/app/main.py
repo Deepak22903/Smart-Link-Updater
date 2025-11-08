@@ -38,8 +38,10 @@ class PostConfig(BaseModel):
     post_id: int
     source_urls: List[HttpUrl]
     timezone: Optional[str] = os.getenv("TIMEZONE", "Asia/Kolkata")
-    extractor: Optional[str] = None
+    extractor: Optional[str] = None  # Legacy: single extractor for all sources
+    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping {"url": "extractor_name"}
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
+    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target_id_or_text"}
 
 
 class UpdateJob(BaseModel):
@@ -63,8 +65,10 @@ class PostConfigUpdate(BaseModel):
     """Model for partial updates to post configuration"""
     source_urls: Optional[List[HttpUrl]] = None
     timezone: Optional[str] = None
-    extractor: Optional[str] = None
+    extractor: Optional[str] = None  # Legacy: single extractor
+    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping
     wp_site: Optional[Dict[str, str]] = None
+    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target_id_or_text"}
 
 
 @app.get("/health")
@@ -448,6 +452,8 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
     source_urls = config["source_urls"]
     timezone = config.get("timezone", "Asia/Kolkata")
     extractor_name = config.get("extractor")
+    extractor_map = config.get("extractor_map", {})  # New: per-source extractor mapping
+    
     if isinstance(extractor_name, str):
         pass
     elif extractor_name is not None:
@@ -455,33 +461,127 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
     else:
         extractor_name = None
     wp_site = config.get("wp_site") if "wp_site" in config else None  # Ensure wp_site is always defined
+    
+    # Helper function to get extractor for a URL
+    def get_extractor_for_source(url: str):
+        """Get extractor for a source URL, checking extractor_map first"""
+        print(f"[DEBUG] get_extractor_for_source called with url: {url}")
+        print(f"[DEBUG] extractor_map: {extractor_map}")
+        print(f"[DEBUG] extractor_name: {extractor_name}")
+        
+        # Priority 1: Check extractor_map for this specific URL
+        if extractor_map:
+            # Normalize URL for comparison (handle trailing slash)
+            url_normalized = url.rstrip('/')
+            for map_url, map_extractor in extractor_map.items():
+                map_url_normalized = map_url.rstrip('/')
+                if url_normalized == map_url_normalized:
+                    if map_extractor:
+                        print(f"[DEBUG] Using mapped extractor '{map_extractor}' for {url}")
+                        return get_extractor(map_extractor)
+        
+        # Priority 2: Use global extractor if specified
+        if extractor_name:
+            print(f"[DEBUG] Using global extractor '{extractor_name}'")
+            return get_extractor(extractor_name)
+        
+        # Priority 3: Auto-detect based on URL
+        print(f"[DEBUG] Auto-detecting extractor for {url}")
+        return get_extractor_for_url(url)
+    
     # If sync mode (for WordPress), run immediately and return results
     if sync:
+        # Calculate today's date in the configured timezone
+        tz = pytz.timezone(timezone)
+        today = datetime.now(tz)
+        today_iso = today.strftime("%Y-%m-%d")
+        
         # target: 'this' (default), site_key (string), or 'all'
         if target == "this":
-            results = []
+            all_links = []
             errors = []
+            
+            # Step 1: Extract links from all sources
             for url in source_urls:
                 try:
                     html = await fetch_html(url)
-                    if extractor_name:
-                        extractor = get_extractor(extractor_name)
-                    else:
-                        extractor = get_extractor_for_url(url)
-                    print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, timezone={timezone}")
-                    extracted_links = extractor.extract(html, timezone)
-                    print(f"Extracted {len(extracted_links)} links: {extracted_links}")
-                    links = [link.dict() for link in extracted_links]
-                    results.extend(links)
+                    extractor = get_extractor_for_source(url)
+                    print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
+                    extracted_links = extractor.extract(html, today_iso)
+                    print(f"Extracted {len(extracted_links)} links from {url}: {extracted_links}")
+                    all_links.extend(extracted_links)
                 except Exception as e:
                     errors.append({"url": url, "error": str(e)})
-
-            return JSONResponse({
-                "success": True,
-                "post_id": post_id,
-                "results": results,
-                "errors": errors
-            })
+            
+            # Step 2: Check if we have any links
+            if not all_links:
+                return JSONResponse({
+                    "success": True,
+                    "post_id": post_id,
+                    "message": "No links found for today",
+                    "links_found": 0,
+                    "links_added": 0,
+                    "errors": errors
+                })
+            
+            # Step 3: Deduplicate against known links
+            known_fps = mongo_storage.get_known_fingerprints(post_id, today_iso)
+            new_links = dedupe_by_fingerprint(all_links, known_fps)
+            
+            print(f"[DEBUG] Total extracted: {len(all_links)}, After dedup: {len(new_links)}")
+            
+            # Step 4: Update WordPress if wp_site is configured
+            if wp_site and new_links:
+                try:
+                    # Determine which site to update
+                    if isinstance(wp_site, str):
+                        # wp_site is a site key
+                        wp_result = await update_post_links_section(post_id, new_links, wp_site)
+                    elif isinstance(wp_site, dict) and "url" in wp_site:
+                        # wp_site is the actual site config - use first configured site
+                        sites = get_configured_wp_sites()
+                        if sites:
+                            first_site_key = list(sites.keys())[0]
+                            wp_result = await update_post_links_section(post_id, new_links, first_site_key)
+                        else:
+                            wp_result = {"error": "No WordPress sites configured"}
+                    else:
+                        wp_result = {"error": "Invalid wp_site configuration"}
+                    
+                    # Step 5: Save fingerprints for deduplication
+                    if new_links and not wp_result.get("error"):
+                        new_fps = {fingerprint(link) for link in new_links}
+                        mongo_storage.save_new_links(post_id, today_iso, new_fps)
+                    
+                    return JSONResponse({
+                        "success": True,
+                        "post_id": post_id,
+                        "links_found": len(all_links),
+                        "links_added": wp_result.get("links_added", len(new_links)),
+                        "wordpress_updated": not wp_result.get("error"),
+                        "wp_result": wp_result,
+                        "errors": errors
+                    })
+                except Exception as e:
+                    print(f"[ERROR] WordPress update failed: {e}")
+                    return JSONResponse({
+                        "success": False,
+                        "post_id": post_id,
+                        "error": f"WordPress update failed: {str(e)}",
+                        "links_found": len(all_links),
+                        "errors": errors
+                    })
+            else:
+                # No wp_site configured or no new links - just return the links
+                return JSONResponse({
+                    "success": True,
+                    "post_id": post_id,
+                    "message": "No WordPress site configured" if not wp_site else "No new links after deduplication",
+                    "links_found": len(all_links),
+                    "new_links": len(new_links),
+                    "links": [link.dict() for link in new_links],
+                    "errors": errors
+                })
 
         # If target is 'all', extract once and update all configured sites
         if target == "all":
@@ -495,13 +595,10 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
             for url in source_urls:
                 try:
                     html = await fetch_html(url)
-                    if extractor_name:
-                        extractor = get_extractor(extractor_name)
-                    else:
-                        extractor = get_extractor_for_url(url)
+                    extractor = get_extractor_for_source(url)
                     print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
                     extracted_links = extractor.extract(html, today_iso)
-                    print(f"Extracted {len(extracted_links)} links: {extracted_links}")
+                    print(f"Extracted {len(extracted_links)} links from {url}: {extracted_links}")
                     links = extracted_links
                     all_links.extend(links)
                 except Exception as e:
@@ -565,6 +662,7 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
         source_urls=source_urls,
         timezone=timezone,
         extractor_name=extractor_name,
+        extractor_map=extractor_map,
         wp_site=wp_site
     )
     
@@ -587,6 +685,7 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
         source_urls: List of URLs to scrape
         timezone: Timezone for date calculation
         extractor_name: Optional name of specific extractor to use
+        wp_site: Optional WordPress site config
     """
     # Determine today's date
     tz = pytz.timezone(timezone)
@@ -709,7 +808,7 @@ async def get_task_status(task_id: str):
     return JSONResponse(detailed_status)
 
 
-async def run_update_task(task_id: str, post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, wp_site: Optional[dict] = None):
+async def run_update_task(task_id: str, post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, extractor_map: Optional[dict] = None, wp_site: Optional[dict] = None):
     """
     Background task that runs the update pipeline.
     Updates task_status with progress and results.
@@ -723,17 +822,41 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
         # Initialize results and errors
         results = []
         errors = []
+        
+        # Helper function to get extractor for a URL
+        def get_extractor_for_source(url: str):
+            """Get extractor for a source URL, checking extractor_map first"""
+            print(f"[DEBUG] BG get_extractor_for_source called with url: {url}")
+            print(f"[DEBUG] BG extractor_map: {extractor_map}")
+            print(f"[DEBUG] BG extractor_name: {extractor_name}")
+            
+            # Priority 1: Check extractor_map for this specific URL
+            if extractor_map:
+                # Normalize URL for comparison (handle trailing slash)
+                url_normalized = url.rstrip('/')
+                for map_url, map_extractor in extractor_map.items():
+                    map_url_normalized = map_url.rstrip('/')
+                    if url_normalized == map_url_normalized:
+                        if map_extractor:
+                            print(f"[DEBUG] BG Using mapped extractor '{map_extractor}' for {url}")
+                            return get_extractor(map_extractor)
+            
+            # Priority 2: Use global extractor if specified
+            if extractor_name:
+                print(f"[DEBUG] BG Using global extractor '{extractor_name}'")
+                return get_extractor(extractor_name)
+            
+            # Priority 3: Auto-detect based on URL
+            print(f"[DEBUG] BG Auto-detecting extractor for {url}")
+            return get_extractor_for_url(url)
 
         # Step 1: Scrape and extract
         for url in source_urls:
             try:
                 html = await fetch_html(url)
 
-                # Choose extractor: specified > auto-detect > default
-                if extractor_name:
-                    extractor = get_extractor(extractor_name)
-                else:
-                    extractor = get_extractor_for_url(url)
+                # Get extractor using priority logic
+                extractor = get_extractor_for_source(url)
 
                 # Extract links using the chosen extractor
                 print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
@@ -822,6 +945,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         source_urls = config.get("source_urls", [])
         timezone = config.get("timezone", "Asia/Kolkata")
         extractor_name = config.get("extractor")
+        extractor_map = config.get("extractor_map", {})  # NEW: per-source extractor mapping
+        insertion_point = config.get("insertion_point")  # NEW v2.3: Custom link placement
         if isinstance(extractor_name, str):
             pass
         elif extractor_name is not None:
@@ -829,6 +954,29 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         else:
             extractor_name = None
         wp_site = config.get("wp_site") if "wp_site" in config else None
+        
+        # Helper function to get extractor for a URL
+        def get_extractor_for_source(url: str):
+            """Get extractor for a source URL, checking extractor_map first"""
+            # Priority 1: Check extractor_map for this specific URL
+            if extractor_map:
+                # Normalize URL for comparison (handle trailing slash)
+                url_normalized = url.rstrip('/')
+                for map_url, map_extractor in extractor_map.items():
+                    map_url_normalized = map_url.rstrip('/')
+                    if url_normalized == map_url_normalized:
+                        if map_extractor:
+                            print(f"[BATCH] Using mapped extractor '{map_extractor}' for {url}")
+                            return get_extractor(map_extractor)
+            
+            # Priority 2: Use global extractor if specified
+            if extractor_name:
+                print(f"[BATCH] Using global extractor '{extractor_name}'")
+                return get_extractor(extractor_name)
+            
+            # Priority 3: Auto-detect based on URL
+            print(f"[BATCH] Auto-detecting extractor for {url}")
+            return get_extractor_for_url(url)
 
         await manager.update_post_state(
             request_id, post_id,
@@ -861,11 +1009,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
                 log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetched {len(html)} bytes from {url}"
             )
             
-            # Choose extractor
-            if extractor_name:
-                extractor = get_extractor(extractor_name)
-            else:
-                extractor = get_extractor_for_url(url)
+            # Choose extractor using the helper function (checks extractor_map first)
+            extractor = get_extractor_for_source(url)
             
             # Extract with monitoring
             monitor = get_monitor()
