@@ -55,8 +55,15 @@ class PostConfig(MongoBaseModel):
     Post configuration stored in 'posts' collection.
     
     Indexes:
-    - post_id (unique)
+    - post_id (unique) - DEPRECATED: Use content_slug as primary identifier
     - wp_site.base_url
+    - content_slug (unique) - NEW: Universal identifier across all sites
+    
+    Multi-Site Support:
+    - content_slug: Unique identifier for the content (e.g., "coin-master-free-spins")
+    - site_post_ids: Maps site_key -> post_id for each WordPress site
+      Example: {"minecraft": 105, "casino": 89, "this": 105}
+    - When updating, system uses site_post_ids[site_key] to get the correct post ID
     
     New in v2: extractor_map for per-source extractor configuration
     - extractor_map: {"url": "extractor_name"} - Maps each source URL to its extractor
@@ -66,7 +73,9 @@ class PostConfig(MongoBaseModel):
     - Links are automatically inserted after the first <h2> tag
     - Falls back to prepending if no <h2> found
     """
-    post_id: int
+    post_id: int  # DEPRECATED: Kept for backward compatibility, use site_post_ids instead
+    content_slug: Optional[str] = None  # NEW: Universal identifier (e.g., "coin-master-free-spins")
+    site_post_ids: Optional[Dict[str, int]] = None  # NEW: Maps site_key -> post_id
     source_urls: List[str]
     timezone: str = "Asia/Kolkata"
     extractor: Optional[str] = None  # Deprecated: kept for backward compatibility

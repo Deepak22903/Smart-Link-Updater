@@ -92,11 +92,14 @@ class MongoDBStorage:
             # Posts collection
             self._db.posts.create_index("post_id", unique=True)
             self._db.posts.create_index("wp_site.base_url")
+            self._db.posts.create_index("content_slug", unique=True, sparse=True)  # NEW: Universal identifier
             
-            # Fingerprints collection
-            self._db.fingerprints.create_index([("post_id", ASCENDING), ("date_iso", ASCENDING)], unique=True)
+            # Fingerprints collection - site-specific tracking
+            # Note: Removed old unique index on (post_id, date_iso) to allow multiple entries per site
+            self._db.fingerprints.create_index([("post_id", ASCENDING), ("date_iso", ASCENDING), ("site_key", ASCENDING)], unique=True)
             self._db.fingerprints.create_index("post_id")
             self._db.fingerprints.create_index("date_iso")
+            self._db.fingerprints.create_index("site_key")
             
             # Monitoring collection
             self._db.monitoring.create_index("url", unique=True)
@@ -147,7 +150,7 @@ def _get_storage() -> MongoDBStorage:
 # ==================== Post Configuration Operations ====================
 
 def get_post_config(post_id: int) -> Optional[Dict[str, Any]]:
-    """Get post configuration by post_id"""
+    """Get post configuration by post_id (legacy method)"""
     try:
         result = _get_storage().db.posts.find_one({"post_id": post_id})
         if result:
@@ -159,11 +162,48 @@ def get_post_config(post_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
+def get_post_config_by_slug(content_slug: str) -> Optional[Dict[str, Any]]:
+    """Get post configuration by content_slug (NEW: multi-site support)"""
+    try:
+        result = _get_storage().db.posts.find_one({"content_slug": content_slug})
+        if result:
+            # Convert ObjectId to string for JSON serialization
+            result["_id"] = str(result["_id"])
+        return result
+    except Exception as e:
+        print(f"Database error in get_post_config_by_slug: {e}")
+        return None
+
+
 def set_post_config(post_config: Dict[str, Any]) -> bool:
     """Save or update post configuration"""
     try:
+        # Strategy for updating:
+        # 1. If content_slug is provided, try to find by content_slug first
+        # 2. If not found by content_slug, try to find by post_id
+        # 3. This allows migration from post_id-based to content_slug-based configs
+        
+        query = None
+        
+        if "content_slug" in post_config and post_config["content_slug"]:
+            # Try to find by content_slug first
+            existing = _get_storage().db.posts.find_one({"content_slug": post_config["content_slug"]})
+            if existing:
+                query = {"content_slug": post_config["content_slug"]}
+            else:
+                # If not found by slug, try by post_id (for migration)
+                existing = _get_storage().db.posts.find_one({"post_id": post_config["post_id"]})
+                if existing:
+                    query = {"post_id": post_config["post_id"]}
+                else:
+                    # New document, use content_slug as primary key
+                    query = {"content_slug": post_config["content_slug"]}
+        else:
+            # No content_slug, use post_id (backward compatibility)
+            query = {"post_id": post_config["post_id"]}
+            
         _get_storage().db.posts.update_one(
-            {"post_id": post_config["post_id"]},
+            query,
             {"$set": post_config},
             upsert=True
         )
@@ -195,10 +235,24 @@ def delete_post_config(post_id: int) -> bool:
 
 # ==================== Fingerprint Operations ====================
 
-def get_known_fingerprints(post_id: int, date_iso: str) -> Set[str]:
-    """Get known fingerprints for a post and date"""
+def get_known_fingerprints(post_id: int, date_iso: str, site_key: str = None) -> Set[str]:
+    """
+    Get known fingerprints for a post and date, optionally filtered by site.
+    
+    Args:
+        post_id: The post ID
+        date_iso: The date in ISO format
+        site_key: Optional site key to get site-specific fingerprints
+        
+    Returns:
+        Set of known fingerprints
+    """
     try:
-        result = _get_storage().db.fingerprints.find_one({"post_id": post_id, "date_iso": date_iso})
+        query = {"post_id": post_id, "date_iso": date_iso}
+        if site_key:
+            query["site_key"] = site_key
+            
+        result = _get_storage().db.fingerprints.find_one(query)
         if result and "fingerprints" in result:
             return set(result["fingerprints"])
         return set()
@@ -207,19 +261,34 @@ def get_known_fingerprints(post_id: int, date_iso: str) -> Set[str]:
         return set()
 
 
-def save_new_links(post_id: int, date_iso: str, fingerprints: Set[str]) -> None:
-    """Save new link fingerprints (merge with existing)"""
-    existing = get_known_fingerprints(post_id, date_iso)
+def save_new_links(post_id: int, date_iso: str, fingerprints: Set[str], site_key: str = None) -> None:
+    """
+    Save new link fingerprints (merge with existing) for a specific site.
+    
+    Args:
+        post_id: The post ID
+        date_iso: The date in ISO format
+        fingerprints: Set of fingerprints to save
+        site_key: Optional site key for site-specific tracking
+    """
+    existing = get_known_fingerprints(post_id, date_iso, site_key)
     merged = list(existing.union(fingerprints))
     
+    query = {"post_id": post_id, "date_iso": date_iso}
+    if site_key:
+        query["site_key"] = site_key
+    
     _get_storage().db.fingerprints.update_one(
-        {"post_id": post_id, "date_iso": date_iso},
+        query,
         {
             "$set": {
                 "fingerprints": merged,
                 "updated_at": datetime.utcnow().isoformat()
             },
-            "$setOnInsert": {"created_at": datetime.utcnow().isoformat()}
+            "$setOnInsert": {
+                "created_at": datetime.utcnow().isoformat(),
+                "site_key": site_key
+            }
         },
         upsert=True
     )

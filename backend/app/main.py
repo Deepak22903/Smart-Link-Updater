@@ -34,6 +34,46 @@ app = FastAPI(title="SmartLinkUpdater API")
 task_status: Dict[str, dict] = {}
 
 
+# ==================== Helper Functions ====================
+
+def resolve_post_id_for_site(config: Dict, site_key: str) -> int:
+    """
+    Resolve the correct post ID for a specific WordPress site.
+    
+    Args:
+        config: Post configuration dict
+        site_key: Site identifier (e.g., "minecraft", "this", "site_b")
+    
+    Returns:
+        int: The post ID for that specific site
+    
+    Examples:
+        config = {
+            "post_id": 105,  # Legacy field (for "this" site)
+            "content_slug": "coin-master-free-spins",
+            "site_post_ids": {
+                "this": 105,
+                "minecraft": 105,
+                "casino": 89,
+                "blog": 234
+            }
+        }
+        
+        resolve_post_id_for_site(config, "casino") -> 89
+        resolve_post_id_for_site(config, "this") -> 105
+    """
+    # Check if site_post_ids mapping exists
+    site_post_ids = config.get("site_post_ids", {})
+    
+    if site_post_ids and site_key in site_post_ids:
+        return site_post_ids[site_key]
+    
+    # Fallback to legacy post_id field
+    return config.get("post_id")
+
+
+# ==================== Pydantic Models ====================
+
 class PostConfig(BaseModel):
     post_id: int
     source_urls: List[HttpUrl]
@@ -42,6 +82,8 @@ class PostConfig(BaseModel):
     extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
     insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
+    content_slug: Optional[str] = None  # NEW: Universal identifier across sites (e.g., "coin-master-free-spins")
+    site_post_ids: Optional[Dict[str, int]] = None  # NEW: Maps site_key -> post_id for multi-site support
 
 
 class UpdateJob(BaseModel):
@@ -69,6 +111,8 @@ class PostConfigUpdate(BaseModel):
     extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     wp_site: Optional[Dict[str, str]] = None
     insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
+    content_slug: Optional[str] = None  # Universal identifier for content across sites
+    site_post_ids: Optional[Dict[str, int]] = None  # Maps site_key -> post_id for each WordPress site
 
 
 @app.get("/health")
@@ -158,7 +202,19 @@ async def configure_post(config: PostConfig = Body(...)):
         "wp_site": config.wp_site,
         "updated_at": datetime.utcnow().isoformat()
     }
+    
+    # Add optional multi-site fields
+    if config.content_slug:
+        post_config["content_slug"] = config.content_slug
+    if config.site_post_ids:
+        post_config["site_post_ids"] = config.site_post_ids
+    
+    # Add extractor_map if provided
+    if config.extractor_map:
+        post_config["extractor_map"] = config.extractor_map
+    
     mongo_storage.set_post_config(post_config)
+    
     response = {
         "success": True,
         "post_id": config.post_id,
@@ -166,6 +222,15 @@ async def configure_post(config: PostConfig = Body(...)):
         "timezone": config.timezone,
         "extractor": config.extractor
     }
+    
+    # Include multi-site fields in response
+    if config.content_slug:
+        response["content_slug"] = config.content_slug
+    if config.site_post_ids:
+        response["site_post_ids"] = config.site_post_ids
+    if config.extractor_map:
+        response["extractor_map"] = config.extractor_map
+    
     if config.wp_site:
         response["wp_site"] = {
             "base_url": config.wp_site.get("base_url"),
@@ -376,6 +441,24 @@ async def list_posts_detailed():
     return {"posts": detailed_posts}
 
 
+@app.get("/api/sites/list")
+async def list_wordpress_sites():
+    """Get list of configured WordPress sites (without credentials)."""
+    sites = get_configured_wp_sites()
+    
+    # Return sites with only public info (no passwords)
+    public_sites = {}
+    for site_key, site_conf in sites.items():
+        public_sites[site_key] = {
+            "site_key": site_key,
+            "base_url": site_conf.get("base_url", ""),
+            "username": site_conf.get("username", ""),
+            # Do not expose app_password
+        }
+    
+    return {"sites": public_sites}
+
+
 @app.put("/api/posts/{post_id}/config")
 async def update_post_config_api(post_id: int, config: PostConfig):
     """Update configuration for a post (posts.json editor)."""
@@ -523,34 +606,62 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                     "errors": errors
                 })
             
-            # Step 3: Deduplicate against known links
-            known_fps = mongo_storage.get_known_fingerprints(post_id, today_iso)
+            # Determine the target site key and post ID for fingerprint tracking
+            target_site_key = None
+            target_post_id = post_id  # Default to config's post_id
+            
+            if wp_site:
+                if isinstance(wp_site, str):
+                    target_site_key = wp_site
+                    # Resolve the site-specific post ID
+                    resolved_id = resolve_post_id_for_site(config, wp_site)
+                    if resolved_id:
+                        target_post_id = resolved_id
+                elif isinstance(wp_site, dict) and "url" in wp_site:
+                    sites = get_configured_wp_sites()
+                    if sites:
+                        target_site_key = list(sites.keys())[0]
+                        # Resolve the site-specific post ID
+                        resolved_id = resolve_post_id_for_site(config, target_site_key)
+                        if resolved_id:
+                            target_post_id = resolved_id
+            
+            # Step 3: Deduplicate against known links for this specific site using the correct post ID
+            known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
             new_links = dedupe_by_fingerprint(all_links, known_fps)
             
-            print(f"[DEBUG] Total extracted: {len(all_links)}, After dedup: {len(new_links)}")
+            print(f"[DEBUG] Site: {target_site_key}, Post ID: {target_post_id}, Total extracted: {len(all_links)}, After dedup: {len(new_links)}")
             
             # Step 4: Update WordPress if wp_site is configured
             if wp_site and new_links:
                 try:
-                    # Determine which site to update
+                    # Determine which site to update and resolve correct post ID
                     if isinstance(wp_site, str):
-                        # wp_site is a site key
-                        wp_result = await update_post_links_section(post_id, new_links, wp_site)
+                        # wp_site is a site key - resolve post ID for this site
+                        site_post_id = resolve_post_id_for_site(config, wp_site)
+                        if not site_post_id:
+                            wp_result = {"error": f"No post ID configured for site '{wp_site}'"}
+                        else:
+                            wp_result = await update_post_links_section(site_post_id, new_links, wp_site)
                     elif isinstance(wp_site, dict) and "url" in wp_site:
                         # wp_site is the actual site config - use first configured site
                         sites = get_configured_wp_sites()
                         if sites:
                             first_site_key = list(sites.keys())[0]
-                            wp_result = await update_post_links_section(post_id, new_links, first_site_key)
+                            site_post_id = resolve_post_id_for_site(config, first_site_key)
+                            if not site_post_id:
+                                wp_result = {"error": f"No post ID configured for site '{first_site_key}'"}
+                            else:
+                                wp_result = await update_post_links_section(site_post_id, new_links, first_site_key)
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
                     else:
                         wp_result = {"error": "Invalid wp_site configuration"}
                     
-                    # Step 5: Save fingerprints for deduplication
+                    # Step 5: Save fingerprints for deduplication (site-specific with correct post ID)
                     if new_links and not wp_result.get("error"):
                         new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(post_id, today_iso, new_fps)
+                        mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
                         
                         # Update last_updated timestamp
                         config["last_updated"] = datetime.utcnow().isoformat()
@@ -617,35 +728,52 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                     "sections_pruned": 0
                 })
 
-            # Step 2: Deduplicate (once)
-            known_fps = mongo_storage.get_known_fingerprints(post_id, today_iso)
-            new_links = dedupe_by_fingerprint(all_links, known_fps)
-
-            # Step 3: Update each configured site
+            # Step 2: Update each configured site with site-specific deduplication
             sites = get_configured_wp_sites()
             results = {}
             for site_key, site_conf in sites.items():
                 try:
-                    wp_result = await update_post_links_section(post_id, new_links, site_key)
+                    # Resolve the correct post ID for this specific site
+                    site_post_id = resolve_post_id_for_site(config, site_key)
+                    if not site_post_id:
+                        results[site_key] = {"error": f"No post ID configured for site '{site_key}'"}
+                        continue
+                    
+                    # Deduplicate against known links for THIS specific site using the correct post ID
+                    known_fps = mongo_storage.get_known_fingerprints(site_post_id, today_iso, site_key)
+                    new_links = dedupe_by_fingerprint(all_links, known_fps)
+                    
+                    print(f"[DEBUG] Site '{site_key}': Post ID={site_post_id}, Total={len(all_links)}, After dedup={len(new_links)}")
+                    
+                    if not new_links:
+                        results[site_key] = {
+                            "message": "No new links for this site",
+                            "links_added": 0
+                        }
+                        continue
+                    
+                    # Update this site with resolved post ID
+                    wp_result = await update_post_links_section(site_post_id, new_links, site_key)
                     results[site_key] = wp_result
+                    
+                    # Save fingerprints for this specific site using the correct post ID
+                    if not wp_result.get("error"):
+                        new_fps = {fingerprint(link) for link in new_links}
+                        mongo_storage.save_new_links(site_post_id, today_iso, new_fps, site_key)
+                        
                 except Exception as e:
                     results[site_key] = {"error": str(e)}
-
-            # Save fingerprints once
-            if new_links:
-                new_fps = {fingerprint(link) for link in new_links}
-                mongo_storage.save_new_links(post_id, today_iso, new_fps)
 
             return JSONResponse({"success": True, "post_id": post_id, "results": results})
 
         # If target is a site key
         site_conf = None
         if target and target != "this":
-            # Pass the site key through - run_update_sync will resolve it
-            return await run_update_sync(post_id, source_urls, timezone, extractor_name, target)
+            # Pass the site key through with config - run_update_sync will resolve it
+            return await run_update_sync(post_id, source_urls, timezone, extractor_name, target, config)
 
         # Fallback: default behavior
-        return await run_update_sync(post_id, source_urls, timezone, extractor_name, wp_site)
+        return await run_update_sync(post_id, source_urls, timezone, extractor_name, wp_site, config)
     
     # Background mode (for Cloud Scheduler parallel updates)
     task_id = f"task_{post_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -678,17 +806,18 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
     })
 
 
-async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, wp_site: Optional[dict] = None):
+async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, wp_site: Optional[dict] = None, config: Optional[dict] = None):
     """
     Synchronous update function that returns full results immediately.
     Used when WordPress plugin needs immediate response.
     
     Args:
-        post_id: WordPress post ID
+        post_id: WordPress post ID (legacy - used as fallback)
         source_urls: List of URLs to scrape
         timezone: Timezone for date calculation
         extractor_name: Optional name of specific extractor to use
-        wp_site: Optional WordPress site config
+        wp_site: Optional WordPress site config or site key string
+        config: Optional post configuration (needed for site_post_ids mapping)
     """
     # Determine today's date
     tz = pytz.timezone(timezone)
@@ -737,18 +866,42 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
                 "sections_pruned": 0
             })
         
-        # Step 2: Deduplicate
-        known_fps = mongo_storage.get_known_fingerprints(post_id, today_iso)
+        # Determine target site key and resolve correct post ID
+        target_site_key = None
+        target_post_id = post_id  # Default fallback
+        
+        if wp_site:
+            if isinstance(wp_site, str):
+                target_site_key = wp_site
+                # Resolve site-specific post ID if config is available
+                if config:
+                    resolved_id = resolve_post_id_for_site(config, wp_site)
+                    if resolved_id:
+                        target_post_id = resolved_id
+            elif isinstance(wp_site, dict):
+                # Try to find the site key from the config
+                sites = get_configured_wp_sites()
+                for key, conf in sites.items():
+                    if conf.get("base_url") == wp_site.get("base_url"):
+                        target_site_key = key
+                        # Resolve site-specific post ID
+                        if config:
+                            resolved_id = resolve_post_id_for_site(config, key)
+                            if resolved_id:
+                                target_post_id = resolved_id
+                        break
+        
+        # Step 2: Deduplicate against known links for this specific site using correct post ID
+        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
         new_links = dedupe_by_fingerprint(all_links, known_fps)
         
-        # Step 3: Update WordPress (this also handles pruning old sections)
-        # Get WordPress site config from post config (if specified)
-        wp_result = await update_post_links_section(post_id, new_links, wp_site)
+        # Step 3: Update WordPress using the resolved post ID
+        wp_result = await update_post_links_section(target_post_id, new_links, wp_site)
         
-        # Step 4: Save fingerprints for new links
+        # Step 4: Save fingerprints for new links (site-specific with correct post ID)
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(post_id, today_iso, new_fps)
+            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
         
         # Build response message
         message_parts = []
@@ -1034,15 +1187,20 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             )
             return
         
-        # Deduplicate
+        # Deduplicate against known links for this specific site
         await manager.update_post_state(
             request_id, post_id,
             progress=70,
             message="Deduplicating links",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {len(all_links)} links..."
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {len(all_links)} links for site '{target}'..."
         )
         
-        known_fps = mongo_storage.get_known_fingerprints(post_id, today_iso)
+        # Resolve the correct post ID for the target site
+        target_post_id = resolve_post_id_for_site(config, target)
+        if not target_post_id:
+            raise Exception(f"No post ID configured for site '{target}'")
+        
+        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target)
         new_links = dedupe_by_fingerprint(all_links, known_fps)
         
         await manager.update_post_state(
@@ -1052,13 +1210,13 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication"
         )
         
-        # Update WordPress
-        wp_result = await update_post_links_section(post_id, new_links, target)
+        # Update WordPress with the correct post ID
+        wp_result = await update_post_links_section(target_post_id, new_links, target)
         
-        # Save fingerprints
+        # Save fingerprints for this specific site using the correct post ID
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(post_id, today_iso, new_fps)
+            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target)
         
         # Determine status based on results
         if wp_result['links_added'] > 0:

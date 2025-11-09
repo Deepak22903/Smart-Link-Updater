@@ -884,6 +884,7 @@ class SmartLinkUpdater {
             
             function init() {
                 loadPosts();
+                loadWordPressSites();
                 attachEventListeners();
                 loadCronStatus();
             }
@@ -1330,6 +1331,71 @@ class SmartLinkUpdater {
                 });
             }
             
+            function loadWordPressSites() {
+                $.ajax({
+                    url: config.restUrl + '/sites',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        const sites = response.sites || {};
+                        
+                        // Store sites globally for use in other functions
+                        window.availableSites = Object.keys(sites).map(function(key) {
+                            return {
+                                site_key: key,
+                                display_name: sites[key].base_url || key
+                            };
+                        });
+                        
+                        const select = $('#target-site-select');
+                        
+                        // Remove old dynamic options (keep This Site and All Sites)
+                        select.find('option').not('[value="this"], [value="all"]').remove();
+                        
+                        // Add individual site options
+                        Object.keys(sites).forEach(function(siteKey) {
+                            const site = sites[siteKey];
+                            const option = $('<option>')
+                                .val(siteKey)
+                                .text(site.base_url || siteKey);
+                            select.append(option);
+                        });
+                    },
+                    error: function(xhr) {
+                        console.warn('Failed to load WordPress sites:', xhr.responseJSON?.message || 'Unknown error');
+                    }
+                });
+            }
+            
+            function loadSitePostIdFields(existingSitePostIds) {
+                const $container = $('#site-post-ids-fields');
+                $container.empty();
+                
+                if (!window.availableSites || window.availableSites.length === 0) {
+                    $container.html('<p style="color: #999; font-style: italic; margin: 0;">Loading sites...</p>');
+                    return;
+                }
+                
+                existingSitePostIds = existingSitePostIds || {};
+                
+                window.availableSites.forEach(function(site) {
+                    const value = existingSitePostIds[site.site_key] || '';
+                    $container.append(`
+                        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                            <label style="flex: 0 0 200px; font-weight: 600; color: #555;">${escapeHtml(site.display_name)}:</label>
+                            <input type="number" 
+                                   class="site-post-id-input" 
+                                   data-site-key="${escapeHtml(site.site_key)}" 
+                                   value="${value}" 
+                                   placeholder="Post ID on ${escapeHtml(site.display_name)}" 
+                                   style="flex: 1; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px;">
+                        </div>
+                    `);
+                });
+            }
+            
             function renderPostsTable(posts) {
                 const tbody = $('#posts-table-body');
                 tbody.empty();
@@ -1353,8 +1419,17 @@ class SmartLinkUpdater {
                         )
                     );
                     
-                    // Post ID
-                    row.append($('<td>').text('#' + post.post_id).css('font-weight', '600'));
+                    // Post ID (or content_slug if available)
+                    const idCell = $('<td>').css('font-weight', '600');
+                    if (post.content_slug) {
+                        idCell.html(
+                            `<span style="color: #667eea; font-weight: 600;" title="Content Slug">${escapeHtml(post.content_slug)}</span><br>` +
+                            `<span style="font-size: 11px; color: #999;">ID: ${post.post_id}</span>`
+                        );
+                    } else {
+                        idCell.text('#' + post.post_id);
+                    }
+                    row.append(idCell);
 
                     // Post (title/name)
                     row.append($('<td>').text(post.title || ('Post ' + post.post_id)));
@@ -1431,6 +1506,9 @@ class SmartLinkUpdater {
                         'z-index': '1000',
                         'min-width': '120px'
                     }).html(`
+                        <div class="menu-item view-logs-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
+                            <span class="dashicons dashicons-media-text" style="font-size: 14px;"></span> View Logs
+                        </div>
                         <div class="menu-item edit-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
                             <span class="dashicons dashicons-edit" style="font-size: 14px;"></span> Edit
                         </div>
@@ -1793,6 +1871,7 @@ class SmartLinkUpdater {
                 $('#save-config-text').text('Save Configuration');
                 $('#post-config-form')[0].reset();
                 $('#config-post-id').prop('disabled', false);
+                $('#config-content-slug').val('');
                 
                 // Reset to single URL
                 $('#source-urls-container').html(`
@@ -1805,6 +1884,7 @@ class SmartLinkUpdater {
                     </div>
                 `);
                 
+                loadSitePostIdFields();
                 $('#post-config-modal').fadeIn();
             }
             
@@ -1827,6 +1907,9 @@ class SmartLinkUpdater {
                     },
                     success: function(postConfig) {
                         console.log('Loaded config:', postConfig);
+                        
+                        // Populate content slug
+                        $('#config-content-slug').val(postConfig.content_slug || '');
                         
                         // Populate source URLs
                         const sourceUrls = postConfig.source_urls || [];
@@ -1866,6 +1949,9 @@ class SmartLinkUpdater {
                             toggleExtractorMode();
                         }
                         
+                        // Load site post IDs
+                        loadSitePostIdFields(postConfig.site_post_ids);
+                        
                         $('#post-config-modal').fadeIn();
                     },
                     error: function(xhr) {
@@ -1877,9 +1963,23 @@ class SmartLinkUpdater {
             function savePostConfig() {
                 const mode = $('#config-mode').val();
                 const postId = parseInt($('#config-post-id').val());
+                const contentSlug = $('#config-content-slug').val().trim();
                 
-                if (!postId) {
-                    showToast('Please enter a post ID', 'error');
+                // Collect site_post_ids
+                const sitePostIds = {};
+                let hasSiteIds = false;
+                $('.site-post-id-input').each(function() {
+                    const siteKey = $(this).data('site-key');
+                    const sitePostId = parseInt($(this).val());
+                    if (sitePostId && sitePostId > 0) {
+                        sitePostIds[siteKey] = sitePostId;
+                        hasSiteIds = true;
+                    }
+                });
+                
+                // Validation: Need either legacy post_id or at least one site-specific post ID
+                if (!postId && !hasSiteIds) {
+                    showToast('Please enter either a legacy post ID or at least one site-specific post ID', 'error');
                     return;
                 }
                 
@@ -1899,10 +1999,18 @@ class SmartLinkUpdater {
                 
                 // Build configuration object
                 const configData = {
-                    post_id: postId,
+                    post_id: postId || (hasSiteIds ? Object.values(sitePostIds)[0] : 0), // Use first site ID as fallback
                     source_urls: sourceUrls,
                     timezone: $('#config-timezone').val()
                 };
+                
+                // Add optional fields
+                if (contentSlug) {
+                    configData.content_slug = contentSlug;
+                }
+                if (hasSiteIds) {
+                    configData.site_post_ids = sitePostIds;
+                }
                 
                 // Handle extractor configuration - only save extractor_map if per-url mode
                 const extractorMode = $('input[name="extractor-mode"]:checked').val();
@@ -2585,16 +2693,41 @@ class SmartLinkUpdater {
                         <form id="post-config-form">
                             <input type="hidden" id="config-mode" value="add">
                             
-                            <!-- Post ID -->
+                            <!-- Content Slug -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-tag" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Content Slug
+                                </label>
+                                <input type="text" id="config-content-slug" class="smartlink-input" placeholder="e.g., coin-master-free-spins"
+                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                    Universal identifier for this content across all WordPress sites (optional but recommended for multi-site)
+                                </p>
+                            </div>
+                            
+                            <!-- Site-Specific Post IDs -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-admin-multisite" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Post IDs by Site
+                                </label>
+                                <div id="site-post-ids-container" style="background: #f9f9f9; padding: 15px; border-radius: 8px; border: 2px solid #ddd;">
+                                    <p style="margin: 0 0 10px 0; font-size: 12px; color: #666;">Enter the post ID for each WordPress site. Leave blank if content doesn't exist on that site.</p>
+                                    <div id="site-post-ids-fields"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Post ID (Legacy) -->
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
                                     <span class="dashicons dashicons-admin-post" style="font-size: 16px; vertical-align: middle;"></span>
-                                    Post ID *
+                                    Legacy Post ID
                                 </label>
-                                <input type="number" id="config-post-id" class="smartlink-input" placeholder="e.g., 12345" required
+                                <input type="number" id="config-post-id" class="smartlink-input" placeholder="e.g., 12345"
                                        style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
                                 <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
-                                    Enter the WordPress post ID to configure
+                                    For backward compatibility. Use "Post IDs by Site" above for multi-site support.
                                 </p>
                             </div>
                             
@@ -2768,6 +2901,15 @@ class SmartLinkUpdater {
         register_rest_route('smartlink/v1', '/extractors', array(
             'methods' => 'GET',
             'callback' => array($this, 'handle_list_extractors_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        // List WordPress sites endpoint
+        register_rest_route('smartlink/v1', '/sites', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_list_sites_rest'),
             'permission_callback' => function() {
                 return current_user_can('edit_posts');
             }
@@ -2965,6 +3107,26 @@ class SmartLinkUpdater {
      */
     public function handle_list_extractors_rest($request) {
         $api_url = $this->api_base_url . '/api/extractors/list';
+        
+        $response = wp_remote_get($api_url, array(
+            'timeout' => 10
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle list WordPress sites REST request (server-side proxy)
+     */
+    public function handle_list_sites_rest($request) {
+        $api_url = $this->api_base_url . '/api/sites/list';
         
         $response = wp_remote_get($api_url, array(
             'timeout' => 10
