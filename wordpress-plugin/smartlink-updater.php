@@ -393,7 +393,8 @@ class SmartLinkUpdater {
             background: white;
             border: none;
             border-radius: 12px;
-            overflow: hidden;
+            overflow-x: auto;
+            overflow-y: visible;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
         }
 
@@ -401,6 +402,8 @@ class SmartLinkUpdater {
             margin: 0;
             border-collapse: separate;
             border-spacing: 0;
+            min-width: 1200px;
+            width: 100%;
         }
 
         .smartlink-posts-table thead {
@@ -421,12 +424,11 @@ class SmartLinkUpdater {
         }
 
         .smartlink-posts-table tbody tr {
-            transition: all 0.2s ease;
+            transition: background 0.2s ease, box-shadow 0.2s ease;
         }
 
         .smartlink-posts-table tbody tr:hover {
             background: linear-gradient(135deg, #f8f9ff 0%, #fdf4ff 100%);
-            transform: scale(1.01);
             box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
         }
 
@@ -435,23 +437,34 @@ class SmartLinkUpdater {
         }
 
         .column-extractor {
-            width: 120px;
-        }
-
-        .column-health {
-            width: 100px;
-        }
-
-        .column-status {
             width: 150px;
         }
 
+        .column-status {
+            width: 200px;
+        }
+
         .column-progress {
-            width: 120px;
+            width: 150px;
+        }
+        
+        .column-last-updated {
+            width: 130px;
         }
 
         .column-actions {
-            width: 180px;
+            width: 150px;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .actions-cell {
+            white-space: nowrap;
+            position: relative;
+        }
+        
+        .action-menu .menu-item:hover {
+            background: #f5f5f5;
         }
 
         .status-badge {
@@ -611,6 +624,14 @@ class SmartLinkUpdater {
 
         .actions-cell {
             white-space: nowrap;
+        }
+        
+        .actions-cell .button {
+            margin-right: 4px;
+        }
+        
+        .actions-cell .button:last-child {
+            margin-right: 0;
         }
 
         .button-small {
@@ -909,7 +930,36 @@ class SmartLinkUpdater {
                 $(document).on('click', '.view-logs-btn', viewLogs);
                 $(document).on('click', '.single-update-btn', singleUpdate);
                 $(document).on('click', '.edit-config-btn', openEditConfigModal);
+                $(document).on('click', '.delete-config-btn', deletePostConfig);
                 $(document).on('click', '.remove-url-btn', removeSourceUrlField);
+                
+                // Action menu toggle
+                $(document).on('click', '.action-menu-btn', function(e) {
+                    e.stopPropagation();
+                    const postId = $(this).data('post-id');
+                    const menu = $('.action-menu[data-post-id="' + postId + '"]');
+                    
+                    // Close other menus
+                    $('.action-menu').not(menu).hide();
+                    
+                    // Toggle this menu
+                    menu.toggle();
+                });
+                
+                // Close menu when clicking outside
+                $(document).on('click', function() {
+                    $('.action-menu').hide();
+                });
+                
+                // Prevent menu from closing when clicking inside
+                $(document).on('click', '.action-menu', function(e) {
+                    e.stopPropagation();
+                });
+                
+                // Handle menu item clicks
+                $(document).on('click', '.action-menu .menu-item', function() {
+                    $('.action-menu').hide();
+                });
             }
             
             // ========== CRON MANAGEMENT ==========
@@ -1252,6 +1302,26 @@ class SmartLinkUpdater {
                     },
                     success: function(response) {
                         postsData = response.posts || [];
+
+                        // Normalize title field so filtering/search consistently uses `post.title`
+                        postsData = postsData.map(function(p) {
+                            // prefer existing `title` string
+                            if (!p.title) {
+                                if (typeof p.post_title === 'string') {
+                                    p.title = p.post_title;
+                                } else if (p.post_title && p.post_title.rendered) {
+                                    p.title = p.post_title.rendered;
+                                } else if (p.title && typeof p.title === 'object' && p.title.rendered) {
+                                    p.title = p.title.rendered;
+                                } else if (p.title && typeof p.title === 'string') {
+                                    // already a string
+                                } else {
+                                    p.title = 'Post ' + (p.post_id || '');
+                                }
+                            }
+                            return p;
+                        });
+
                         renderPostsTable(postsData);
                     },
                     error: function(xhr) {
@@ -1284,57 +1354,131 @@ class SmartLinkUpdater {
                     );
                     
                     // Post ID
-                    row.append($('<td>').text(post.post_id));
-                    
-                    // Title (fetch from WordPress if available)
-                    const titleCell = $('<td>').text('Post ' + post.post_id);
-                    row.append(titleCell);
+                    row.append($('<td>').text('#' + post.post_id).css('font-weight', '600'));
+
+                    // Post (title/name)
+                    row.append($('<td>').text(post.title || ('Post ' + post.post_id)));
                     
                     // Extractor
-                    row.append($('<td>').text(post.extractor || 'default'));
+                    row.append($('<td>').html(`<span style="background: #e8e8e8; padding: 4px 10px; border-radius: 4px; font-size: 12px;">${post.extractor || 'default'}</span>`));
                     
-                    // Health Status
-                    const healthBadge = getHealthBadge(post.health_status);
-                    row.append($('<td>').html(healthBadge));
+                    // Status (with badge and description)
+                    const statusHtml = getStatusBadgeWithDescription(post);
+                    row.append($('<td>').addClass('status-cell').html(statusHtml));
                     
-                    // Status
-                    const statusCell = $('<td>').addClass('status-cell').html(
-                        '<span class="status-badge status-idle">Idle</span>'
-                    );
-                    row.append(statusCell);
+                    // Progress (with percentage and bar)
+                    let percent = 0;
+                    if (typeof post.progress_percent === 'number') {
+                        percent = Math.min(100, Math.max(0, Math.round(post.progress_percent)));
+                    } else if (typeof post.progress === 'number') {
+                        // support 0..1 or 0..100 progress values
+                        if (post.progress <= 1) percent = Math.round(post.progress * 100);
+                        else percent = Math.round(post.progress);
+                    } else if (post.completed && post.total) {
+                        percent = Math.round((post.completed / post.total) * 100);
+                    } else if (post.status) {
+                        const st = String(post.status).toLowerCase();
+                        if (st === 'done' || st === 'completed' || st === 'success') percent = 100;
+                    }
+
+                    percent = Math.min(100, Math.max(0, percent || 0));
+
+                    const progressHtml = `
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div class="progress-bar small" style="flex: 1; height: 8px; background: #e8e8e8; border-radius: 4px; overflow: hidden;">
+                                <div class="progress-fill" style="width: ${percent}%; height: 100%; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); transition: width 0.3s;"></div>
+                            </div>
+                            <span style="font-weight: 600; font-size: 13px; min-width: 45px;">${percent}%</span>
+                        </div>
+                    `;
+                    row.append($('<td>').addClass('progress-cell').html(progressHtml));
                     
-                    // Progress
-                    const progressCell = $('<td>').addClass('progress-cell').html(
-                        '<div class="progress-bar small"><div class="progress-fill" style="width: 0%;"></div></div>'
-                    );
-                    row.append(progressCell);
+                    // Last Updated
+                    const lastUpdated = post.last_updated ? formatTimeAgo(post.last_updated) : '-';
+                    row.append($('<td>').text(lastUpdated).css({'color': '#666', 'font-size': '13px'}));
                     
-                    // Actions
-                    const actionsCell = $('<td>').addClass('actions-cell');
-                    actionsCell.append(
-                        $('<button>').addClass('button button-small single-update-btn').attr('data-post-id', post.post_id).html(
-                            '<span class="dashicons dashicons-update"></span> Update'
-                        )
-                    );
-                    actionsCell.append(' ');
-                    actionsCell.append(
-                        $('<button>').addClass('button button-small edit-config-btn').attr('data-post-id', post.post_id).html(
-                            '<span class="dashicons dashicons-edit"></span> Edit'
-                        )
-                    );
-                    actionsCell.append(' ');
-                    actionsCell.append(
-                        $('<button>').addClass('button button-small view-logs-btn').attr({
-                            'data-post-id': post.post_id,
-                            'disabled': true
-                        }).html(
-                            '<span class="dashicons dashicons-media-text"></span> Logs'
-                        )
-                    );
+                    // Actions (Update button + three-dot menu)
+                    const actionsCell = $('<td>').addClass('actions-cell').css({'text-align': 'center', 'position': 'relative'});
+                    
+                    // Update button (standalone)
+                    const updateBtn = $('<button>').addClass('button button-primary button-small single-update-btn').attr('data-post-id', post.post_id).html(
+                        '<span class="dashicons dashicons-update" style="font-size: 13px; line-height: 1.4;"></span> Update'
+                    ).css({
+                        'margin-right': '8px',
+                        'padding': '6px 12px',
+                        'font-size': '12px'
+                    });
+                    
+                    // Three-dot menu button
+                    const menuBtn = $('<button>').addClass('action-menu-btn').attr('data-post-id', post.post_id).html('⋮').css({
+                        'background': 'none',
+                        'border': 'none',
+                        'font-size': '20px',
+                        'cursor': 'pointer',
+                        'padding': '5px 10px',
+                        'color': '#666'
+                    });
+                    
+                    // Menu dropdown (only Edit and Delete)
+                    const menu = $('<div>').addClass('action-menu').attr('data-post-id', post.post_id).css({
+                        'display': 'none',
+                        'position': 'absolute',
+                        'right': '10px',
+                        'background': 'white',
+                        'border': '1px solid #ddd',
+                        'border-radius': '8px',
+                        'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
+                        'z-index': '1000',
+                        'min-width': '120px'
+                    }).html(`
+                        <div class="menu-item edit-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
+                            <span class="dashicons dashicons-edit" style="font-size: 14px;"></span> Edit
+                        </div>
+                        <div class="menu-item delete-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; color: #dc3232;">
+                            <span class="dashicons dashicons-trash" style="font-size: 14px;"></span> Delete
+                        </div>
+                    `);
+                    
+                    actionsCell.append(updateBtn).append(menuBtn).append(menu);
                     row.append(actionsCell);
                     
                     tbody.append(row);
                 });
+            }
+            
+            function getStatusBadgeWithDescription(post) {
+                const status = post.status || 'idle';
+                let badge, description;
+                
+                if (status === 'updated' || status === 'completed') {
+                    badge = '<span style="display: inline-flex; align-items: center; gap: 5px; background: #10b981; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;"><span>✓</span> Updated</span>';
+                    description = '<div style="font-size: 12px; color: #666; margin-top: 4px;">Added 1 links</div>';
+                } else if (status === 'up_to_date') {
+                    badge = '<span style="display: inline-flex; align-items: center; gap: 5px; background: #6366f1; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;"><span>⏰</span> Up to Date</span>';
+                    description = '<div style="font-size: 12px; color: #666; margin-top: 4px;">No new links found</div>';
+                } else {
+                    badge = '<span style="display: inline-flex; align-items: center; gap: 5px; background: #9ca3af; color: white; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">Idle</span>';
+                    description = '';
+                }
+                
+                return badge + description;
+            }
+            
+            function formatTimeAgo(timestamp) {
+                if (!timestamp) return '-';
+                
+                const now = new Date();
+                const past = new Date(timestamp);
+                const diffMs = now - past;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMs / 3600000);
+                const diffDays = Math.floor(diffMs / 86400000);
+                
+                if (diffMins < 1) return 'Just now';
+                if (diffMins < 60) return diffMins + ' mins ago';
+                if (diffHours < 24) return diffHours + ' hours ago';
+                if (diffDays < 30) return diffDays + ' days ago';
+                return past.toLocaleDateString();
             }
             
             function getHealthBadge(status) {
@@ -1504,9 +1648,11 @@ class SmartLinkUpdater {
                     const statusBadge = getStatusBadge(postState.status, postState.message);
                     row.find('.status-cell').html(statusBadge);
                     
-                    // Update progress bar
+                    // Update progress bar AND percentage text
                     const progressWidth = postState.progress || 0;
-                    row.find('.progress-fill').css('width', progressWidth + '%');
+                    const progressCell = row.find('.progress-cell');
+                    progressCell.find('.progress-fill').css('width', progressWidth + '%');
+                    progressCell.find('span').text(Math.round(progressWidth) + '%');
                     
                     // Enable logs button if there are logs
                     if (postState.log_count > 0) {
@@ -1705,7 +1851,6 @@ class SmartLinkUpdater {
                         // Set extractor mode
                         const extractorMap = postConfig.extractor_map || {};
                         const hasExtractorMap = Object.keys(extractorMap).length > 0;
-                        const globalExtractor = postConfig.extractor;
                         
                         if (hasExtractorMap) {
                             $('input[name="extractor-mode"][value="per-url"]').prop('checked', true);
@@ -1716,10 +1861,6 @@ class SmartLinkUpdater {
                             Object.keys(extractorMap).forEach(function(url) {
                                 $(`select[data-url="${url}"]`).val(extractorMap[url]);
                             });
-                        } else if (globalExtractor) {
-                            $('input[name="extractor-mode"][value="global"]').prop('checked', true);
-                            toggleExtractorMode();
-                            $('#global-extractor').val(globalExtractor);
                         } else {
                             $('input[name="extractor-mode"][value="auto"]').prop('checked', true);
                             toggleExtractorMode();
@@ -1763,20 +1904,15 @@ class SmartLinkUpdater {
                     timezone: $('#config-timezone').val()
                 };
                 
-                // Handle extractor configuration
+                // Handle extractor configuration - only save extractor_map if per-url mode
                 const extractorMode = $('input[name="extractor-mode"]:checked').val();
                 
-                if (extractorMode === 'global') {
-                    const globalExtractor = $('#global-extractor').val();
-                    if (globalExtractor) {
-                        configData.extractor = globalExtractor;
-                    }
-                } else if (extractorMode === 'per-url') {
+                if (extractorMode === 'per-url') {
                     const extractorMap = {};
                     $('.extractor-url-mapping').each(function() {
                         const url = $(this).data('url');
                         const extractor = $(this).val();
-                        if (extractor) {
+                        if (extractor) {  // Only add if not empty (not auto-detect)
                             extractorMap[url] = extractor;
                         }
                     });
@@ -1784,6 +1920,8 @@ class SmartLinkUpdater {
                         configData.extractor_map = extractorMap;
                     }
                 }
+                // If auto mode, don't send any extractor config - backend will auto-detect
+
                 
                 // Disable button and show loading
                 const $btn = $('#save-config-btn');
@@ -1816,6 +1954,35 @@ class SmartLinkUpdater {
                             '<span class="dashicons dashicons-yes"></span><span id="save-config-text">' + 
                             (mode === 'add' ? 'Save Configuration' : 'Update Configuration') + '</span>'
                         );
+                    }
+                });
+            }
+            
+            function deletePostConfig(e) {
+                const postId = $(e.currentTarget).data('post-id');
+                
+                if (!confirm('Are you sure you want to delete the configuration for Post ID ' + postId + '? This action cannot be undone.')) {
+                    return;
+                }
+                
+                const $btn = $(e.currentTarget);
+                $btn.prop('disabled', true);
+                
+                showToast('Deleting configuration...', 'info');
+                
+                $.ajax({
+                    url: config.restUrl + '/config/post/' + postId,
+                    method: 'DELETE',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        showToast('Configuration deleted successfully!', 'success');
+                        loadPosts(); // Refresh the posts table
+                    },
+                    error: function(xhr) {
+                        showToast('Failed to delete configuration: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
+                        $btn.prop('disabled', false);
                     }
                 });
             }
@@ -1863,12 +2030,9 @@ class SmartLinkUpdater {
             function toggleExtractorMode() {
                 const mode = $('input[name="extractor-mode"]:checked').val();
                 
-                $('#global-extractor-config').hide();
                 $('#per-url-extractor-config').hide();
                 
-                if (mode === 'global') {
-                    $('#global-extractor-config').show();
-                } else if (mode === 'per-url') {
+                if (mode === 'per-url') {
                     $('#per-url-extractor-config').show();
                     updateExtractorMapping();
                 }
@@ -2362,13 +2526,13 @@ class SmartLinkUpdater {
                             <td class="manage-column column-cb check-column">
                                 <input type="checkbox" id="cb-select-all">
                             </td>
-                            <th class="manage-column column-post-id">Post ID</th>
-                            <th class="manage-column column-title">Title</th>
+                            <th class="manage-column column-post-id">ID</th>
+                            <th class="manage-column column-title">Post</th>
                             <th class="manage-column column-extractor">Extractor</th>
-                            <th class="manage-column column-health">Health</th>
                             <th class="manage-column column-status">Status</th>
                             <th class="manage-column column-progress">Progress</th>
-                            <th class="manage-column column-actions">Actions</th>
+                            <th class="manage-column column-last-updated">Last Updated</th>
+                            <th class="manage-column column-actions"></th>
                         </tr>
                     </thead>
                     <tbody id="posts-table-body">
@@ -2462,40 +2626,26 @@ class SmartLinkUpdater {
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
                                     <span class="dashicons dashicons-admin-tools" style="font-size: 16px; vertical-align: middle;"></span>
-                                    Extractor Configuration
+                                    Extractor Configuration (Optional)
                                 </label>
                                 
                                 <div style="margin-bottom: 12px;">
                                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                                         <input type="radio" name="extractor-mode" value="auto" checked>
-                                        <strong>Auto-detect</strong> <span style="color: #666; font-size: 13px;">(Recommended)</span>
+                                        <strong>Auto-detect for all URLs</strong> <span style="color: #666; font-size: 13px;">(Recommended - Smart detection based on URL)</span>
                                     </label>
-                                </div>
-                                
-                                <div style="margin-bottom: 12px;">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="radio" name="extractor-mode" value="global">
-                                        <strong>Same extractor for all URLs</strong>
-                                    </label>
-                                    <div id="global-extractor-config" style="display: none; margin-left: 28px; margin-top: 8px;">
-                                        <select id="global-extractor" class="smartlink-select" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px;">
-                                            <option value="">Auto-detect</option>
-                                            <option value="simplegameguide">Simple Game Guide</option>
-                                            <option value="mosttechs">Most Techs</option>
-                                            <option value="crazyashwin">Crazy Ashwin</option>
-                                            <option value="techyhigher">Techy Higher</option>
-                                            <option value="default">Default Extractor</option>
-                                        </select>
-                                    </div>
                                 </div>
                                 
                                 <div style="margin-bottom: 12px;">
                                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                                         <input type="radio" name="extractor-mode" value="per-url">
-                                        <strong>Different extractor per URL</strong>
+                                        <strong>Manually specify extractor per URL</strong>
                                     </label>
                                     <div id="per-url-extractor-config" style="display: none; margin-left: 28px; margin-top: 8px;">
-                                        <p style="color: #666; font-size: 13px; margin-bottom: 12px;">Configure extractors for each source URL after adding them above</p>
+                                        <p style="color: #666; font-size: 13px; margin-bottom: 12px;">
+                                            <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                            Only specify extractors for URLs where auto-detection doesn't work. Leave blank to auto-detect.
+                                        </p>
                                         <div id="extractor-mapping-container"></div>
                                     </div>
                                 </div>
@@ -2648,6 +2798,14 @@ class SmartLinkUpdater {
             }
         ));
         
+        register_rest_route('smartlink/v1', '/config/post/(?P<post_id>\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'handle_delete_post_config_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
         // Cron settings endpoints
         register_rest_route('smartlink/v1', '/cron/settings', array(
             'methods' => 'GET',
@@ -2783,6 +2941,22 @@ class SmartLinkUpdater {
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
+        // Enrich posts with WordPress post titles
+        if (isset($data['posts']) && is_array($data['posts'])) {
+            foreach ($data['posts'] as &$post) {
+                if (isset($post['post_id'])) {
+                    $wp_post = get_post($post['post_id']);
+                    if ($wp_post) {
+                        $post['title'] = $wp_post->post_title;
+                        $post['post_status'] = $wp_post->post_status;
+                        $post['post_url'] = get_permalink($post['post_id']);
+                    } else {
+                        $post['title'] = 'Post ' . $post['post_id'] . ' (not found)';
+                    }
+                }
+            }
+        }
+        
         return rest_ensure_response($data);
     }
 
@@ -2903,6 +3077,39 @@ class SmartLinkUpdater {
         
         if ($status_code >= 400) {
             return new WP_Error('api_error', $data['detail'] ?? 'Failed to update configuration', array('status' => $status_code));
+        }
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle delete post config REST request (server-side proxy)
+     */
+    public function handle_delete_post_config_rest($request) {
+        $post_id = $request->get_param('post_id');
+        
+        // Call Cloud Run API (server-side)
+        $api_url = $this->api_base_url . '/config/post/' . intval($post_id);
+        
+        $response = wp_remote_request($api_url, array(
+            'method' => 'DELETE',
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $data = json_decode($response_body, true);
+        
+        if ($status_code == 404) {
+            return new WP_Error('not_found', 'Post configuration not found', array('status' => 404));
+        }
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to delete configuration', array('status' => $status_code));
         }
         
         return rest_ensure_response($data);

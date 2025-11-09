@@ -60,18 +60,19 @@ class PostConfig(MongoBaseModel):
     
     New in v2: extractor_map for per-source extractor configuration
     - extractor_map: {"url": "extractor_name"} - Maps each source URL to its extractor
-    - Falls back to 'extractor' field for backward compatibility
+    - URLs not in extractor_map will default to Gemini extractor
     
-    New in v2.3: insertion_point for custom link placement
-    - insertion_point: {"type": "prepend|after_heading_id|after_heading_text", "value": "target"}
+    New in v2.3: Simplified link insertion
+    - Links are automatically inserted after the first <h2> tag
+    - Falls back to prepending if no <h2> found
     """
     post_id: int
     source_urls: List[str]
     timezone: str = "Asia/Kolkata"
-    extractor: Optional[str] = None  # Legacy: single extractor for all sources
-    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping
+    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
+    extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping (manual or smart match)
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "...", "username": "...", "app_password": "..."}
-    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target"}
+    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: kept for backward compatibility
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 

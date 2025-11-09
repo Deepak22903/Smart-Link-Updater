@@ -21,7 +21,7 @@ from .scrape import fetch_html
 from .extraction import extract_links_with_heading_filter
 from .dedupe import dedupe_by_fingerprint, fingerprint
 from .wp import update_post_links_section, get_configured_wp_sites
-from .extractors import get_extractor, get_extractor_for_url, list_extractors
+from .extractors import get_extractor, list_extractors
 from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
@@ -38,10 +38,10 @@ class PostConfig(BaseModel):
     post_id: int
     source_urls: List[HttpUrl]
     timezone: Optional[str] = os.getenv("TIMEZONE", "Asia/Kolkata")
-    extractor: Optional[str] = None  # Legacy: single extractor for all sources
-    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping {"url": "extractor_name"}
+    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
+    extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
-    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target_id_or_text"}
+    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
 
 
 class UpdateJob(BaseModel):
@@ -65,10 +65,10 @@ class PostConfigUpdate(BaseModel):
     """Model for partial updates to post configuration"""
     source_urls: Optional[List[HttpUrl]] = None
     timezone: Optional[str] = None
-    extractor: Optional[str] = None  # Legacy: single extractor
-    extractor_map: Optional[Dict[str, str]] = None  # New: per-source extractor mapping
+    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
+    extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     wp_site: Optional[Dict[str, str]] = None
-    insertion_point: Optional[Dict[str, str]] = None  # {"type": "prepend|after_heading_id|after_heading_text", "value": "target_id_or_text"}
+    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
 
 
 @app.get("/health")
@@ -362,10 +362,15 @@ async def list_posts_detailed():
             source_url = post["source_urls"][0]
             health = monitor.get_source_health(source_url)
         
+        # Normalize timestamp fields
+        last_updated = post.get("last_updated") or post.get("updated_at")
+        
         detailed_posts.append({
             **post,
             "health_status": health.get("status") if health else "unknown",
-            "last_check": health.get("last_check") if health else None
+            "last_check": health.get("last_check") if health else None,
+            "last_updated": last_updated,
+            "extractor": post.get("extractor") or "default"
         })
     
     return {"posts": detailed_posts}
@@ -464,12 +469,11 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
     
     # Helper function to get extractor for a URL
     def get_extractor_for_source(url: str):
-        """Get extractor for a source URL, checking extractor_map first"""
+        """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
         print(f"[DEBUG] get_extractor_for_source called with url: {url}")
         print(f"[DEBUG] extractor_map: {extractor_map}")
-        print(f"[DEBUG] extractor_name: {extractor_name}")
         
-        # Priority 1: Check extractor_map for this specific URL
+        # Priority 1: Check extractor_map for this specific URL (manual or smart match)
         if extractor_map:
             # Normalize URL for comparison (handle trailing slash)
             url_normalized = url.rstrip('/')
@@ -480,14 +484,9 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                         print(f"[DEBUG] Using mapped extractor '{map_extractor}' for {url}")
                         return get_extractor(map_extractor)
         
-        # Priority 2: Use global extractor if specified
-        if extractor_name:
-            print(f"[DEBUG] Using global extractor '{extractor_name}'")
-            return get_extractor(extractor_name)
-        
-        # Priority 3: Auto-detect based on URL
-        print(f"[DEBUG] Auto-detecting extractor for {url}")
-        return get_extractor_for_url(url)
+        # Priority 2: Default to the default extractor (Gemini-based)
+        print(f"[DEBUG] No mapping found for {url}, using default extractor")
+        return get_extractor("default")
     
     # If sync mode (for WordPress), run immediately and return results
     if sync:
@@ -552,6 +551,10 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                     if new_links and not wp_result.get("error"):
                         new_fps = {fingerprint(link) for link in new_links}
                         mongo_storage.save_new_links(post_id, today_iso, new_fps)
+                        
+                        # Update last_updated timestamp
+                        config["last_updated"] = datetime.utcnow().isoformat()
+                        mongo_storage.set_post_config(config)
                     
                     return JSONResponse({
                         "success": True,
@@ -700,11 +703,12 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
         for url in source_urls:
             html = await fetch_html(url)
             
-            # Choose extractor: specified > auto-detect > default
+            # Choose extractor: mapped > default
             if extractor_name:
                 extractor = get_extractor(extractor_name)
             else:
-                extractor = get_extractor_for_url(url)
+                # Default to the default extractor (Gemini-based)
+                extractor = get_extractor("default")
             
             # Extract links using the chosen extractor
             print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
@@ -825,12 +829,11 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
         
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
-            """Get extractor for a source URL, checking extractor_map first"""
+            """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
             print(f"[DEBUG] BG get_extractor_for_source called with url: {url}")
             print(f"[DEBUG] BG extractor_map: {extractor_map}")
-            print(f"[DEBUG] BG extractor_name: {extractor_name}")
             
-            # Priority 1: Check extractor_map for this specific URL
+            # Priority 1: Check extractor_map for this specific URL (manual or smart match)
             if extractor_map:
                 # Normalize URL for comparison (handle trailing slash)
                 url_normalized = url.rstrip('/')
@@ -841,14 +844,9 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
                             print(f"[DEBUG] BG Using mapped extractor '{map_extractor}' for {url}")
                             return get_extractor(map_extractor)
             
-            # Priority 2: Use global extractor if specified
-            if extractor_name:
-                print(f"[DEBUG] BG Using global extractor '{extractor_name}'")
-                return get_extractor(extractor_name)
-            
-            # Priority 3: Auto-detect based on URL
-            print(f"[DEBUG] BG Auto-detecting extractor for {url}")
-            return get_extractor_for_url(url)
+            # Priority 2: Default to the default extractor (Gemini-based)
+            print(f"[DEBUG] BG No mapping found for {url}, using default extractor")
+            return get_extractor("default")
 
         # Step 1: Scrape and extract
         for url in source_urls:
@@ -957,8 +955,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
-            """Get extractor for a source URL, checking extractor_map first"""
-            # Priority 1: Check extractor_map for this specific URL
+            """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
+            # Priority 1: Check extractor_map for this specific URL (manual or smart match)
             if extractor_map:
                 # Normalize URL for comparison (handle trailing slash)
                 url_normalized = url.rstrip('/')
@@ -969,14 +967,9 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
                             print(f"[BATCH] Using mapped extractor '{map_extractor}' for {url}")
                             return get_extractor(map_extractor)
             
-            # Priority 2: Use global extractor if specified
-            if extractor_name:
-                print(f"[BATCH] Using global extractor '{extractor_name}'")
-                return get_extractor(extractor_name)
-            
-            # Priority 3: Auto-detect based on URL
-            print(f"[BATCH] Auto-detecting extractor for {url}")
-            return get_extractor_for_url(url)
+            # Priority 2: Default to the default extractor (Gemini-based)
+            print(f"[BATCH] No mapping found for {url}, using default extractor")
+            return get_extractor("default")
 
         await manager.update_post_state(
             request_id, post_id,
