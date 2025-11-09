@@ -210,6 +210,36 @@ SmartLink Updater is an automated link management system that:
   - `backend/app/main.py`: API endpoints
   - `backend/app/mongo_storage.py`: Storage layer
 
+#### 14. **Analytics Dashboard**
+- **Status:** ✅ Fully Implemented
+- **Description:** Comprehensive analytics with charts and performance metrics
+- **Features:**
+  - Dashboard summary with key metrics (updates, success rate, links added)
+  - Timeline charts (daily/weekly/hourly updates)
+  - Success rate visualization (doughnut chart)
+  - Links added trend (bar chart)
+  - Hourly activity patterns (24-hour distribution)
+  - Post performance table (top performing posts)
+  - Source performance table (extraction success by source)
+  - Extractor performance comparison
+  - Multi-site performance breakdown
+  - Configurable time periods (7, 30, 60, 90 days)
+  - Real-time data refresh
+- **Charts Library:** Chart.js 4.4.0
+- **Endpoints:**
+  - `GET /api/analytics/dashboard` - Summary metrics
+  - `GET /api/analytics/timeline` - Timeline data
+  - `GET /api/analytics/posts` - Post performance
+  - `GET /api/analytics/sources` - Source performance
+  - `GET /api/analytics/extractors` - Extractor comparison
+  - `GET /api/analytics/sites` - Multi-site metrics
+  - `GET /api/analytics/hourly-pattern` - Activity by hour
+  - `GET /api/analytics/links-trend` - Daily links trend
+- **Files:**
+  - `backend/app/analytics.py`: Analytics engine
+  - `backend/app/main.py`: API endpoints
+  - `wordpress-plugin/smartlink-updater.php`: Dashboard UI
+
 ---
 
 ### ✅ Data Persistence
@@ -735,6 +765,7 @@ gcloud run deploy smartlink-api \
 
 ## Version History
 
+- **v2.1.0** (Nov 2025) - Analytics Dashboard with charts and performance insights
 - **v2.0.0** (Nov 2025) - Multi-site support, improved extractors, MongoDB migration
 - **v1.5.0** (Oct 2025) - Batch updates, WordPress dashboard
 - **v1.0.0** (Oct 2025) - Initial release with Gemini integration

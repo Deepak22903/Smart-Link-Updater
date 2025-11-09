@@ -58,6 +58,16 @@ class SmartLinkUpdater {
             'dashicons-update',             // Icon
             30                              // Position
         );
+        
+        // Add Analytics submenu
+        add_submenu_page(
+            'smartlink-updater',            // Parent slug
+            'Analytics',                    // Page title
+            'Analytics',                    // Menu title
+            'edit_posts',                   // Capability
+            'smartlink-analytics',          // Menu slug
+            array($this, 'render_analytics_page') // Callback
+        );
     }
     
     /**
@@ -135,6 +145,15 @@ class SmartLinkUpdater {
             add_action('admin_head', array($this, 'print_dashboard_css'));
             add_action('admin_head', array($this, 'print_config_script'), 99); // Load config before main script
             add_action('admin_footer', array($this, 'print_admin_page_script'));
+        }
+        
+        // Load on analytics page
+        if ('smartlink_page_smartlink-analytics' === $hook) {
+            // Enqueue Chart.js library
+            wp_enqueue_script('chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js', array(), '4.4.0', true);
+            add_action('admin_head', array($this, 'print_analytics_css'));
+            add_action('admin_head', array($this, 'print_config_script'), 99);
+            add_action('admin_footer', array($this, 'print_analytics_script'));
         }
     }
     
@@ -2980,6 +2999,170 @@ class SmartLinkUpdater {
                 return current_user_can('edit_posts');
             }
         ));
+        
+        // Analytics endpoints
+        register_rest_route('smartlink/v1', '/analytics/dashboard', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_dashboard_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/analytics/timeline', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_timeline_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/analytics/posts', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_posts_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/analytics/sources', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_sources_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/analytics/extractors', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_extractors_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/analytics/sites', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_analytics_sites_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+    }
+
+    /**
+     * Handle analytics dashboard REST request
+     */
+    public function handle_get_analytics_dashboard_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $api_url = $this->api_base_url . '/api/analytics/dashboard?days=' . intval($days);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle analytics timeline REST request
+     */
+    public function handle_get_analytics_timeline_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $granularity = $request->get_param('granularity') ?: 'daily';
+        $api_url = $this->api_base_url . '/api/analytics/timeline?days=' . intval($days) . '&granularity=' . urlencode($granularity);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle analytics posts REST request
+     */
+    public function handle_get_analytics_posts_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $api_url = $this->api_base_url . '/api/analytics/posts?days=' . intval($days);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle analytics sources REST request
+     */
+    public function handle_get_analytics_sources_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $api_url = $this->api_base_url . '/api/analytics/sources?days=' . intval($days);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle analytics extractors REST request
+     */
+    public function handle_get_analytics_extractors_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $api_url = $this->api_base_url . '/api/analytics/extractors?days=' . intval($days);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle analytics sites REST request
+     */
+    public function handle_get_analytics_sites_rest($request) {
+        $days = $request->get_param('days') ?: 30;
+        $api_url = $this->api_base_url . '/api/analytics/sites?days=' . intval($days);
+        
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
     }
 
     /**
@@ -3622,6 +3805,599 @@ class SmartLinkUpdater {
         $history = array_slice($history, 0, 100);
         
         update_option('smartlink_cron_history', $history);
+    }
+    
+    /**
+     * Render Analytics Page
+     */
+    public function render_analytics_page() {
+        ?>
+        <div class="wrap smartlink-analytics-wrap">
+            <h1 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 30px; border-radius: 12px; margin: 20px 0; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                <span class="dashicons dashicons-chart-bar" style="font-size: 32px;"></span>
+                Analytics Dashboard
+            </h1>
+            
+            <!-- Period Selector -->
+            <div style="background: white; padding: 20px; border-radius: 12px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                <label for="analytics-period" style="margin-right: 10px; font-weight: 600;">Time Period:</label>
+                <select id="analytics-period" class="smartlink-select">
+                    <option value="7">Last 7 Days</option>
+                    <option value="30" selected>Last 30 Days</option>
+                    <option value="60">Last 60 Days</option>
+                    <option value="90">Last 90 Days</option>
+                </select>
+                <button id="refresh-analytics" class="button button-primary" style="margin-left: 10px;">
+                    <span class="dashicons dashicons-update"></span> Refresh
+                </button>
+            </div>
+            
+            <!-- Summary Cards -->
+            <div id="summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0;">
+                <!-- Dynamically filled with JavaScript -->
+            </div>
+            
+            <!-- Charts Row 1 -->
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin: 20px 0;">
+                <div class="analytics-chart-container">
+                    <h3>Update Timeline</h3>
+                    <canvas id="timeline-chart"></canvas>
+                </div>
+                <div class="analytics-chart-container">
+                    <h3>Success Rate</h3>
+                    <canvas id="success-rate-chart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Charts Row 2 -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">
+                <div class="analytics-chart-container">
+                    <h3>Links Added Trend</h3>
+                    <canvas id="links-trend-chart"></canvas>
+                </div>
+                <div class="analytics-chart-container">
+                    <h3>Hourly Activity Pattern</h3>
+                    <canvas id="hourly-pattern-chart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Data Tables -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">
+                <!-- Post Performance -->
+                <div class="analytics-table-container">
+                    <h3>Top Posts</h3>
+                    <div id="post-performance-table"></div>
+                </div>
+                
+                <!-- Source Performance -->
+                <div class="analytics-table-container">
+                    <h3>Source Performance</h3>
+                    <div id="source-performance-table"></div>
+                </div>
+            </div>
+            
+            <!-- Extractor Performance -->
+            <div class="analytics-table-container" style="margin: 20px 0;">
+                <h3>Extractor Performance</h3>
+                <div id="extractor-performance-table"></div>
+            </div>
+            
+            <!-- Site Performance -->
+            <div class="analytics-table-container" style="margin: 20px 0;">
+                <h3>Multi-Site Performance</h3>
+                <div id="site-performance-table"></div>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Print Analytics CSS
+     */
+    public function print_analytics_css() {
+        ?>
+        <style>
+        .smartlink-analytics-wrap {
+            max-width: 1400px;
+        }
+        
+        .analytics-chart-container {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .analytics-chart-container h3 {
+            margin-top: 0;
+            color: #333;
+            font-size: 18px;
+            margin-bottom: 20px;
+        }
+        
+        .analytics-chart-container canvas {
+            max-height: 300px;
+        }
+        
+        .analytics-table-container {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .analytics-table-container h3 {
+            margin-top: 0;
+            color: #333;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        .analytics-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .analytics-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .analytics-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .analytics-table tr:hover {
+            background: #f8f9ff;
+        }
+        
+        .summary-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            border-left: 4px solid #667eea;
+        }
+        
+        .summary-card h4 {
+            margin: 0 0 10px 0;
+            color: #666;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .summary-card .value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #333;
+            margin: 10px 0;
+        }
+        
+        .summary-card .change {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .summary-card .change.positive {
+            color: #10b981;
+        }
+        
+        .summary-card .change.negative {
+            color: #ef4444;
+        }
+        </style>
+        <?php
+    }
+    
+    /**
+     * Print Analytics JavaScript
+     */
+    public function print_analytics_script() {
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            const config = window.SmartLinkConfig;
+            let currentPeriod = 30;
+            let charts = {};
+            
+            function loadAnalytics() {
+                loadDashboardSummary();
+                loadTimeline();
+                loadLinksTrend();
+                loadHourlyPattern();
+                loadPostPerformance();
+                loadSourcePerformance();
+                loadExtractorPerformance();
+                loadSitePerformance();
+            }
+            
+            function loadDashboardSummary() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/dashboard?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(data) {
+                        renderSummaryCards(data);
+                    }
+                });
+            }
+            
+            function renderSummaryCards(data) {
+                const container = $('#summary-cards');
+                container.html(`
+                    <div class="summary-card">
+                        <h4>Total Updates</h4>
+                        <div class="value">${data.total_updates}</div>
+                        <div class="change">${data.successful_updates} successful, ${data.failed_updates} failed</div>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Success Rate</h4>
+                        <div class="value">${data.success_rate}%</div>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Links Added</h4>
+                        <div class="value">${data.total_links_added}</div>
+                        <div class="change">${data.avg_links_per_update.toFixed(2)} avg per update</div>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Active Posts</h4>
+                        <div class="value">${data.active_posts}</div>
+                    </div>
+                `);
+            }
+            
+            function loadTimeline() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/timeline?days=' + currentPeriod + '&granularity=daily',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderTimelineChart(response.timeline);
+                        renderSuccessRateChart(response.timeline);
+                    }
+                });
+            }
+            
+            function renderTimelineChart(timeline) {
+                const ctx = document.getElementById('timeline-chart');
+                
+                if (charts.timeline) {
+                    charts.timeline.destroy();
+                }
+                
+                charts.timeline = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: timeline.map(d => d.date),
+                        datasets: [{
+                            label: 'Successful',
+                            data: timeline.map(d => d.successful),
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            tension: 0.4
+                        }, {
+                            label: 'Failed',
+                            data: timeline.map(d => d.failed),
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function renderSuccessRateChart(timeline) {
+                const ctx = document.getElementById('success-rate-chart');
+                
+                if (charts.successRate) {
+                    charts.successRate.destroy();
+                }
+                
+                const avgSuccessRate = timeline.reduce((sum, d) => sum + d.success_rate, 0) / timeline.length;
+                const avgFailureRate = 100 - avgSuccessRate;
+                
+                charts.successRate = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Success', 'Failed'],
+                        datasets: [{
+                            data: [avgSuccessRate, avgFailureRate],
+                            backgroundColor: ['#10b981', '#ef4444']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function loadLinksTrend() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/timeline?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderLinksTrendChart(response.timeline);
+                    }
+                });
+            }
+            
+            function renderLinksTrendChart(timeline) {
+                const ctx = document.getElementById('links-trend-chart');
+                
+                if (charts.linksTrend) {
+                    charts.linksTrend.destroy();
+                }
+                
+                charts.linksTrend = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: timeline.map(d => d.date),
+                        datasets: [{
+                            label: 'Links Added',
+                            data: timeline.map(d => d.total_links),
+                            backgroundColor: 'rgba(102, 126, 234, 0.7)',
+                            borderColor: '#667eea',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function loadHourlyPattern() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/hourly-pattern?days=7',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderHourlyPatternChart(response.hourly_pattern);
+                    }
+                });
+            }
+            
+            function renderHourlyPatternChart(pattern) {
+                const ctx = document.getElementById('hourly-pattern-chart');
+                
+                if (charts.hourlyPattern) {
+                    charts.hourlyPattern.destroy();
+                }
+                
+                charts.hourlyPattern = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: pattern.map(d => d.hour + ':00'),
+                        datasets: [{
+                            label: 'Updates',
+                            data: pattern.map(d => d.total_updates),
+                            backgroundColor: 'rgba(118, 75, 162, 0.7)',
+                            borderColor: '#764ba2',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            }
+            
+            function loadPostPerformance() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/posts?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderPostPerformanceTable(response.posts.slice(0, 10));
+                    }
+                });
+            }
+            
+            function renderPostPerformanceTable(posts) {
+                if (posts.length === 0) {
+                    $('#post-performance-table').html('<p>No data available</p>');
+                    return;
+                }
+                
+                let html = '<table class="analytics-table">';
+                html += '<thead><tr><th>Post ID</th><th>Updates</th><th>Success Rate</th><th>Links Added</th></tr></thead><tbody>';
+                
+                posts.forEach(post => {
+                    html += `<tr>
+                        <td>${post.post_id}${post.content_slug ? '<br><small>' + post.content_slug + '</small>' : ''}</td>
+                        <td>${post.total_updates}</td>
+                        <td>${post.success_rate}%</td>
+                        <td>${post.total_links_added}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                $('#post-performance-table').html(html);
+            }
+            
+            function loadSourcePerformance() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/sources?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderSourcePerformanceTable(response.sources.slice(0, 10));
+                    }
+                });
+            }
+            
+            function renderSourcePerformanceTable(sources) {
+                if (sources.length === 0) {
+                    $('#source-performance-table').html('<p>No data available</p>');
+                    return;
+                }
+                
+                let html = '<table class="analytics-table">';
+                html += '<thead><tr><th>Source</th><th>Extractions</th><th>Success Rate</th><th>Health</th></tr></thead><tbody>';
+                
+                sources.forEach(source => {
+                    const healthClass = source.current_health === 'healthy' ? 'health-good' : 
+                                      source.current_health === 'warning' ? 'health-warning' : 'health-critical';
+                    html += `<tr>
+                        <td><small>${source.source_url}</small></td>
+                        <td>${source.total_extractions}</td>
+                        <td>${source.success_rate}%</td>
+                        <td><span class="health-badge ${healthClass}">${source.current_health}</span></td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                $('#source-performance-table').html(html);
+            }
+            
+            function loadExtractorPerformance() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/extractors?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderExtractorPerformanceTable(response.extractors);
+                    }
+                });
+            }
+            
+            function renderExtractorPerformanceTable(extractors) {
+                if (extractors.length === 0) {
+                    $('#extractor-performance-table').html('<p>No data available</p>');
+                    return;
+                }
+                
+                let html = '<table class="analytics-table">';
+                html += '<thead><tr><th>Extractor</th><th>Updates</th><th>Success Rate</th><th>Links Extracted</th><th>Posts Using</th></tr></thead><tbody>';
+                
+                extractors.forEach(ext => {
+                    html += `<tr>
+                        <td>${ext.extractor}</td>
+                        <td>${ext.total_updates}</td>
+                        <td>${ext.success_rate}%</td>
+                        <td>${ext.total_links_extracted}</td>
+                        <td>${ext.posts_using}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                $('#extractor-performance-table').html(html);
+            }
+            
+            function loadSitePerformance() {
+                $.ajax({
+                    url: config.restUrl + '/analytics/sites?days=' + currentPeriod,
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        renderSitePerformanceTable(response.sites);
+                    }
+                });
+            }
+            
+            function renderSitePerformanceTable(sites) {
+                if (sites.length === 0) {
+                    $('#site-performance-table').html('<p>No data available</p>');
+                    return;
+                }
+                
+                let html = '<table class="analytics-table">';
+                html += '<thead><tr><th>Site</th><th>Links Added</th><th>Posts Updated</th><th>Avg Links/Post</th></tr></thead><tbody>';
+                
+                sites.forEach(site => {
+                    html += `<tr>
+                        <td>${site.site_key}</td>
+                        <td>${site.total_links_added}</td>
+                        <td>${site.unique_posts_updated}</td>
+                        <td>${site.avg_links_per_post}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                $('#site-performance-table').html(html);
+            }
+            
+            // Event handlers
+            $('#analytics-period').on('change', function() {
+                currentPeriod = parseInt($(this).val());
+                loadAnalytics();
+            });
+            
+            $('#refresh-analytics').on('click', function() {
+                loadAnalytics();
+            });
+            
+            // Initial load
+            loadAnalytics();
+        });
+        </script>
+        <?php
     }
 }
 

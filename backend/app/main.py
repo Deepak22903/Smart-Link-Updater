@@ -25,6 +25,7 @@ from .extractors import get_extractor, list_extractors
 from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
+from .analytics import get_analytics_engine
 from datetime import datetime
 import pytz
 
@@ -1258,3 +1259,156 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
 @app.post("/config/post/114")
 async def configure_post_114():
     pass  # This endpoint is no longer needed as configurations should be updated dynamically
+
+
+# ==================== Analytics Endpoints ====================
+
+@app.get("/api/analytics/dashboard")
+async def get_analytics_dashboard(days: int = 30):
+    """
+    Get dashboard summary with key metrics
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns high-level metrics including:
+    - Total updates, success rate
+    - Total links added
+    - Active posts
+    - Health distribution
+    """
+    analytics = get_analytics_engine()
+    return analytics.get_dashboard_summary(days=days)
+
+
+@app.get("/api/analytics/timeline")
+async def get_analytics_timeline(days: int = 30, granularity: str = "daily"):
+    """
+    Get timeline of updates over period
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    - granularity: 'hourly', 'daily', or 'weekly' (default 'daily')
+    
+    Returns timeline data with success/failure counts per time period
+    """
+    analytics = get_analytics_engine()
+    return {
+        "timeline": analytics.get_update_timeline(days=days, granularity=granularity),
+        "period_days": days,
+        "granularity": granularity
+    }
+
+
+@app.get("/api/analytics/posts")
+async def get_post_analytics(days: int = 30):
+    """
+    Get performance metrics per post
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns performance data for each post including:
+    - Total updates, success rate
+    - Links added
+    - Last update time
+    """
+    analytics = get_analytics_engine()
+    return {
+        "posts": analytics.get_post_performance(days=days),
+        "period_days": days
+    }
+
+
+@app.get("/api/analytics/sources")
+async def get_source_analytics(days: int = 30):
+    """
+    Get performance metrics per source URL
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns metrics for each source including:
+    - Extraction success rate
+    - Links extracted
+    - Current health status
+    """
+    analytics = get_analytics_engine()
+    return {
+        "sources": analytics.get_source_performance(days=days),
+        "period_days": days
+    }
+
+
+@app.get("/api/analytics/extractors")
+async def get_extractor_analytics(days: int = 30):
+    """
+    Get performance metrics per extractor type
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns metrics for each extractor including:
+    - Total updates, success rate
+    - Links extracted
+    - Posts using this extractor
+    """
+    analytics = get_analytics_engine()
+    return {
+        "extractors": analytics.get_extractor_performance(days=days),
+        "period_days": days
+    }
+
+
+@app.get("/api/analytics/sites")
+async def get_site_analytics(days: int = 30):
+    """
+    Get performance metrics per WordPress site
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns metrics for each site including:
+    - Total links added
+    - Unique posts updated
+    - Average links per post
+    """
+    analytics = get_analytics_engine()
+    return {
+        "sites": analytics.get_site_performance(days=days),
+        "period_days": days
+    }
+
+
+@app.get("/api/analytics/hourly-pattern")
+async def get_hourly_pattern_analytics(days: int = 7):
+    """
+    Get update patterns by hour of day
+    
+    Query params:
+    - days: Number of days to analyze (default 7)
+    
+    Returns 24 data points showing update activity by hour
+    """
+    analytics = get_analytics_engine()
+    return {
+        "hourly_pattern": analytics.get_hourly_pattern(days=days),
+        "period_days": days
+    }
+
+
+@app.get("/api/analytics/links-trend")
+async def get_links_trend_analytics(days: int = 30):
+    """
+    Get daily trend of links added
+    
+    Query params:
+    - days: Number of days to analyze (default 30)
+    
+    Returns daily data points with links added per site
+    """
+    analytics = get_analytics_engine()
+    return {
+        "trend": analytics.get_links_added_trend(days=days),
+        "period_days": days
+    }
