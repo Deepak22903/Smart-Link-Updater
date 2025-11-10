@@ -441,11 +441,6 @@ async def add_manual_links(request: ManualLinkRequest):
         )
     
     wp_site = config.get("wp_site")
-    if not wp_site:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Post {request.post_id} has no WordPress site configured"
-        )
     
     # Convert manual links to Link objects
     manual_links = [
@@ -465,22 +460,19 @@ async def add_manual_links(request: ManualLinkRequest):
         }
     
     # Determine target site and post ID
-    target_site_key = request.target if request.target != "this" else None
+    target_site_key = None
     target_post_id = request.post_id
     
-    if wp_site:
-        if isinstance(wp_site, str):
-            target_site_key = wp_site
-            resolved_id = resolve_post_id_for_site(config, wp_site)
-            if resolved_id:
-                target_post_id = resolved_id
-        elif isinstance(wp_site, dict) and "url" in wp_site:
-            sites = get_configured_wp_sites()
-            if sites:
-                target_site_key = list(sites.keys())[0]
-                resolved_id = resolve_post_id_for_site(config, target_site_key)
-                if resolved_id:
-                    target_post_id = resolved_id
+    # Use the target from the request to determine which site to update
+    if request.target and request.target != "this":
+        # User selected a specific site
+        target_site_key = request.target
+        resolved_id = resolve_post_id_for_site(config, request.target)
+        if resolved_id:
+            target_post_id = resolved_id
+        else:
+            # If no site-specific post ID, use the default post_id
+            target_post_id = request.post_id
     
     # Deduplicate against known links
     known_fps = mongo_storage.get_known_fingerprints(target_post_id, request.date, target_site_key)
@@ -497,27 +489,12 @@ async def add_manual_links(request: ManualLinkRequest):
     
     # Update WordPress
     try:
-        if isinstance(wp_site, str):
-            site_post_id = resolve_post_id_for_site(config, wp_site)
-            if not site_post_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"No post ID configured for site '{wp_site}'"
-                )
-            wp_result = await update_post_links_section(site_post_id, new_links, wp_site)
-        elif isinstance(wp_site, dict) and "url" in wp_site:
-            sites = get_configured_wp_sites()
-            if sites:
-                site_key = list(sites.keys())[0]
-                site_post_id = resolve_post_id_for_site(config, site_key)
-                if site_post_id:
-                    wp_result = await update_post_links_section(site_post_id, new_links, site_key)
-                else:
-                    wp_result = await update_post_links_section(request.post_id, new_links)
-            else:
-                wp_result = await update_post_links_section(request.post_id, new_links)
+        if target_site_key:
+            # Update specific site
+            wp_result = await update_post_links_section(target_post_id, new_links, target_site_key)
         else:
-            wp_result = await update_post_links_section(request.post_id, new_links)
+            # Update "this" site (default)
+            wp_result = await update_post_links_section(target_post_id, new_links)
         
         # Store fingerprints for deduplication
         new_fps = {fingerprint(link) for link in new_links}

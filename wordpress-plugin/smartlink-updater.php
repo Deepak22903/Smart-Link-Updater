@@ -799,6 +799,60 @@ class SmartLinkUpdater {
                 max-height: 90vh;
             }
         }
+        
+        /* Manual Links Modal Enhancements */
+        .manual-link-field:hover {
+            border-color: #cbd5e0 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+        }
+        
+        .manual-link-title:focus,
+        .manual-link-url:focus,
+        #manual-links-date:focus {
+            border-color: #667eea !important;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .remove-manual-link-btn:hover {
+            background: #fed7d7 !important;
+            border-color: #fc8181 !important;
+            transform: scale(1.05);
+        }
+        
+        #add-another-link:hover {
+            background: #edf2f7 !important;
+            border-color: #cbd5e0 !important;
+            transform: translateY(-1px);
+        }
+        
+        #submit-manual-links:hover {
+            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.35) !important;
+            transform: translateY(-1px);
+        }
+        
+        .close-modal:hover {
+            color: #4a5568 !important;
+            transform: rotate(90deg);
+        }
+        
+        #manual-links-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        #manual-links-container::-webkit-scrollbar-track {
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+        
+        #manual-links-container::-webkit-scrollbar-thumb {
+            background: #cbd5e0;
+            border-radius: 10px;
+        }
+        
+        #manual-links-container::-webkit-scrollbar-thumb:hover {
+            background: #a0aec0;
+        }
         </style>
         <?php
     }
@@ -2643,48 +2697,67 @@ class SmartLinkUpdater {
                 
                 const modal = $('<div class="smartlink-modal"></div>');
                 const modalContent = $(`
-                    <div class="smartlink-modal-content" style="max-width: 700px;">
-                        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e5e7eb;">
-                            <h2 style="margin: 0; color: #1e293b; display: flex; align-items: center; gap: 10px;">
-                                <span class="dashicons dashicons-plus-alt" style="font-size: 28px; color: #3b82f6;"></span>
-                                Add Links Manually
-                            </h2>
-                            <button class="close-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #64748b;">×</button>
+                    <div class="smartlink-modal-content" style="max-width: 650px; max-height: 85vh; overflow-y: auto;">
+                        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 2px solid #e2e8f0;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                                    <span class="dashicons dashicons-plus-alt" style="font-size: 20px; color: white;"></span>
+                                </div>
+                                <h2 style="margin: 0; color: #1a202c; font-size: 22px; font-weight: 700;">Add Links Manually</h2>
+                            </div>
+                            <button class="close-modal" style="background: none; border: none; font-size: 28px; cursor: pointer; color: #a0aec0; line-height: 1; padding: 4px; transition: color 0.2s;">&times;</button>
                         </div>
                         
-                        <div class="modal-body">
-                            <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
-                                <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px;">Post: ${post.title || 'Post ID ' + postId}</div>
-                                <div style="font-size: 13px; color: #64748b;">Add links that will be inserted into this post. Duplicate links will be automatically filtered.</div>
+                        <div class="modal-body" style="padding: 0 4px;">
+                            <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 16px 20px; border-radius: 10px; margin-bottom: 24px; border-left: 4px solid #667eea;">
+                                <div style="font-weight: 600; color: #2d3748; margin-bottom: 6px; font-size: 15px;">${post.title || 'Post ID ' + postId}</div>
+                                <div style="font-size: 13px; color: #718096; line-height: 1.5;">Add links to be inserted into this post. Duplicates will be automatically filtered.</div>
                             </div>
                             
-                            <div style="margin-bottom: 20px;">
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #1e293b;">
-                                    Date for Links
-                                </label>
-                                <input type="date" id="manual-links-date" value="${new Date().toISOString().split('T')[0]}" 
-                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #e5e7eb; border-radius: 8px;">
-                                <div style="font-size: 12px; color: #64748b; margin-top: 5px;">Links will be organized under this date heading</div>
+                            <div style="background: white; border: 2px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 20px;">
+                                <div style="margin-bottom: 20px;">
+                                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 14px;">
+                                        <span class="dashicons dashicons-calendar-alt" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                        Date for Links
+                                    </label>
+                                    <input type="date" id="manual-links-date" value="${new Date().toISOString().split('T')[0]}" 
+                                           style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                                    <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Links will be organized under this date</div>
+                                </div>
+                                
+                                <div>
+                                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 14px;">
+                                        <span class="dashicons dashicons-admin-site" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                        Target WordPress Site
+                                    </label>
+                                    <select id="manual-links-site" style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: white;">
+                                        <option value="this">This Site (Current WordPress Installation)</option>
+                                    </select>
+                                    <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Choose which site to update with these links</div>
+                                </div>
                             </div>
                             
-                            <div style="margin-bottom: 20px;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                                    <label style="font-weight: 600; color: #1e293b;">Links</label>
-                                    <button type="button" id="add-another-link" class="button button-secondary" style="padding: 6px 12px; font-size: 13px;">
-                                        <span class="dashicons dashicons-plus-alt" style="font-size: 16px; vertical-align: middle;"></span>
+                            <div style="margin-bottom: 24px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                    <label style="font-weight: 600; color: #2d3748; font-size: 14px;">
+                                        <span class="dashicons dashicons-admin-links" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                        Your Links
+                                    </label>
+                                    <button type="button" id="add-another-link" class="button" style="background: #f7fafc; border: 2px solid #e2e8f0; color: #4a5568; padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+                                        <span class="dashicons dashicons-plus" style="font-size: 16px; vertical-align: middle; margin-right: 4px;"></span>
                                         Add Another
                                     </button>
                                 </div>
                                 
-                                <div id="manual-links-container">
+                                <div id="manual-links-container" style="max-height: 400px; overflow-y: auto; padding-right: 4px;">
                                     ${createManualLinkField(0)}
                                 </div>
                             </div>
                             
-                            <div style="display: flex; gap: 10px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-                                <button type="button" class="button button-secondary close-modal">Cancel</button>
-                                <button type="button" id="submit-manual-links" class="button button-primary" data-post-id="${postId}">
-                                    <span class="dashicons dashicons-yes" style="font-size: 16px; vertical-align: middle;"></span>
+                            <div style="display: flex; gap: 12px; justify-content: flex-end; padding-top: 20px; border-top: 2px solid #e2e8f0; margin-top: 8px;">
+                                <button type="button" class="button close-modal" style="padding: 12px 24px; font-size: 14px; font-weight: 600; border-radius: 8px; border: 2px solid #e2e8f0; background: white; color: #4a5568;">Cancel</button>
+                                <button type="button" id="submit-manual-links" class="button button-primary" data-post-id="${postId}" style="padding: 12px 24px; font-size: 14px; font-weight: 600; border-radius: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: white; box-shadow: 0 4px 6px rgba(102, 126, 234, 0.25);">
+                                    <span class="dashicons dashicons-yes" style="font-size: 18px; vertical-align: middle; margin-right: 4px;"></span>
                                     Add Links
                                 </button>
                             </div>
@@ -2695,6 +2768,9 @@ class SmartLinkUpdater {
                 modal.append(modalContent);
                 $('body').append(modal);
                 modal.fadeIn(200);
+                
+                // Load available WordPress sites
+                loadManualLinksSites();
                 
                 // Event handlers
                 modal.find('.close-modal').on('click', function() {
@@ -2725,28 +2801,34 @@ class SmartLinkUpdater {
             
             function createManualLinkField(index) {
                 return `
-                    <div class="manual-link-field" style="background: white; border: 2px solid #e5e7eb; border-radius: 8px; padding: 15px; margin-bottom: 12px;">
-                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-                            <span style="font-weight: 600; color: #64748b; font-size: 12px;">LINK ${index + 1}</span>
-                            <button type="button" class="remove-manual-link-btn" style="background: none; border: none; color: #dc2626; cursor: pointer; padding: 0;">
-                                <span class="dashicons dashicons-trash" style="font-size: 18px;"></span>
+                    <div class="manual-link-field" style="background: #ffffff; border: 2px solid #e2e8f0; border-radius: 10px; padding: 18px; margin-bottom: 14px; transition: all 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                            <div style="display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 6px 14px; border-radius: 6px;">
+                                <span class="dashicons dashicons-admin-links" style="font-size: 14px; color: #667eea;"></span>
+                                <span style="font-weight: 700; color: #4a5568; font-size: 12px; letter-spacing: 0.5px;">LINK ${index + 1}</span>
+                            </div>
+                            <button type="button" class="remove-manual-link-btn" style="background: #fff5f5; border: 2px solid #feb2b2; color: #c53030; cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: all 0.2s; display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;">
+                                <span class="dashicons dashicons-trash" style="font-size: 16px;"></span>
+                                Remove
                             </button>
                         </div>
                         
-                        <div style="margin-bottom: 12px;">
-                            <label style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: #475569;">
-                                Title <span style="color: #dc2626;">*</span>
+                        <div style="margin-bottom: 14px;">
+                            <label style="display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4a5568;">
+                                <span class="dashicons dashicons-edit" style="font-size: 14px; vertical-align: middle; color: #667eea;"></span>
+                                Title <span style="color: #e53e3e; font-weight: 700;">*</span>
                             </label>
                             <input type="text" class="manual-link-title smartlink-input" placeholder="e.g., Free Spins Link 1" required
-                                   style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                   style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
                         </div>
                         
                         <div>
-                            <label style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: #475569;">
-                                URL <span style="color: #dc2626;">*</span>
+                            <label style="display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4a5568;">
+                                <span class="dashicons dashicons-admin-site" style="font-size: 14px; vertical-align: middle; color: #667eea;"></span>
+                                URL <span style="color: #e53e3e; font-weight: 700;">*</span>
                             </label>
                             <input type="url" class="manual-link-url smartlink-input" placeholder="https://example.com/link" required
-                                   style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                                   style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: 'Courier New', monospace;">
                         </div>
                     </div>
                 `;
@@ -2765,8 +2847,33 @@ class SmartLinkUpdater {
                 }
             }
             
+            function loadManualLinksSites() {
+                $.ajax({
+                    url: config.apiUrl + '/api/sites/list',
+                    method: 'GET',
+                    success: function(response) {
+                        const sites = response.sites || {};
+                        const $select = $('#manual-links-site');
+                        
+                        // Add configured sites to dropdown
+                        Object.keys(sites).forEach(function(siteKey) {
+                            const site = sites[siteKey];
+                            const displayName = site.base_url || siteKey;
+                            $select.append($('<option>').val(siteKey).text(displayName));
+                        });
+                        
+                        console.log('Loaded sites for manual links:', Object.keys(sites));
+                    },
+                    error: function(xhr) {
+                        console.warn('Failed to load WordPress sites:', xhr.responseJSON?.message || 'Unknown error');
+                        // Continue with default "This Site" option
+                    }
+                });
+            }
+            
             function submitManualLinks(postId, modal) {
                 const date = $('#manual-links-date').val();
+                const targetSite = $('#manual-links-site').val();
                 const linkFields = $('#manual-links-container .manual-link-field');
                 const links = [];
                 let hasError = false;
@@ -2819,7 +2926,7 @@ class SmartLinkUpdater {
                         post_id: postId,
                         links: links,
                         date: date,
-                        target: 'this'
+                        target: targetSite
                     }),
                     success: function(response) {
                         console.log('Manual links response:', response);
