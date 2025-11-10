@@ -3,6 +3,7 @@ logging.basicConfig(level=logging.INFO)
 
 from fastapi import FastAPI, Body, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import List, Optional, Dict
 import os
@@ -30,6 +31,22 @@ from datetime import datetime
 import pytz
 
 app = FastAPI(title="SmartLinkUpdater API")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://minecraftcirclegenerater.com",
+        "http://minecraftcirclegenerater.com",
+        "https://www.minecraftcirclegenerater.com",
+        "http://www.minecraftcirclegenerater.com",
+        "http://localhost:3000",  # For local development
+        "*"  # Allow all origins (you can restrict this later)
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # In-memory storage for task status
 task_status: Dict[str, dict] = {}
