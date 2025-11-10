@@ -989,6 +989,7 @@ class SmartLinkUpdater {
                 $(document).on('change', '.post-checkbox', updateSelectedCount);
                 $(document).on('click', '.view-logs-btn', viewLogs);
                 $(document).on('click', '.single-update-btn', singleUpdate);
+                $(document).on('click', '.add-manual-links-btn', openManualLinksModal);
                 $(document).on('click', '.edit-config-btn', openEditConfigModal);
                 $(document).on('click', '.delete-config-btn', deletePostConfig);
                 $(document).on('click', '.remove-url-btn', removeSourceUrlField);
@@ -2027,6 +2028,9 @@ class SmartLinkUpdater {
                         <div class="menu-item view-logs-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
                             <span class="dashicons dashicons-media-text" style="font-size: 14px;"></span> View Logs
                         </div>
+                        <div class="menu-item add-manual-links-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
+                            <span class="dashicons dashicons-plus-alt" style="font-size: 14px;"></span> Add Links Manually
+                        </div>
                         <div class="menu-item edit-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
                             <span class="dashicons dashicons-edit" style="font-size: 14px;"></span> Edit
                         </div>
@@ -2621,6 +2625,220 @@ class SmartLinkUpdater {
                     error: function(xhr) {
                         showToast('Failed to delete configuration: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
                         $btn.prop('disabled', false);
+                    }
+                });
+            }
+            
+            // ========== MANUAL LINK ADDITION ==========
+            
+            function openManualLinksModal(e) {
+                const postId = $(e.currentTarget).data('post-id');
+                const post = postsData.find(p => p.post_id === postId);
+                
+                if (!post) {
+                    showToast('Post not found', 'error');
+                    return;
+                }
+                
+                const modal = $('<div class="smartlink-modal"></div>');
+                const modalContent = $(`
+                    <div class="smartlink-modal-content" style="max-width: 700px;">
+                        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #e5e7eb;">
+                            <h2 style="margin: 0; color: #1e293b; display: flex; align-items: center; gap: 10px;">
+                                <span class="dashicons dashicons-plus-alt" style="font-size: 28px; color: #3b82f6;"></span>
+                                Add Links Manually
+                            </h2>
+                            <button class="close-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #64748b;">×</button>
+                        </div>
+                        
+                        <div class="modal-body">
+                            <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #3b82f6;">
+                                <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px;">Post: ${post.title || 'Post ID ' + postId}</div>
+                                <div style="font-size: 13px; color: #64748b;">Add links that will be inserted into this post. Duplicate links will be automatically filtered.</div>
+                            </div>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #1e293b;">
+                                    Date for Links
+                                </label>
+                                <input type="date" id="manual-links-date" value="${new Date().toISOString().split('T')[0]}" 
+                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                <div style="font-size: 12px; color: #64748b; margin-top: 5px;">Links will be organized under this date heading</div>
+                            </div>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <label style="font-weight: 600; color: #1e293b;">Links</label>
+                                    <button type="button" id="add-another-link" class="button button-secondary" style="padding: 6px 12px; font-size: 13px;">
+                                        <span class="dashicons dashicons-plus-alt" style="font-size: 16px; vertical-align: middle;"></span>
+                                        Add Another
+                                    </button>
+                                </div>
+                                
+                                <div id="manual-links-container">
+                                    ${createManualLinkField(0)}
+                                </div>
+                            </div>
+                            
+                            <div style="display: flex; gap: 10px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                                <button type="button" class="button button-secondary close-modal">Cancel</button>
+                                <button type="button" id="submit-manual-links" class="button button-primary" data-post-id="${postId}">
+                                    <span class="dashicons dashicons-yes" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Add Links
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `);
+                
+                modal.append(modalContent);
+                $('body').append(modal);
+                modal.fadeIn(200);
+                
+                // Event handlers
+                modal.find('.close-modal').on('click', function() {
+                    modal.fadeOut(200, function() { $(this).remove(); });
+                });
+                
+                modal.on('click', function(e) {
+                    if (e.target === this) {
+                        modal.fadeOut(200, function() { $(this).remove(); });
+                    }
+                });
+                
+                $('#add-another-link').on('click', function() {
+                    const index = $('#manual-links-container .manual-link-field').length;
+                    $('#manual-links-container').append(createManualLinkField(index));
+                    updateRemoveButtons();
+                });
+                
+                $(document).on('click', '.remove-manual-link-btn', function() {
+                    $(this).closest('.manual-link-field').remove();
+                    updateRemoveButtons();
+                });
+                
+                $('#submit-manual-links').on('click', function() {
+                    submitManualLinks(postId, modal);
+                });
+            }
+            
+            function createManualLinkField(index) {
+                return `
+                    <div class="manual-link-field" style="background: white; border: 2px solid #e5e7eb; border-radius: 8px; padding: 15px; margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+                            <span style="font-weight: 600; color: #64748b; font-size: 12px;">LINK ${index + 1}</span>
+                            <button type="button" class="remove-manual-link-btn" style="background: none; border: none; color: #dc2626; cursor: pointer; padding: 0;">
+                                <span class="dashicons dashicons-trash" style="font-size: 18px;"></span>
+                            </button>
+                        </div>
+                        
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: #475569;">
+                                Title <span style="color: #dc2626;">*</span>
+                            </label>
+                            <input type="text" class="manual-link-title smartlink-input" placeholder="e.g., Free Spins Link 1" required
+                                   style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                        </div>
+                        
+                        <div>
+                            <label style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: #475569;">
+                                URL <span style="color: #dc2626;">*</span>
+                            </label>
+                            <input type="url" class="manual-link-url smartlink-input" placeholder="https://example.com/link" required
+                                   style="width: 100%; padding: 10px; font-size: 14px; border: 1px solid #e5e7eb; border-radius: 6px;">
+                        </div>
+                    </div>
+                `;
+            }
+            
+            function updateRemoveButtons() {
+                const fields = $('#manual-links-container .manual-link-field');
+                if (fields.length === 1) {
+                    fields.find('.remove-manual-link-btn').hide();
+                } else {
+                    fields.find('.remove-manual-link-btn').show();
+                    // Re-number the links
+                    fields.each(function(index) {
+                        $(this).find('span:first').text('LINK ' + (index + 1));
+                    });
+                }
+            }
+            
+            function submitManualLinks(postId, modal) {
+                const date = $('#manual-links-date').val();
+                const linkFields = $('#manual-links-container .manual-link-field');
+                const links = [];
+                let hasError = false;
+                
+                // Validate and collect links
+                linkFields.each(function() {
+                    const title = $(this).find('.manual-link-title').val().trim();
+                    const url = $(this).find('.manual-link-url').val().trim();
+                    
+                    if (!title || !url) {
+                        hasError = true;
+                        $(this).css('border-color', '#dc2626');
+                        return;
+                    }
+                    
+                    // Basic URL validation
+                    try {
+                        new URL(url);
+                        $(this).css('border-color', '#e5e7eb');
+                    } catch (e) {
+                        hasError = true;
+                        $(this).css('border-color', '#dc2626');
+                        $(this).find('.manual-link-url').after('<div class="error-msg" style="color: #dc2626; font-size: 12px; margin-top: 4px;">Invalid URL format</div>');
+                        return;
+                    }
+                    
+                    links.push({ title, url });
+                });
+                
+                if (hasError) {
+                    showToast('Please fix the errors in the form', 'error');
+                    return;
+                }
+                
+                if (links.length === 0) {
+                    showToast('Please add at least one link', 'error');
+                    return;
+                }
+                
+                // Disable submit button
+                const $submitBtn = $('#submit-manual-links');
+                $submitBtn.prop('disabled', true).html('<span class="spinner is-active" style="float: none; margin: 0;"></span> Adding...');
+                
+                // Send to backend
+                $.ajax({
+                    url: config.apiUrl + '/api/manual-links',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        post_id: postId,
+                        links: links,
+                        date: date,
+                        target: 'this'
+                    }),
+                    success: function(response) {
+                        console.log('Manual links response:', response);
+                        
+                        let message = response.message || 'Links added successfully';
+                        if (response.duplicates > 0) {
+                            message += ` (${response.duplicates} duplicate${response.duplicates > 1 ? 's' : ''} skipped)`;
+                        }
+                        
+                        showToast(message, 'success');
+                        modal.fadeOut(200, function() { $(this).remove(); });
+                        
+                        // Refresh posts table
+                        loadPosts();
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to add manual links:', xhr);
+                        const errorMsg = xhr.responseJSON?.detail || 'Failed to add links';
+                        showToast(errorMsg, 'error');
+                        $submitBtn.prop('disabled', false).html('<span class="dashicons dashicons-yes" style="font-size: 16px; vertical-align: middle;"></span> Add Links');
                     }
                 });
             }

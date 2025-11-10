@@ -392,6 +392,137 @@ async def get_post_logs(request_id: str, post_id: int, tail: int = 50):
     }
 
 
+class ManualLink(BaseModel):
+    title: str
+    url: HttpUrl
+
+
+class ManualLinkRequest(BaseModel):
+    post_id: int
+    links: List[ManualLink]
+    date: str  # YYYY-MM-DD format
+    target: Optional[str] = "this"  # Which site to update
+
+
+@app.post("/api/manual-links")
+async def add_manual_links(request: ManualLinkRequest):
+    """
+    Add links manually to a post.
+    
+    - Performs deduplication against existing links
+    - Updates WordPress post with new links
+    - Stores fingerprints for future deduplication
+    """
+    from .models import Link
+    
+    # Get post configuration
+    config = mongo_storage.get_post_config(request.post_id)
+    if not config:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Post {request.post_id} not configured"
+        )
+    
+    wp_site = config.get("wp_site")
+    if not wp_site:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Post {request.post_id} has no WordPress site configured"
+        )
+    
+    # Convert manual links to Link objects
+    manual_links = [
+        Link(
+            title=link.title,
+            url=str(link.url),
+            published_date_iso=request.date
+        )
+        for link in request.links
+    ]
+    
+    if not manual_links:
+        return {
+            "success": False,
+            "message": "No links provided",
+            "links_added": 0
+        }
+    
+    # Determine target site and post ID
+    target_site_key = request.target if request.target != "this" else None
+    target_post_id = request.post_id
+    
+    if wp_site:
+        if isinstance(wp_site, str):
+            target_site_key = wp_site
+            resolved_id = resolve_post_id_for_site(config, wp_site)
+            if resolved_id:
+                target_post_id = resolved_id
+        elif isinstance(wp_site, dict) and "url" in wp_site:
+            sites = get_configured_wp_sites()
+            if sites:
+                target_site_key = list(sites.keys())[0]
+                resolved_id = resolve_post_id_for_site(config, target_site_key)
+                if resolved_id:
+                    target_post_id = resolved_id
+    
+    # Deduplicate against known links
+    known_fps = mongo_storage.get_known_fingerprints(target_post_id, request.date, target_site_key)
+    new_links = dedupe_by_fingerprint(manual_links, known_fps)
+    
+    if not new_links:
+        return {
+            "success": True,
+            "message": "All links were duplicates",
+            "links_provided": len(manual_links),
+            "links_added": 0,
+            "duplicates": len(manual_links)
+        }
+    
+    # Update WordPress
+    try:
+        if isinstance(wp_site, str):
+            site_post_id = resolve_post_id_for_site(config, wp_site)
+            if not site_post_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No post ID configured for site '{wp_site}'"
+                )
+            wp_result = await update_post_links_section(site_post_id, new_links, wp_site)
+        elif isinstance(wp_site, dict) and "url" in wp_site:
+            sites = get_configured_wp_sites()
+            if sites:
+                site_key = list(sites.keys())[0]
+                site_post_id = resolve_post_id_for_site(config, site_key)
+                if site_post_id:
+                    wp_result = await update_post_links_section(site_post_id, new_links, site_key)
+                else:
+                    wp_result = await update_post_links_section(request.post_id, new_links)
+            else:
+                wp_result = await update_post_links_section(request.post_id, new_links)
+        else:
+            wp_result = await update_post_links_section(request.post_id, new_links)
+        
+        # Store fingerprints for deduplication
+        new_fps = {fingerprint(link) for link in new_links}
+        mongo_storage.save_new_links(target_post_id, request.date, new_fps, target_site_key)
+        
+        return {
+            "success": True,
+            "message": f"Successfully added {len(new_links)} manual links",
+            "links_provided": len(manual_links),
+            "links_added": wp_result.get("links_added", len(new_links)),
+            "duplicates": len(manual_links) - len(new_links),
+            "sections_pruned": wp_result.get("sections_pruned", 0)
+        }
+        
+    except Exception as e:
+        logging.error(f"Error adding manual links: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add links: {str(e)}"
+        )
+
+
 @app.get("/api/extractors/list")
 async def list_available_extractors_detailed():
     """Get detailed list of registered extractors with priorities."""
