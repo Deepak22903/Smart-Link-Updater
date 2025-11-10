@@ -166,6 +166,7 @@ class SmartLinkUpdater {
         // Pass REST API URLs to JavaScript (server-side proxy)
         window.SmartLinkConfig = {
             restUrl: '<?php echo esc_url(rest_url('smartlink/v1')); ?>',
+            apiUrl: '<?php echo esc_url($this->api_base_url); ?>',
             nonce: '<?php echo wp_create_nonce('wp_rest'); ?>',
             pollInterval: 2000 // 2 seconds
         };
