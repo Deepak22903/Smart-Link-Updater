@@ -898,6 +898,7 @@ class SmartLinkUpdater {
             let currentBatchRequestId = null;
             let pollInterval = null;
             let postsData = [];
+            let serverTime = null; // Store server time for sync
             
             // ========== INITIALIZATION ==========
             
@@ -906,13 +907,52 @@ class SmartLinkUpdater {
                 loadWordPressSites();
                 attachEventListeners();
                 loadCronStatus();
+                
+                // Update current time immediately and every second
+                updateCurrentTime();
+                setInterval(updateCurrentTime, 1000);
+            }
+            
+            // ========== UTILITY FUNCTIONS ==========
+            
+            /**
+             * Convert UTC timestamp string to local timezone
+             * @param {string} utcTimeString - Format: 'YYYY-MM-DD HH:MM:SS'
+             * @returns {string} - Local time in same format
+             */
+            function convertUTCToLocal(utcTimeString) {
+                if (!utcTimeString) return '-';
+                
+                // Parse UTC time string (assuming format: 'YYYY-MM-DD HH:MM:SS')
+                const utcDate = new Date(utcTimeString.replace(' ', 'T') + 'Z'); // Add 'Z' to indicate UTC
+                
+                // Format to local timezone
+                const year = utcDate.getFullYear();
+                const month = String(utcDate.getMonth() + 1).padStart(2, '0');
+                const day = String(utcDate.getDate()).padStart(2, '0');
+                const hours = String(utcDate.getHours()).padStart(2, '0');
+                const minutes = String(utcDate.getMinutes()).padStart(2, '0');
+                const seconds = String(utcDate.getSeconds()).padStart(2, '0');
+                
+                return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
             }
             
             function attachEventListeners() {
                 $('#select-all-posts').on('click', selectAllPosts);
                 $('#deselect-all-posts').on('click', deselectAllPosts);
                 $('#batch-update-btn').on('click', startBatchUpdate);
-                $('#refresh-posts').on('click', loadPosts);
+                $('#refresh-posts').on('click', function() {
+                    const $btn = $(this);
+                    const originalHtml = $btn.html();
+                    $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none; margin: 0;"></span> Refreshing...');
+                    
+                    loadPosts();
+                    
+                    // Re-enable button after loading
+                    setTimeout(function() {
+                        $btn.prop('disabled', false).html(originalHtml);
+                    }, 1000);
+                });
                 $('#cancel-batch').on('click', stopWatchingBatch);
                 $('#cb-select-all').on('change', toggleAllCheckboxes);
                 $('.close-modal').on('click', closeLogsModal);
@@ -952,6 +992,12 @@ class SmartLinkUpdater {
                 $(document).on('click', '.edit-config-btn', openEditConfigModal);
                 $(document).on('click', '.delete-config-btn', deletePostConfig);
                 $(document).on('click', '.remove-url-btn', removeSourceUrlField);
+                $(document).on('click', '.close-detailed-logs-btn', function() {
+                    $('#detailed-logs-modal').fadeOut(200, function() { $(this).remove(); });
+                });
+                $(document).on('click', '.close-post-logs-btn', function() {
+                    $('#post-logs-modal').fadeOut(200, function() { $(this).remove(); });
+                });
                 
                 // Action menu toggle
                 $(document).on('click', '.action-menu-btn', function(e) {
@@ -1016,6 +1062,12 @@ class SmartLinkUpdater {
                 const toggleBtn = $('#toggle-cron-btn');
                 const toggleText = $('#toggle-cron-text');
                 
+                // Store server time for synced display
+                if (data.current_time) {
+                    // Parse server time as UTC and convert to local
+                    serverTime = new Date(data.current_time.replace(' ', 'T') + 'Z');
+                }
+                
                 // Show/hide info sections
                 const infoSections = ['#cron-schedule-info', '#cron-posts-info', '#cron-lastrun-info', '#cron-nextrun-info'];
                 
@@ -1025,8 +1077,8 @@ class SmartLinkUpdater {
                     statusText.text('Enabled').css('color', '#1e4d2b').css('font-weight', '600');
                     scheduleDisplay.text(data.schedule_label || data.schedule || '-');
                     postsDisplay.text(data.total_posts || '0');
-                    lastRunDisplay.text(data.last_run || 'Never');
-                    nextRunDisplay.text(data.next_run || '-');
+                    lastRunDisplay.text(data.last_run ? convertUTCToLocal(data.last_run) : 'Never');
+                    nextRunDisplay.text(data.next_run ? convertUTCToLocal(data.next_run) : '-');
                     toggleText.text('Disable');
                     toggleBtn.removeClass('button-secondary').addClass('button-primary');
                     
@@ -1044,8 +1096,36 @@ class SmartLinkUpdater {
                 }
             }
             
+            function updateCurrentTime() {
+                if (!serverTime) {
+                    $('#cron-current-time').text('Loading...');
+                    return;
+                }
+                
+                // Increment server time by 1 second
+                serverTime.setSeconds(serverTime.getSeconds() + 1);
+                
+                const year = serverTime.getFullYear();
+                const month = String(serverTime.getMonth() + 1).padStart(2, '0');
+                const day = String(serverTime.getDate()).padStart(2, '0');
+                const hours = String(serverTime.getHours()).padStart(2, '0');
+                const minutes = String(serverTime.getMinutes()).padStart(2, '0');
+                const seconds = String(serverTime.getSeconds()).padStart(2, '0');
+                const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                $('#cron-current-time').text(formattedTime);
+            }
+            
             function openCronModal() {
                 console.log('openCronModal called');
+                
+                // Load available sites first, then load settings
+                loadAvailableSites(function() {
+                    // After sites are loaded, load the settings
+                    loadCronSettings();
+                });
+            }
+            
+            function loadCronSettings() {
                 $.ajax({
                     url: config.restUrl + '/cron/settings',
                     method: 'GET',
@@ -1056,11 +1136,106 @@ class SmartLinkUpdater {
                         console.log('Cron settings loaded:', settings);
                         $('#cron-enabled').prop('checked', settings.enabled);
                         $('#cron-schedule').val(settings.schedule);
+                        
+                        // Load site selections AFTER sites are loaded
+                        const selectedSites = settings.target_sites || ['this'];
+                        console.log('Selected sites from settings:', selectedSites);
+                        
+                        // Clear all checkboxes first
+                        $('.cron-site-checkbox').prop('checked', false);
+                        
+                        // Check the selected sites
+                        selectedSites.forEach(function(site) {
+                            const siteId = site.replace(/[^a-zA-Z0-9]/g, '_');
+                            const checkbox = $('#cron-site-' + siteId);
+                            if (checkbox.length > 0) {
+                                checkbox.prop('checked', true);
+                                console.log('Checked site:', site, 'with id:', siteId);
+                            } else {
+                                console.warn('Checkbox not found for site:', site, 'with id:', siteId);
+                            }
+                        });
+                        
                         $('#cron-modal').fadeIn();
                     },
                     error: function(xhr) {
                         console.error('Failed to load cron settings:', xhr);
                         alert('Failed to load cron settings: ' + xhr.responseText);
+                    }
+                });
+            }
+            
+            function loadAvailableSites(callback) {
+                // Get all unique sites from posts
+                $.ajax({
+                    url: config.restUrl + '/posts',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(data) {
+                        const sites = new Set();
+                        data.posts.forEach(function(post) {
+                            if (post.wp_site) {
+                                sites.add(post.wp_site);
+                            }
+                            // Also check site_post_ids
+                            if (post.site_post_ids) {
+                                Object.keys(post.site_post_ids).forEach(function(siteKey) {
+                                    if (siteKey !== 'this') {
+                                        sites.add(siteKey);
+                                    }
+                                });
+                            }
+                        });
+                        
+                        console.log('Available sites loaded:', Array.from(sites));
+                        
+                        // Populate other sites
+                        const container = $('#cron-other-sites-container');
+                        container.empty();
+                        
+                        if (sites.size > 0) {
+                            sites.forEach(function(site) {
+                                const siteId = site.replace(/[^a-zA-Z0-9]/g, '_');
+                                container.append(
+                                    '<label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'transparent\'">' +
+                                    '<input type="checkbox" value="' + site + '" id="cron-site-' + siteId + '" class="cron-site-checkbox" style="width: 16px; height: 16px;">' +
+                                    '<span>' + site + '</span>' +
+                                    '</label>'
+                                );
+                            });
+                        }
+                        
+                        // Add checkbox logic
+                        setupSiteCheckboxes();
+                        
+                        // Call callback when done
+                        if (callback && typeof callback === 'function') {
+                            callback();
+                        }
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to load sites:', xhr);
+                        if (callback && typeof callback === 'function') {
+                            callback();
+                        }
+                    }
+                });
+            }
+            
+            function setupSiteCheckboxes() {
+                // When "All Sites" is checked, uncheck others
+                $('#cron-site-all').off('change').on('change', function() {
+                    if ($(this).is(':checked')) {
+                        $('.cron-site-checkbox').not('#cron-site-all').prop('checked', false);
+                    }
+                });
+                
+                // When any other site is checked, uncheck "All Sites"
+                $('.cron-site-checkbox').not('#cron-site-all').off('change').on('change', function() {
+                    if ($(this).is(':checked')) {
+                        $('#cron-site-all').prop('checked', false);
                     }
                 });
             }
@@ -1084,11 +1259,26 @@ class SmartLinkUpdater {
             }
             
             function saveCronSettings() {
+                // Collect selected sites
+                const selectedSites = [];
+                $('.cron-site-checkbox:checked').each(function() {
+                    selectedSites.push($(this).val());
+                });
+                
+                console.log('Saving cron settings with sites:', selectedSites);
+                
+                if (selectedSites.length === 0) {
+                    showToast('Please select at least one site to update', 'error');
+                    return;
+                }
+                
                 const settings = {
                     enabled: $('#cron-enabled').is(':checked'),
-                    schedule: $('#cron-schedule').val()
+                    schedule: $('#cron-schedule').val(),
+                    target_sites: selectedSites
                 };
                 
+                console.log('Settings to save:', settings);
                 saveCronSettingsData(settings);
             }
             
@@ -1103,12 +1293,13 @@ class SmartLinkUpdater {
                     data: JSON.stringify(settings),
                     success: function(response) {
                         console.log('Save response:', response);
+                        console.log('Saved target_sites:', settings.target_sites);
                         $('#cron-modal').fadeOut();
                         loadCronStatus();
-                        alert('Cron settings saved successfully!');
+                        showToast('Scheduled update settings saved successfully! Sites: ' + settings.target_sites.join(', '), 'success');
                     },
                     error: function(xhr) {
-                        alert('Failed to save cron settings: ' + xhr.responseText);
+                        showToast('Failed to save cron settings: ' + xhr.responseText, 'error');
                     }
                 });
             }
@@ -1170,9 +1361,13 @@ class SmartLinkUpdater {
                         html += '<div><strong>Request ID:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 3px; font-size: 11px;">' + entry.request_id + '</code></div>';
                     }
                     html += '</div>';
+                    html += '<button class="button button-small view-history-details-btn" data-entry=\'' + JSON.stringify(entry) + '\' style="margin-top: 10px; background: ' + style.border + '; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">';
+                    html += '<span class="dashicons dashicons-visibility" style="font-size: 14px; vertical-align: middle; margin-right: 4px;"></span>';
+                    html += 'View Detailed Logs';
+                    html += '</button>';
                     html += '</div>';
                     html += '<div style="text-align: right; min-width: 140px;">';
-                    html += '<div style="font-size: 13px; color: #666;">' + entry.formatted_time + '</div>';
+                    html += '<div style="font-size: 13px; color: #666;">' + convertUTCToLocal(entry.formatted_time) + '</div>';
                     html += '<div style="font-size: 12px; color: #999; margin-top: 4px;">' + entry.time_ago + '</div>';
                     html += '</div>';
                     html += '</div>';
@@ -1181,6 +1376,296 @@ class SmartLinkUpdater {
                 
                 html += '</div>';
                 contentDiv.html(html);
+                
+                // Add click handlers for "View Detailed Logs" buttons
+                $('.view-history-details-btn').on('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const entry = JSON.parse($(this).attr('data-entry'));
+                    showDetailedLogs(entry);
+                });
+            }
+            
+            function showDetailedLogs(entry) {
+                console.log('Loading detailed logs for entry:', entry);
+                
+                // Create modal for detailed logs
+                const modal = $('<div class="smartlink-modal" id="detailed-logs-modal"></div>');
+                const modalContent = $('<div class="smartlink-modal-content" style="max-width: 1200px; max-height: 90vh; overflow-y: auto;"></div>');
+                
+                modalContent.html('<div style="text-align: center; padding: 40px;"><div class="spinner is-active" style="float: none;"></div><p>Loading detailed logs...</p></div>');
+                modal.append(modalContent);
+                $('body').append(modal);
+                
+                modal.fadeIn(200);
+                
+                // Close on background click
+                modal.on('click', function(e) {
+                    if (e.target === this) {
+                        modal.fadeOut(200, function() { $(this).remove(); });
+                    }
+                });
+                
+                // Fetch batch status for all request IDs
+                const requestIds = [];
+                if (entry.all_requests && Array.isArray(entry.all_requests)) {
+                    // Multi-site run
+                    entry.all_requests.forEach(function(req) {
+                        requestIds.push({ site: req.site, request_id: req.request_id });
+                    });
+                } else if (entry.request_id) {
+                    // Single site run
+                    requestIds.push({ site: 'this', request_id: entry.request_id });
+                }
+                
+                console.log('Fetching batch status for request IDs:', requestIds);
+                
+                const batchPromises = requestIds.map(function(req) {
+                    return $.ajax({
+                        url: '<?php echo rest_url('smartlink/v1/batch-status/'); ?>' + req.request_id,
+                        type: 'GET',
+                        beforeSend: function(xhr) {
+                            xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                        }
+                    }).then(function(response) {
+                        return { site: req.site, data: response };
+                    });
+                });
+                
+                $.when.apply($, batchPromises).then(function() {
+                    const results = Array.prototype.slice.call(arguments);
+                    console.log('Batch status results:', results);
+                    renderDetailedLogs(entry, results);
+                }).fail(function(xhr) {
+                    console.error('Failed to fetch batch status:', xhr);
+                    modalContent.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load detailed logs</p><button class="button close-detailed-logs-btn">Close</button></div>');
+                });
+            }
+            
+            function renderDetailedLogs(entry, batchResults) {
+                const modal = $('#detailed-logs-modal .smartlink-modal-content');
+                
+                let html = '<div style="padding: 30px;">';
+                
+                // Header
+                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 15px;">';
+                html += '<h2 style="margin: 0; display: flex; align-items: center; gap: 10px;"><span class="dashicons dashicons-chart-line" style="font-size: 28px; color: #2271b1;"></span>Detailed Batch Update Logs</h2>';
+                html += '<button class="button close-detailed-logs-btn">Close</button>';
+                html += '</div>';
+                
+                // Timestamp and overview
+                html += '<div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">';
+                html += '<div style="display: flex; gap: 30px; flex-wrap: wrap;">';
+                html += '<div><strong>Timestamp:</strong> ' + convertUTCToLocal(entry.formatted_time) + ' (' + entry.time_ago + ')</div>';
+                html += '<div><strong>Status:</strong> <span style="text-transform: uppercase; color: ' + (entry.status === 'success' ? '#27ae60' : '#e74c3c') + ';">' + entry.status + '</span></div>';
+                html += '<div><strong>Total Posts:</strong> ' + entry.post_count + '</div>';
+                if (entry.sites && entry.sites.length > 0) {
+                    html += '<div><strong>Sites:</strong> ' + entry.sites.join(', ') + '</div>';
+                }
+                html += '</div>';
+                html += '</div>';
+                
+                // Iterate through each batch result (per-site)
+                batchResults.forEach(function(result) {
+                    const batchData = result.data;
+                    
+                    html += '<div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">';
+                    
+                    // Site header
+                    if (batchResults.length > 1) {
+                        html += '<h3 style="margin-top: 0; color: #2271b1; display: flex; align-items: center; gap: 8px;"><span class="dashicons dashicons-admin-site"></span>Site: ' + result.site + '</h3>';
+                    }
+                    
+                    // Batch summary
+                    html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">';
+                    html += '<div style="background: #e3f2fd; padding: 12px; border-radius: 6px; text-align: center;">';
+                    html += '<div style="font-size: 24px; font-weight: bold; color: #1976d2;">' + batchData.total_posts + '</div>';
+                    html += '<div style="font-size: 12px; color: #666;">Total Posts</div>';
+                    html += '</div>';
+                    html += '<div style="background: #e8f5e9; padding: 12px; border-radius: 6px; text-align: center;">';
+                    html += '<div style="font-size: 24px; font-weight: bold; color: #27ae60;">' + batchData.completed + '</div>';
+                    html += '<div style="font-size: 12px; color: #666;">Completed</div>';
+                    html += '</div>';
+                    html += '<div style="background: #fff3cd; padding: 12px; border-radius: 6px; text-align: center;">';
+                    html += '<div style="font-size: 24px; font-weight: bold; color: #ffc107;">' + batchData.processing + '</div>';
+                    html += '<div style="font-size: 12px; color: #666;">Processing</div>';
+                    html += '</div>';
+                    html += '<div style="background: #ffebee; padding: 12px; border-radius: 6px; text-align: center;">';
+                    html += '<div style="font-size: 24px; font-weight: bold; color: #e74c3c;">' + batchData.failed + '</div>';
+                    html += '<div style="font-size: 12px; color: #666;">Failed</div>';
+                    html += '</div>';
+                    html += '</div>';
+                    
+                    // Request ID
+                    html += '<div style="margin-bottom: 15px; font-size: 13px; color: #666;">';
+                    html += '<strong>Request ID:</strong> <code style="background: #f0f0f0; padding: 4px 8px; border-radius: 4px;">' + batchData.request_id + '</code>';
+                    html += '</div>';
+                    
+                    // Per-post details
+                    if (batchData.posts && Object.keys(batchData.posts).length > 0) {
+                        html += '<h4 style="margin: 20px 0 10px 0; color: #333;">Post-by-Post Details</h4>';
+                        
+                        Object.keys(batchData.posts).forEach(function(postId) {
+                            const post = batchData.posts[postId];
+                            
+                            const statusIcons = {
+                                'completed': { icon: 'yes-alt', color: '#27ae60' },
+                                'processing': { icon: 'update', color: '#ffc107' },
+                                'failed': { icon: 'dismiss', color: '#e74c3c' },
+                                'no_changes': { icon: 'minus', color: '#95a5a6' },
+                                'pending': { icon: 'clock', color: '#999' }
+                            };
+                            
+                            const statusIcon = statusIcons[post.status] || statusIcons['pending'];
+                            
+                            html += '<div style="background: #f9f9f9; border-left: 4px solid ' + statusIcon.color + '; padding: 15px; margin-bottom: 10px; border-radius: 4px;">';
+                            html += '<div style="display: flex; justify-content: space-between; align-items: start; gap: 15px;">';
+                            html += '<div style="flex: 1;">';
+                            html += '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">';
+                            html += '<span class="dashicons dashicons-' + statusIcon.icon + '" style="color: ' + statusIcon.color + ';"></span>';
+                            html += '<strong>Post ID: ' + postId + '</strong>';
+                            html += '<span style="text-transform: uppercase; font-size: 11px; background: ' + statusIcon.color + '; color: white; padding: 2px 8px; border-radius: 3px; margin-left: 8px;">' + post.status + '</span>';
+                            html += '</div>';
+                            
+                            html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #666; margin-bottom: 10px;">';
+                            if (post.links_found !== undefined) {
+                                html += '<div><strong>Links Found:</strong> ' + post.links_found + '</div>';
+                            }
+                            if (post.links_added !== undefined) {
+                                html += '<div><strong>Links Added:</strong> ' + post.links_added + '</div>';
+                            }
+                            if (post.progress !== undefined) {
+                                html += '<div><strong>Progress:</strong> ' + Math.round(post.progress * 100) + '%</div>';
+                            }
+                            html += '</div>';
+                            
+                            // View logs button
+                            html += '<button class="button button-small view-post-logs-btn" data-request-id="' + batchData.request_id + '" data-post-id="' + postId + '" style="font-size: 12px;">';
+                            html += '<span class="dashicons dashicons-media-text" style="font-size: 14px; vertical-align: middle;"></span> View Full Logs';
+                            html += '</button>';
+                            
+                            html += '</div>';
+                            html += '</div>';
+                            html += '</div>';
+                        });
+                    }
+                    
+                    html += '</div>';
+                });
+                
+                html += '</div>';
+                
+                modal.html(html);
+                
+                // Add click handlers for "View Full Logs" buttons
+                $('.view-post-logs-btn').on('click', function(e) {
+                    e.preventDefault();
+                    const requestId = $(this).attr('data-request-id');
+                    const postId = $(this).attr('data-post-id');
+                    showPostLogs(requestId, postId);
+                });
+            }
+            
+            function showPostLogs(requestId, postId) {
+                console.log('Loading logs for post:', postId, 'in request:', requestId);
+                
+                // Create nested modal for post logs
+                const modal = $('<div class="smartlink-modal" id="post-logs-modal" style="z-index: 100001;"></div>');
+                const modalContent = $('<div class="smartlink-modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;"></div>');
+                
+                modalContent.html('<div style="text-align: center; padding: 40px;"><div class="spinner is-active" style="float: none;"></div><p>Loading post logs...</p></div>');
+                modal.append(modalContent);
+                $('body').append(modal);
+                
+                modal.fadeIn(200);
+                
+                // Close on background click
+                modal.on('click', function(e) {
+                    if (e.target === this) {
+                        modal.fadeOut(200, function() { $(this).remove(); });
+                    }
+                });
+                
+                $.ajax({
+                    url: '<?php echo rest_url('smartlink/v1/batch-logs/'); ?>' + requestId + '/' + postId,
+                    type: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        console.log('Post logs:', response);
+                        renderPostLogs(postId, response.logs);
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to fetch post logs:', xhr);
+                        modalContent.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load post logs</p><button class="button close-post-logs-btn">Close</button></div>');
+                    }
+                });
+            }
+            
+            function renderPostLogs(postId, logs) {
+                const modal = $('#post-logs-modal .smartlink-modal-content');
+                
+                let html = '<div style="padding: 30px;">';
+                
+                // Header
+                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 15px;">';
+                html += '<h2 style="margin: 0; display: flex; align-items: center; gap: 10px;"><span class="dashicons dashicons-media-text" style="font-size: 28px; color: #2271b1;"></span>Post ' + postId + ' - Extraction Logs</h2>';
+                html += '<button class="button close-post-logs-btn">Close</button>';
+                html += '</div>';
+                
+                // Logs
+                if (!logs || logs.length === 0) {
+                    html += '<div style="text-align: center; padding: 40px; color: #666;">No logs available for this post</div>';
+                } else {
+                    html += '<div style="background: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 8px; font-family: \'Courier New\', monospace; font-size: 13px; line-height: 1.6; max-height: 600px; overflow-y: auto;">';
+                    logs.forEach(function(log) {
+                        const logColors = {
+                            'INFO': '#4fc3f7',
+                            'SUCCESS': '#66bb6a',
+                            'WARNING': '#ffb74d',
+                            'ERROR': '#ef5350',
+                            'DEBUG': '#9e9e9e'
+                        };
+                        
+                        let logLevel = 'INFO';
+                        let logMessage = log;
+                        
+                        // Parse log level if present
+                        const logMatch = log.match(/^\[(\w+)\]\s*(.+)$/);
+                        if (logMatch) {
+                            logLevel = logMatch[1];
+                            logMessage = logMatch[2];
+                        }
+                        
+                        const color = logColors[logLevel] || logColors['INFO'];
+                        
+                        html += '<div style="margin-bottom: 4px;">';
+                        html += '<span style="color: ' + color + '; font-weight: bold;">[' + logLevel + ']</span> ';
+                        html += '<span>' + escapeHtml(logMessage) + '</span>';
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                    
+                    html += '<div style="margin-top: 15px; text-align: right; font-size: 13px; color: #666;">';
+                    html += '<strong>Total log entries:</strong> ' + logs.length;
+                    html += '</div>';
+                }
+                
+                html += '</div>';
+                
+                modal.html(html);
+            }
+            
+            function escapeHtml(text) {
+                const map = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#039;'
+                };
+                return text.replace(/[&<>"']/g, function(m) { return map[m]; });
             }
             
             // ========== SEARCH AND FILTER ==========
@@ -1453,8 +1938,22 @@ class SmartLinkUpdater {
                     // Post (title/name)
                     row.append($('<td>').text(post.title || ('Post ' + post.post_id)));
                     
-                    // Extractor
-                    row.append($('<td>').html(`<span style="background: #e8e8e8; padding: 4px 10px; border-radius: 4px; font-size: 12px;">${post.extractor || 'default'}</span>`));
+                    // Extractor - show from extractor_map or fallback to old field
+                    let extractorDisplay = 'Auto-detect';
+                    if (post.extractor_map && Object.keys(post.extractor_map).length > 0) {
+                        const extractors = Object.values(post.extractor_map);
+                        const uniqueExtractors = [...new Set(extractors)];
+                        if (uniqueExtractors.length === 1) {
+                            // All URLs use the same extractor
+                            extractorDisplay = uniqueExtractors[0];
+                        } else {
+                            // Multiple different extractors
+                            extractorDisplay = 'Multiple (' + uniqueExtractors.join(', ') + ')';
+                        }
+                    } else if (post.extractor) {
+                        extractorDisplay = post.extractor;
+                    }
+                    row.append($('<td>').html(`<span style="background: #e8e8e8; padding: 4px 10px; border-radius: 4px; font-size: 12px;">${extractorDisplay}</span>`));
                     
                     // Status (with badge and description)
                     const statusHtml = getStatusBadgeWithDescription(post);
@@ -1959,10 +2458,18 @@ class SmartLinkUpdater {
                             toggleExtractorMode();
                             updateExtractorMapping();
                             
-                            // Populate extractor map
-                            Object.keys(extractorMap).forEach(function(url) {
-                                $(`select[data-url="${url}"]`).val(extractorMap[url]);
-                            });
+                            // Populate extractor map after DOM updates
+                            setTimeout(function() {
+                                Object.keys(extractorMap).forEach(function(url) {
+                                    const selector = $(`select.extractor-url-mapping[data-url="${url}"]`);
+                                    if (selector.length > 0) {
+                                        selector.val(extractorMap[url]);
+                                        console.log('Set extractor for', url, 'to', extractorMap[url]);
+                                    } else {
+                                        console.warn('Could not find selector for URL:', url);
+                                    }
+                                });
+                            }, 100);
                         } else {
                             $('input[name="extractor-mode"][value="auto"]').prop('checked', true);
                             toggleExtractorMode();
@@ -2034,22 +2541,26 @@ class SmartLinkUpdater {
                 // Handle extractor configuration - only save extractor_map if per-url mode
                 const extractorMode = $('input[name="extractor-mode"]:checked').val();
                 
+                console.log('Extractor mode:', extractorMode);
+                
                 if (extractorMode === 'per-url') {
                     const extractorMap = {};
                     $('.extractor-url-mapping').each(function() {
                         const url = $(this).data('url');
                         const extractor = $(this).val();
+                        console.log('Processing URL:', url, 'Extractor:', extractor);
                         if (extractor) {  // Only add if not empty (not auto-detect)
                             extractorMap[url] = extractor;
                         }
                     });
+                    console.log('Final extractor_map:', extractorMap);
                     if (Object.keys(extractorMap).length > 0) {
                         configData.extractor_map = extractorMap;
                     }
                 }
                 // If auto mode, don't send any extractor config - backend will auto-detect
-
                 
+                console.log('Config data to send:', configData);                
                 // Disable button and show loading
                 const $btn = $('#save-config-btn');
                 $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
@@ -2400,6 +2911,7 @@ class SmartLinkUpdater {
                             <div><strong>Status:</strong> <span id="cron-status-text">Loading...</span></div>
                             <div id="cron-schedule-info" style="display: none;"><strong>Schedule:</strong> <span id="cron-schedule-display">-</span></div>
                             <div id="cron-posts-info" style="display: none;"><strong>Posts:</strong> <span id="cron-posts-display">0</span></div>
+                            <div><strong>Current Time:</strong> <span id="cron-current-time">-</span></div>
                             <div id="cron-lastrun-info" style="display: none;"><strong>Last Run:</strong> <span id="cron-last-run-display">Never</span></div>
                             <div id="cron-nextrun-info" style="display: none;"><strong>Next Run:</strong> <span id="cron-next-run-display">-</span></div>
                         </div>
@@ -2460,16 +2972,39 @@ class SmartLinkUpdater {
                             </p>
                         </div>
                         
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                <span class="dashicons dashicons-admin-multisite" style="font-size: 16px; vertical-align: middle;"></span>
+                                Sites to Update
+                            </label>
+                            <div id="cron-sites-selector" style="border: 2px solid #ddd; border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto; background: #fafafa;">
+                                <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
+                                    <input type="checkbox" value="all" id="cron-site-all" class="cron-site-checkbox" style="width: 16px; height: 16px;">
+                                    <strong style="color: #667eea;">All Sites (Multi-site Update)</strong>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
+                                    <input type="checkbox" value="this" id="cron-site-this" class="cron-site-checkbox" checked style="width: 16px; height: 16px;">
+                                    <span>This Site (Current WordPress Installation)</span>
+                                </label>
+                                <div id="cron-other-sites-container" style="margin-top: 8px;">
+                                    <!-- Other sites will be loaded here dynamically -->
+                                </div>
+                            </div>
+                            <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                Select which sites to update during scheduled runs. You can select multiple sites.
+                            </p>
+                        </div>
+                        
                         <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 18px; border-radius: 10px; border-left: 4px solid #667eea;">
                             <div style="display: flex; align-items: start; gap: 10px;">
                                 <span style="font-size: 24px;">💡</span>
                                 <div>
                                     <strong style="color: #667eea; font-size: 14px;">How it works:</strong>
                                     <p style="margin: 8px 0 0 0; font-size: 13px; color: #555; line-height: 1.6;">
-                                        Every time the schedule triggers, WordPress will automatically update <strong>all</strong> your configured posts. Choose a frequency that balances keeping content fresh with server load.
+                                        Every time the schedule triggers, WordPress will automatically update <strong>all</strong> your configured posts for the selected sites. Choose a frequency that balances keeping content fresh with server load.
                                     </p>
                                     <p style="margin: 8px 0 0 0; font-size: 12px; color: #888;">
-                                        💡 <em>Tip: Start with "Every Hour" and adjust based on your needs.</em>
+                                        💡 <em>Tip: Start with "This Site" and "Every Hour" and adjust based on your needs.</em>
                                     </p>
                                 </div>
                             </div>
@@ -3606,8 +4141,9 @@ class SmartLinkUpdater {
             'schedule' => $settings['schedule'],
             'schedule_label' => $schedule_label,
             'total_posts' => $total_posts,
-            'last_run' => $last_batch ? date('Y-m-d H:i:s', $last_batch['timestamp']) : null,
-            'next_run' => $next_run ? date('Y-m-d H:i:s', $next_run) : null
+            'current_time' => gmdate('Y-m-d H:i:s'),
+            'last_run' => $last_batch ? gmdate('Y-m-d H:i:s', $last_batch['timestamp']) : null,
+            'next_run' => $next_run ? gmdate('Y-m-d H:i:s', $next_run) : null
         ));
     }
     
@@ -3661,13 +4197,17 @@ class SmartLinkUpdater {
         
         $settings = get_option('smartlink_cron_settings', array(
             'enabled' => false,
-            'schedule' => 'hourly'
+            'schedule' => 'hourly',
+            'target_sites' => array('this')
         ));
         
         if (!$settings['enabled']) {
             error_log('SmartLink: Cron is disabled, skipping');
             return;
         }
+        
+        // Get target sites (default to 'this' if not set)
+        $target_sites = isset($settings['target_sites']) ? $settings['target_sites'] : array('this');
         
         // Get all configured posts from API
         $api_url = $this->api_base_url . '/api/posts/list';
@@ -3719,64 +4259,79 @@ class SmartLinkUpdater {
             return;
         }
         
-        error_log('SmartLink: Triggering batch update for ALL ' . count($posts_to_update) . ' posts');
+        // Determine target parameter based on selected sites
+        $sites_to_update = $target_sites;
         
-        // Trigger batch update via API
-        $batch_api_url = $this->api_base_url . '/api/batch-update';
-        $batch_response = wp_remote_post($batch_api_url, array(
-            'timeout' => 30,
-            'headers' => array('Content-Type' => 'application/json'),
-            'body' => json_encode(array(
-                'post_ids' => $posts_to_update,
-                'sync' => false,
-                'target' => 'this',
-                'initiator' => 'wp_cron'
-            ))
-        ));
-        
-        if (is_wp_error($batch_response)) {
-            error_log('SmartLink: Batch update failed - ' . $batch_response->get_error_message());
-            
-            // Log failed attempt to history
-            $this->add_cron_history_entry(array(
-                'status' => 'error',
-                'message' => 'Batch update API call failed: ' . $batch_response->get_error_message(),
-                'post_count' => count($posts_to_update),
-                'request_id' => null
-            ));
-            
-            return;
+        if (in_array('all', $target_sites)) {
+            // Update all sites in one batch
+            $sites_to_update = array('all');
         }
         
-        $batch_body = wp_remote_retrieve_body($batch_response);
-        $batch_data = json_decode($batch_body, true);
+        error_log('SmartLink: Triggering batch update for ' . count($posts_to_update) . ' posts across ' . count($sites_to_update) . ' site(s)');
         
-        if (isset($batch_data['request_id'])) {
-            error_log('SmartLink: Batch update started - Request ID: ' . $batch_data['request_id']);
+        $all_request_ids = array();
+        
+        // Trigger batch update for each site
+        foreach ($sites_to_update as $site_key) {
+            error_log('SmartLink: Starting batch update for site: ' . $site_key);
             
-            // Save last batch info
+            // Trigger batch update via API
+            $batch_api_url = $this->api_base_url . '/api/batch-update';
+            $batch_response = wp_remote_post($batch_api_url, array(
+                'timeout' => 30,
+                'headers' => array('Content-Type' => 'application/json'),
+                'body' => json_encode(array(
+                    'post_ids' => $posts_to_update,
+                    'sync' => false,
+                    'target' => $site_key,
+                    'initiator' => 'wp_cron'
+                ))
+            ));
+            
+            if (is_wp_error($batch_response)) {
+                error_log('SmartLink: Batch update failed for site ' . $site_key . ' - ' . $batch_response->get_error_message());
+                continue;
+            }
+            
+            $batch_body = wp_remote_retrieve_body($batch_response);
+            $batch_data = json_decode($batch_body, true);
+            
+            if (isset($batch_data['request_id'])) {
+                error_log('SmartLink: Batch update started for site ' . $site_key . ' - Request ID: ' . $batch_data['request_id']);
+                $all_request_ids[] = array(
+                    'site' => $site_key,
+                    'request_id' => $batch_data['request_id']
+                );
+            }
+        }
+        
+        if (!empty($all_request_ids)) {
+            // Save info about all batch requests
             update_option('smartlink_last_cron_batch', array(
                 'timestamp' => $current_time,
-                'request_id' => $batch_data['request_id'],
+                'requests' => $all_request_ids,
                 'post_count' => count($posts_to_update),
-                'post_ids' => $posts_to_update
+                'post_ids' => $posts_to_update,
+                'sites' => $sites_to_update
             ));
             
             // Log success to history
             $this->add_cron_history_entry(array(
                 'status' => 'success',
-                'message' => 'Batch update initiated successfully',
+                'message' => 'Batch updates initiated successfully for ' . count($sites_to_update) . ' site(s)',
                 'post_count' => count($posts_to_update),
-                'request_id' => $batch_data['request_id'],
-                'post_ids' => $posts_to_update
+                'request_id' => $all_request_ids[0]['request_id'], // Use first for compatibility
+                'post_ids' => $posts_to_update,
+                'sites' => $sites_to_update,
+                'all_requests' => $all_request_ids
             ));
         } else {
-            error_log('SmartLink: Batch update response missing request_id');
+            error_log('SmartLink: No batch updates were successful');
             
-            // Log warning to history
+            // Log failure to history
             $this->add_cron_history_entry(array(
-                'status' => 'warning',
-                'message' => 'Batch update response missing request_id',
+                'status' => 'error',
+                'message' => 'All batch update requests failed',
                 'post_count' => count($posts_to_update),
                 'request_id' => null
             ));
@@ -4390,7 +4945,16 @@ class SmartLinkUpdater {
             });
             
             $('#refresh-analytics').on('click', function() {
+                const $btn = $(this);
+                const originalHtml = $btn.html();
+                $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none; margin: 0;"></span> Refreshing...');
+                
                 loadAnalytics();
+                
+                // Re-enable button after a short delay
+                setTimeout(function() {
+                    $btn.prop('disabled', false).html(originalHtml);
+                }, 1000);
             });
             
             // Initial load

@@ -137,9 +137,14 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     
     # Format today's date nicely
     try:
-        date_obj = datetime.strptime(today_date, "%Y-%m-%d")
-        formatted_date = date_obj.strftime("%d %B %Y")  # "26 October 2025"
-    except:
+        # Handle both "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SS" formats
+        if 'T' in today_date:
+            date_obj = datetime.strptime(today_date.split('T')[0], "%Y-%m-%d")
+        else:
+            date_obj = datetime.strptime(today_date, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%d %B %Y")  # "10 November 2025"
+    except Exception as e:
+        print(f"Error parsing date '{today_date}': {e}")
         formatted_date = today_date
     
     # Remove old link sections (older than 5 days) and check if today's section exists
