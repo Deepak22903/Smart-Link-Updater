@@ -92,12 +92,23 @@ def get_configured_wp_sites() -> Dict[str, Dict[str, Any]]:
 
 async def update_post_links_section(post_id: int, links: List[Link], wp_site: Optional[Dict] = None) -> None:
     """
-    Update WordPress post by inserting a styled 'Links for Today' section.
+    Update WordPress post by inserting a styled 'Links for Today' section using proper WordPress block format.
     
-    **New behavior:** Links are automatically inserted AFTER the first <h2> tag.
-    Falls back to prepending if no <h2> is found.
+    **Robust Block-Based Insertion:**
+    - Uses proper WordPress block comments (<!-- wp:group -->, <!-- wp:columns -->, etc.)
+    - Creates a unique block with className "smartlink-updater-section" for easy identification
+    - Only modifies the SmartLink block, leaving other content and plugin elements untouched
+    - Replaces existing SmartLink block if found, otherwise inserts after first <h2>
+    - Backward compatible with old div-based format (will upgrade to block format)
     
-    Automatically prunes sections older than 5 days to prevent content from piling up.
+    **Automatic Cleanup:**
+    - Automatically prunes sections older than 5 days to prevent content from piling up
+    - Preserves existing links from today's section when adding new links
+    
+    **Insertion Logic:**
+    1. If SmartLink block exists → Replace it with updated content
+    2. If not found → Insert after first <h2> block
+    3. Fallback → Prepend to content (rare case)
     
     Args:
         post_id: WordPress post ID
@@ -152,9 +163,13 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     today_section_exists = False
     today_section_content = ""
     
-    # Find all link sections with dates using a more robust pattern
-    section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
-    date_pattern = r'<h4[^>]*>.*?(\d{2} \w+ \d{4}).*?</h4>'  # Match "26 October 2025" even with extra tags
+    # Find all link sections with dates using patterns for both old and new formats
+    # Pattern 1: New WordPress block format with proper block comments
+    new_block_pattern = r'<!-- wp:group \{"className":"smartlink-updater-section"[^>]*?\} -->.*?<!-- /wp:group -->'
+    # Pattern 2: Old div-based format (for backward compatibility)
+    old_section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
+    # Date pattern works for both formats
+    date_pattern = r'<h4[^>]*>.*?(\d{2} \w+ \d{4}).*?</h4>'
     
     def should_keep_section(match_text, section_date_str):
         """Check if a section should be kept (within last 5 days)."""
@@ -170,12 +185,12 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
         except:
             return True  # Keep if parsing fails
     
-    # Find and filter sections
-    sections = re.finditer(section_pattern, content, re.DOTALL)
+    # Find and filter sections (check both new block format and old format)
     sections_to_remove = []
     existing_links = []
     
-    for match in sections:
+    # Check new block format first
+    for match in re.finditer(new_block_pattern, content, re.DOTALL):
         section_text = match.group(0)
         date_match = re.search(date_pattern, section_text, re.DOTALL)
         
@@ -192,16 +207,38 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
                         'url': link_match.group(1),
                         'title': link_match.group(3).strip()
                     })
-                sections_to_remove.append(section_text)
+                sections_to_remove.append((match.start(), match.end(), section_text))
             elif not should_keep_section(section_text, section_date_str):
-                sections_to_remove.append(section_text)
-        elif not re.search(date_pattern, section_text, re.DOTALL):
-            # Keep sections without dates
-            pass
+                sections_to_remove.append((match.start(), match.end(), section_text))
+    
+    # Also check old format for backward compatibility
+    for match in re.finditer(old_section_pattern, content, re.DOTALL):
+        section_text = match.group(0)
+        date_match = re.search(date_pattern, section_text, re.DOTALL)
+        
+        if date_match:
+            section_date_str = date_match.group(1)
+            
+            # Check if this is today's section
+            if section_date_str == formatted_date:
+                if not today_section_exists:  # Only process if not already found in new format
+                    today_section_exists = True
+                    # Extract existing links
+                    link_pattern = r'<a href="([^"]+)"[^>]*>(\d+)\.\s*([^<]+)</a>'
+                    for link_match in re.finditer(link_pattern, section_text):
+                        existing_links.append({
+                            'url': link_match.group(1),
+                            'title': link_match.group(3).strip()
+                        })
+                sections_to_remove.append((match.start(), match.end(), section_text))
+            elif not should_keep_section(section_text, section_date_str):
+                sections_to_remove.append((match.start(), match.end(), section_text))
     
     # Remove old sections and today's section (we'll recreate it with all links)
-    for old_section in sections_to_remove:
-        cleaned_content = cleaned_content.replace(old_section, '', 1)
+    # Sort by position (reverse order to maintain correct positions during removal)
+    sections_to_remove.sort(key=lambda x: x[0], reverse=True)
+    for start, end, section_text in sections_to_remove:
+        cleaned_content = cleaned_content[:start] + cleaned_content[end:]
     
     # Merge new links with existing links from today (avoid duplicates)
     all_links_map = {}  # Use dict to track by URL
@@ -227,6 +264,7 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     merged_links = sorted(all_links_map.values(), key=lambda x: x['order'])
     
     # Create styled buttons grouped in pairs (2 buttons per column block)
+    # Using proper WordPress block format with block comments
     column_blocks = []
     
     for i in range(0, len(merged_links), 2):
@@ -236,43 +274,69 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
         # Create button HTML for this pair
         buttons_in_pair = []
         for link in pair:
-            button_html = f'''<div class="wp-block-column is-layout-flow wp-block-column-is-layout-flow" style="flex-basis:50%">
+            button_html = f'''<!-- wp:column {{"width":"50%"}} -->
+<div class="wp-block-column" style="flex-basis:50%">
     <div style="margin: 15px 0;">
         <a href="{link['url']}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{link['order']:02d}. {link['title']}</a>
     </div>
-</div>'''
+</div>
+<!-- /wp:column -->'''
             buttons_in_pair.append(button_html)
         
-        # Create a column block for this pair
-        column_block = f'''<div class="wp-block-columns is-layout-flex wp-block-columns-is-layout-flex" style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 10px;">
+        # Create a column block for this pair with proper block comments
+        column_block = f'''<!-- wp:columns -->
+<div class="wp-block-columns">
 {chr(10).join(buttons_in_pair)}
-</div>'''
+</div>
+<!-- /wp:columns -->'''
         column_blocks.append(column_block)
     
     buttons_html = "\n".join(column_blocks)
     
-    new_section = f'''
-<div class="links-for-today" style="padding: 20px; margin: 20px 0;">
-<h4 style="color: #30d612; margin-top: 0; font-size: 20px; text-align: center;">{formatted_date}</h4>
+    # Create a proper WordPress group block that wraps our links section
+    # This ensures the entire section is treated as a single block
+    new_section = f'''<!-- wp:group {{"className":"smartlink-updater-section","metadata":{{"name":"SmartLink Links Section"}}}} -->
+<div class="wp-block-group smartlink-updater-section links-for-today" style="padding: 20px; margin: 20px 0;">
+<!-- wp:heading {{"level":4,"style":{{"color":{{"text":"#30d612"}},"typography":{{"fontSize":"20px"}}}},"textAlign":"center"}} -->
+<h4 class="wp-block-heading has-text-align-center" style="color:#30d612;font-size:20px">{formatted_date}</h4>
+<!-- /wp:heading -->
+
 {buttons_html}
-<p style="font-size: 12px; color: #999; margin-top: 20px; margin-bottom: 0;"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
+
+<!-- wp:paragraph {{"style":{{"typography":{{"fontSize":"12px"}},"color":{{"text":"#999"}}}}}} -->
+<p class="has-text-color" style="color:#999;font-size:12px"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
+<!-- /wp:paragraph -->
 </div>
-'''
+<!-- /wp:group -->'''
     
-    # Simple logic: Insert after first <h2> tag
-    # Pattern matches: <h2 ...>content</h2>
-    h2_pattern = r'(<h2[^>]*>.*?</h2>)'
-    match = re.search(h2_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
+    # ROBUST INSERTION LOGIC:
+    # 1. Find our existing SmartLink block if it exists
+    # 2. If found, replace only that block
+    # 3. If not found, insert after first H2 block
+    # 4. This ensures we don't break other plugin content
     
-    if match:
-        # Insert after the first H2
-        h2_end = match.end()
-        new_content = cleaned_content[:h2_end] + "\n" + new_section + "\n" + cleaned_content[h2_end:]
-        logging.info(f"[WP] Inserted links after first <h2> tag")
+    smartlink_block_pattern = r'<!-- wp:group \{"className":"smartlink-updater-section"[^>]*?\} -->.*?<!-- /wp:group -->'
+    existing_block_match = re.search(smartlink_block_pattern, cleaned_content, re.DOTALL)
+    
+    if existing_block_match:
+        # Replace existing SmartLink block
+        new_content = cleaned_content[:existing_block_match.start()] + new_section + cleaned_content[existing_block_match.end():]
+        logging.info(f"[WP] Replaced existing SmartLink block")
     else:
-        # Fallback to prepend if no H2 found
-        new_content = new_section + cleaned_content
-        logging.warning(f"[WP] No <h2> tag found, prepending to beginning instead")
+        # Insert after first H2 block (WordPress heading block)
+        # Look for either block comment format or plain H2
+        h2_block_pattern = r'(<!-- wp:heading.*?-->.*?<h2[^>]*>.*?</h2>.*?<!-- /wp:heading -->|<h2[^>]*>.*?</h2>)'
+        h2_match = re.search(h2_block_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
+        
+        if h2_match:
+            # Insert after the first H2 block
+            h2_end = h2_match.end()
+            new_content = cleaned_content[:h2_end] + "\n\n" + new_section + "\n\n" + cleaned_content[h2_end:]
+            logging.info(f"[WP] Inserted SmartLink block after first <h2> block")
+        else:
+            # Fallback: prepend to content (rare case)
+            new_content = new_section + "\n\n" + cleaned_content
+            logging.warning(f"[WP] No <h2> block found, prepending SmartLink block to beginning")
     
     # Update the post
     payload = {"content": new_content}
