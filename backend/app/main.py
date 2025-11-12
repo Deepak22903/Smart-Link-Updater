@@ -409,6 +409,55 @@ async def get_post_logs(request_id: str, post_id: int, tail: int = 50):
     }
 
 
+@app.get("/api/batch-history")
+async def get_batch_history(limit: int = 50, skip: int = 0):
+    """
+    Get paginated batch update history.
+    
+    Returns list of batch requests with summary information, sorted by newest first.
+    """
+    from . import mongo_storage
+    
+    # Get batch requests from MongoDB
+    all_requests = mongo_storage.get_recent_batch_requests(limit=limit + skip)
+    
+    # Apply pagination
+    paginated = all_requests[skip:skip + limit]
+    
+    # Format response with summary info
+    history = []
+    for req in paginated:
+        # Calculate summary statistics
+        posts = req.get("posts", {})
+        total = len(posts)
+        completed = sum(1 for p in posts.values() if p.get("status") in ["success", "no_changes", "failed"])
+        successful = sum(1 for p in posts.values() if p.get("status") == "success")
+        failed = sum(1 for p in posts.values() if p.get("status") == "failed")
+        no_changes = sum(1 for p in posts.values() if p.get("status") == "no_changes")
+        
+        history.append({
+            "request_id": req.get("request_id"),
+            "created_at": req.get("created_at"),
+            "started_at": req.get("started_at"),
+            "completed_at": req.get("completed_at"),
+            "overall_status": req.get("overall_status"),
+            "initiator": req.get("initiator", "unknown"),
+            "total_posts": total,
+            "completed_posts": completed,
+            "successful_posts": successful,
+            "failed_posts": failed,
+            "no_changes_posts": no_changes,
+            "post_ids": req.get("post_ids", [])
+        })
+    
+    return {
+        "history": history,
+        "total": len(all_requests),
+        "limit": limit,
+        "skip": skip
+    }
+
+
 class ManualLink(BaseModel):
     title: str
     url: HttpUrl

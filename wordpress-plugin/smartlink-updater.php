@@ -1367,19 +1367,22 @@ class SmartLinkUpdater {
             
             function loadCronHistory() {
                 const contentDiv = $('#cron-history-content');
-                contentDiv.html('<div style="text-align: center; padding: 40px;"><span class="spinner is-active" style="float: none;"></span><p>Loading history...</p></div>');
+                contentDiv.html('<div style="text-align: center; padding: 40px;"><span class="spinner is-active" style="float: none;"></span><p>Loading batch history...</p></div>');
                 
+                // Fetch from backend batch history API
                 $.ajax({
-                    url: config.restUrl + '/cron/history',
+                    url: '<?php echo rest_url('smartlink/v1/batch-history'); ?>',
                     method: 'GET',
+                    data: { limit: 50 },
                     beforeSend: function(xhr) {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
                     },
-                    success: function(history) {
-                        renderCronHistory(history);
+                    success: function(response) {
+                        renderCronHistory(response.history);
                     },
                     error: function(xhr) {
-                        contentDiv.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load history</p></div>');
+                        console.error('Failed to load batch history:', xhr);
+                        contentDiv.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load batch history</p></div>');
                     }
                 });
             }
@@ -1388,43 +1391,73 @@ class SmartLinkUpdater {
                 const contentDiv = $('#cron-history-content');
                 
                 if (!history || history.length === 0) {
-                    contentDiv.html('<div style="text-align: center; padding: 40px; color: #666;"><span class="dashicons dashicons-clock" style="font-size: 48px; opacity: 0.3;"></span><p>No scheduled update history yet</p></div>');
+                    contentDiv.html('<div style="text-align: center; padding: 40px; color: #666;"><span class="dashicons dashicons-clock" style="font-size: 48px; opacity: 0.3;"></span><p>No batch update history yet</p></div>');
                     return;
                 }
                 
                 let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
                 
                 history.forEach(function(entry) {
-                    const statusColors = {
-                        'success': { bg: '#d4edda', border: '#27ae60', text: '#155724', icon: 'yes-alt' },
-                        'error': { bg: '#f8d7da', border: '#e74c3c', text: '#721c24', icon: 'dismiss' },
-                        'warning': { bg: '#fff3cd', border: '#ffc107', text: '#856404', icon: 'warning' }
+                    // Map overall_status to status colors
+                    const statusMap = {
+                        'success': { bg: '#d4edda', border: '#27ae60', text: '#155724', icon: 'yes-alt', label: 'SUCCESS' },
+                        'no_changes': { bg: '#e3f2fd', border: '#2196f3', text: '#0d47a1', icon: 'info', label: 'NO CHANGES' },
+                        'partial': { bg: '#fff3cd', border: '#ffc107', text: '#856404', icon: 'warning', label: 'PARTIAL' },
+                        'failed': { bg: '#f8d7da', border: '#e74c3c', text: '#721c24', icon: 'dismiss', label: 'FAILED' },
+                        'running': { bg: '#fff3cd', border: '#ffc107', text: '#856404', icon: 'update', label: 'RUNNING' },
+                        'queued': { bg: '#f5f5f5', border: '#999', text: '#666', icon: 'clock', label: 'QUEUED' }
                     };
                     
-                    const style = statusColors[entry.status] || statusColors['warning'];
+                    const style = statusMap[entry.overall_status] || statusMap['queued'];
                     
                     html += '<div style="background: ' + style.bg + '; border-left: 4px solid ' + style.border + '; padding: 15px 20px; border-radius: 8px;">';
                     html += '<div style="display: flex; justify-content: space-between; align-items: start; gap: 15px;">';
                     html += '<div style="flex: 1;">';
                     html += '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">';
                     html += '<span class="dashicons dashicons-' + style.icon + '" style="color: ' + style.text + ';"></span>';
-                    html += '<strong style="color: ' + style.text + '; text-transform: uppercase; font-size: 12px;">' + entry.status + '</strong>';
-                    html += '</div>';
-                    html += '<p style="margin: 0 0 8px 0; color: ' + style.text + ';">' + entry.message + '</p>';
-                    html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #666;">';
-                    html += '<div><strong>Posts:</strong> ' + entry.post_count + '</div>';
-                    if (entry.request_id) {
-                        html += '<div><strong>Request ID:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 3px; font-size: 11px;">' + entry.request_id + '</code></div>';
+                    html += '<strong style="color: ' + style.text + '; text-transform: uppercase; font-size: 12px;">' + style.label + '</strong>';
+                    
+                    // Add initiator badge
+                    if (entry.initiator) {
+                        const initiatorIcon = entry.initiator === 'cron' ? 'clock' : (entry.initiator === 'manual' ? 'admin-users' : 'admin-generic');
+                        html += '<span style="background: rgba(0,0,0,0.1); padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 8px; display: inline-flex; align-items: center; gap: 4px;">';
+                        html += '<span class="dashicons dashicons-' + initiatorIcon + '" style="font-size: 12px;"></span>';
+                        html += entry.initiator;
+                        html += '</span>';
                     }
                     html += '</div>';
-                    html += '<button class="button button-small view-history-details-btn" data-entry=\'' + JSON.stringify(entry) + '\' style="margin-top: 10px; background: ' + style.border + '; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">';
+                    
+                    // Summary message
+                    let message = entry.completed_posts + ' of ' + entry.total_posts + ' posts processed';
+                    if (entry.successful_posts > 0) {
+                        message += ' • ' + entry.successful_posts + ' updated';
+                    }
+                    if (entry.no_changes_posts > 0) {
+                        message += ' • ' + entry.no_changes_posts + ' no changes';
+                    }
+                    if (entry.failed_posts > 0) {
+                        message += ' • ' + entry.failed_posts + ' failed';
+                    }
+                    html += '<p style="margin: 0 0 8px 0; color: ' + style.text + ';">' + message + '</p>';
+                    
+                    // Details
+                    html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #666;">';
+                    html += '<div><strong>Posts:</strong> ' + entry.post_ids.slice(0, 3).join(', ') + (entry.post_ids.length > 3 ? '...' : '') + '</div>';
+                    html += '<div><strong>Request ID:</strong> <code style="background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 3px; font-size: 11px;">' + entry.request_id.substring(0, 8) + '...</code></div>';
+                    html += '</div>';
+                    
+                    html += '<button class="button button-small view-history-details-btn" data-request-id="' + entry.request_id + '" style="margin-top: 10px; background: ' + style.border + '; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">';
                     html += '<span class="dashicons dashicons-visibility" style="font-size: 14px; vertical-align: middle; margin-right: 4px;"></span>';
                     html += 'View Detailed Logs';
                     html += '</button>';
                     html += '</div>';
+                    
+                    // Time display
                     html += '<div style="text-align: right; min-width: 140px;">';
-                    html += '<div style="font-size: 13px; color: #666;">' + convertUTCToLocal(entry.formatted_time) + '</div>';
-                    html += '<div style="font-size: 12px; color: #999; margin-top: 4px;">' + entry.time_ago + '</div>';
+                    const createdDate = new Date(entry.created_at);
+                    html += '<div style="font-size: 13px; color: #666;">' + createdDate.toLocaleString() + '</div>';
+                    const timeAgo = getTimeAgo(createdDate);
+                    html += '<div style="font-size: 12px; color: #999; margin-top: 4px;">' + timeAgo + '</div>';
                     html += '</div>';
                     html += '</div>';
                     html += '</div>';
@@ -1437,8 +1470,8 @@ class SmartLinkUpdater {
                 $('.view-history-details-btn').on('click', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    const entry = JSON.parse($(this).attr('data-entry'));
-                    showDetailedLogs(entry);
+                    const requestId = $(this).attr('data-request-id');
+                    showDetailedLogsFromHistory(requestId);
                 });
             }
             
@@ -2234,6 +2267,54 @@ class SmartLinkUpdater {
                     'unknown': '<span class="health-badge health-unknown">? Unknown</span>'
                 };
                 return badges[status] || badges['unknown'];
+            }
+            
+            function getTimeAgo(date) {
+                return formatTimeAgo(date);
+            }
+            
+            function showDetailedLogsFromHistory(requestId) {
+                console.log('Loading detailed logs for request:', requestId);
+                
+                // Create modal for detailed logs
+                const modal = $('<div class="smartlink-modal" id="detailed-logs-modal"></div>');
+                const modalContent = $('<div class="smartlink-modal-content" style="max-width: 1200px; max-height: 90vh; overflow-y: auto;"></div>');
+                
+                modalContent.html('<div style="text-align: center; padding: 40px;"><div class="spinner is-active" style="float: none;"></div><p>Loading batch details...</p></div>');
+                modal.append(modalContent);
+                $('body').append(modal);
+                
+                modal.fadeIn(200);
+                
+                // Close on background click
+                modal.on('click', function(e) {
+                    if (e.target === this) {
+                        modal.fadeOut(200, function() { $(this).remove(); });
+                    }
+                });
+                
+                // Fetch batch status
+                $.ajax({
+                    url: '<?php echo rest_url('smartlink/v1/batch-status/'); ?>' + requestId,
+                    type: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        // Create entry format that renderDetailedLogs expects
+                        const entry = {
+                            request_id: response.request_id,
+                            created_at: response.created_at,
+                            formatted_time: response.created_at,
+                            time_ago: formatTimeAgo(new Date(response.created_at))
+                        };
+                        renderDetailedLogs(entry, [{ site: 'this', data: response }]);
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to fetch batch status:', xhr);
+                        modalContent.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load batch details</p><button class="button close-detailed-logs-btn">Close</button></div>');
+                    }
+                });
             }
             
             // ========== SELECTION ==========
@@ -3442,7 +3523,7 @@ class SmartLinkUpdater {
                     <div class="smartlink-modal-header">
                         <h2>
                             <span class="dashicons dashicons-backup"></span>
-                            Scheduled Update History
+                            Batch Update History
                         </h2>
                         <button type="button" class="close-modal" onclick="document.getElementById('cron-history-modal').style.display='none'">×</button>
                     </div>
@@ -3946,6 +4027,14 @@ class SmartLinkUpdater {
         register_rest_route('smartlink/v1', '/cron/history', array(
             'methods' => 'GET',
             'callback' => array($this, 'handle_get_cron_history_rest'),
+            'permission_callback' => function() {
+                return current_user_can('edit_posts');
+            }
+        ));
+        
+        register_rest_route('smartlink/v1', '/batch-history', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'handle_get_batch_history_rest'),
             'permission_callback' => function() {
                 return current_user_can('edit_posts');
             }
@@ -4584,6 +4673,36 @@ class SmartLinkUpdater {
         }
         
         return rest_ensure_response($history);
+    }
+    
+    /**
+     * Get batch history from backend API
+     */
+    public function handle_get_batch_history_rest($request) {
+        $limit = $request->get_param('limit') ?: 50;
+        $skip = $request->get_param('skip') ?: 0;
+        
+        $api_url = $this->api_base_url . '/api/batch-history?limit=' . $limit . '&skip=' . $skip;
+        
+        $response = wp_remote_get($api_url, array(
+            'timeout' => 10,
+            'headers' => array(
+                'Content-Type' => 'application/json'
+            )
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', 'Failed to fetch batch history: ' . $response->get_error_message());
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (!$data || !isset($data['history'])) {
+            return new WP_Error('invalid_response', 'Invalid response from backend API');
+        }
+        
+        return rest_ensure_response($data);
     }
     
     /**
