@@ -4682,24 +4682,25 @@ class SmartLinkUpdater {
         $limit = $request->get_param('limit') ?: 50;
         $skip = $request->get_param('skip') ?: 0;
         
-        $api_url = $this->api_base_url . '/api/batch-history?limit=' . $limit . '&skip=' . $skip;
+        $api_url = $this->api_base_url . '/api/batch-history';
+        $api_url = add_query_arg(array(
+            'limit' => $limit,
+            'skip' => $skip
+        ), $api_url);
         
         $response = wp_remote_get($api_url, array(
-            'timeout' => 10,
-            'headers' => array(
-                'Content-Type' => 'application/json'
-            )
+            'timeout' => 15
         ));
         
         if (is_wp_error($response)) {
-            return new WP_Error('api_error', 'Failed to fetch batch history: ' . $response->get_error_message());
+            return new WP_Error('api_error', 'Failed to fetch batch history from backend', array('status' => 500));
         }
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
         if (!$data || !isset($data['history'])) {
-            return new WP_Error('invalid_response', 'Invalid response from backend API');
+            return new WP_Error('invalid_response', 'Invalid response from backend', array('status' => 500));
         }
         
         return rest_ensure_response($data);
