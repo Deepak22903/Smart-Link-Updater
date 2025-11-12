@@ -1501,106 +1501,195 @@ class SmartLinkUpdater {
             function renderDetailedLogs(entry, batchResults) {
                 const modal = $('#detailed-logs-modal .smartlink-modal-content');
                 
-                let html = '<div style="padding: 30px;">';
+                let html = '<div style="padding: 0;">';
                 
-                // Header
-                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 15px;">';
-                html += '<h2 style="margin: 0; display: flex; align-items: center; gap: 10px;"><span class="dashicons dashicons-chart-line" style="font-size: 28px; color: #2271b1;"></span>Detailed Batch Update Logs</h2>';
-                html += '<button class="button close-detailed-logs-btn">Close</button>';
+                // Modern Header with gradient
+                html += '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 24px 30px; margin: -20px -20px 0 -20px; border-radius: 12px 12px 0 0;">';
+                html += '<div style="display: flex; justify-content: space-between; align-items: center;">';
+                html += '<div style="display: flex; align-items: center; gap: 12px;">';
+                html += '<div style="background: rgba(255,255,255,0.2); width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center;">';
+                html += '<span class="dashicons dashicons-chart-line" style="font-size: 24px; color: white;"></span>';
+                html += '</div>';
+                html += '<div>';
+                html += '<h2 style="margin: 0; color: white; font-size: 24px; font-weight: 700;">Batch Update Results</h2>';
+                html += '<p style="margin: 4px 0 0 0; color: rgba(255,255,255,0.9); font-size: 13px;">' + convertUTCToLocal(entry.formatted_time) + ' • ' + entry.time_ago + '</p>';
+                html += '</div>';
+                html += '</div>';
+                html += '<button class="button close-detailed-logs-btn" style="background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.3); color: white; font-weight: 600; padding: 8px 20px; transition: all 0.2s;" onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.2)\'">Close</button>';
+                html += '</div>';
                 html += '</div>';
                 
-                // Timestamp and overview
-                html += '<div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">';
-                html += '<div style="display: flex; gap: 30px; flex-wrap: wrap;">';
-                html += '<div><strong>Timestamp:</strong> ' + convertUTCToLocal(entry.formatted_time) + ' (' + entry.time_ago + ')</div>';
-                html += '<div><strong>Status:</strong> <span style="text-transform: uppercase; color: ' + (entry.status === 'success' ? '#27ae60' : '#e74c3c') + ';">' + entry.status + '</span></div>';
-                html += '<div><strong>Total Posts:</strong> ' + entry.post_count + '</div>';
+                html += '<div style="padding: 30px;">';
+                
+                // Status Overview Cards
+                html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 30px;">';
+                
+                // Status Card
+                const statusColors = {
+                    'success': { bg: '#d4edda', border: '#28a745', text: '#155724', icon: 'yes-alt' },
+                    'error': { bg: '#f8d7da', border: '#dc3545', text: '#721c24', icon: 'dismiss' },
+                    'warning': { bg: '#fff3cd', border: '#ffc107', text: '#856404', icon: 'warning' }
+                };
+                const statusColor = statusColors[entry.status] || statusColors['warning'];
+                
+                html += '<div style="background: ' + statusColor.bg + '; border: 2px solid ' + statusColor.border + '; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">';
+                html += '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">';
+                html += '<div style="background: ' + statusColor.border + '; width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">';
+                html += '<span class="dashicons dashicons-' + statusColor.icon + '" style="font-size: 20px; color: white;"></span>';
+                html += '</div>';
+                html += '<div style="font-size: 14px; font-weight: 600; color: ' + statusColor.text + '; text-transform: uppercase; letter-spacing: 0.5px;">' + entry.status + '</div>';
+                html += '</div>';
+                html += '<div style="font-size: 12px; color: ' + statusColor.text + '; opacity: 0.8;">Overall Status</div>';
+                html += '</div>';
+                
+                // Total Posts Card
+                html += '<div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); border: 2px solid #667eea; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">';
+                html += '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">';
+                html += '<div style="background: #667eea; width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">';
+                html += '<span class="dashicons dashicons-admin-post" style="font-size: 20px; color: white;"></span>';
+                html += '</div>';
+                html += '<div style="font-size: 28px; font-weight: 700; color: #667eea;">' + entry.post_count + '</div>';
+                html += '</div>';
+                html += '<div style="font-size: 12px; color: #667eea; font-weight: 600;">Total Posts</div>';
+                html += '</div>';
+                
+                // Sites Card (if multiple)
                 if (entry.sites && entry.sites.length > 0) {
-                    html += '<div><strong>Sites:</strong> ' + entry.sites.join(', ') + '</div>';
+                    html += '<div style="background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%); border: 2px solid #f093fb; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">';
+                    html += '<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">';
+                    html += '<div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">';
+                    html += '<span class="dashicons dashicons-admin-multisite" style="font-size: 20px; color: white;"></span>';
+                    html += '</div>';
+                    html += '<div style="font-size: 16px; font-weight: 700; color: #f5576c;">' + entry.sites.join(', ') + '</div>';
+                    html += '</div>';
+                    html += '<div style="font-size: 12px; color: #f5576c; font-weight: 600;">Target Sites</div>';
+                    html += '</div>';
                 }
-                html += '</div>';
+                
                 html += '</div>';
                 
                 // Iterate through each batch result (per-site)
                 batchResults.forEach(function(result) {
                     const batchData = result.data;
                     
-                    html += '<div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">';
+                    html += '<div style="background: white; border: 2px solid #e2e8f0; border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">';
                     
-                    // Site header
+                    // Site header (if multiple sites)
                     if (batchResults.length > 1) {
-                        html += '<h3 style="margin-top: 0; color: #2271b1; display: flex; align-items: center; gap: 8px;"><span class="dashicons dashicons-admin-site"></span>Site: ' + result.site + '</h3>';
+                        html += '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 16px 20px; margin: -24px -24px 24px -24px; border-radius: 14px 14px 0 0;">';
+                        html += '<h3 style="margin: 0; color: white; display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 600;">';
+                        html += '<span class="dashicons dashicons-admin-site" style="font-size: 20px;"></span>Site: ' + result.site;
+                        html += '</h3>';
+                        html += '</div>';
                     }
                     
-                    // Batch summary
-                    html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">';
-                    html += '<div style="background: #e3f2fd; padding: 12px; border-radius: 6px; text-align: center;">';
-                    html += '<div style="font-size: 24px; font-weight: bold; color: #1976d2;">' + batchData.total_posts + '</div>';
-                    html += '<div style="font-size: 12px; color: #666;">Total Posts</div>';
-                    html += '</div>';
-                    html += '<div style="background: #e8f5e9; padding: 12px; border-radius: 6px; text-align: center;">';
-                    html += '<div style="font-size: 24px; font-weight: bold; color: #27ae60;">' + batchData.completed + '</div>';
-                    html += '<div style="font-size: 12px; color: #666;">Completed</div>';
-                    html += '</div>';
-                    html += '<div style="background: #fff3cd; padding: 12px; border-radius: 6px; text-align: center;">';
-                    html += '<div style="font-size: 24px; font-weight: bold; color: #ffc107;">' + batchData.processing + '</div>';
-                    html += '<div style="font-size: 12px; color: #666;">Processing</div>';
-                    html += '</div>';
-                    html += '<div style="background: #ffebee; padding: 12px; border-radius: 6px; text-align: center;">';
-                    html += '<div style="font-size: 24px; font-weight: bold; color: #e74c3c;">' + batchData.failed + '</div>';
-                    html += '<div style="font-size: 12px; color: #666;">Failed</div>';
-                    html += '</div>';
+                    // Batch summary stats
+                    html += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px;">';
+                    
+                    html += '<div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 16px; border-radius: 10px; text-align: center; border: 2px solid #2196f3;">';
+                    html += '<div style="font-size: 32px; font-weight: 800; color: #1976d2; line-height: 1;">' + batchData.total_posts + '</div>';
+                    html += '<div style="font-size: 11px; color: #1976d2; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Total</div>';
                     html += '</div>';
                     
-                    // Request ID
-                    html += '<div style="margin-bottom: 15px; font-size: 13px; color: #666;">';
-                    html += '<strong>Request ID:</strong> <code style="background: #f0f0f0; padding: 4px 8px; border-radius: 4px;">' + batchData.request_id + '</code>';
+                    html += '<div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 16px; border-radius: 10px; text-align: center; border: 2px solid #4caf50;">';
+                    html += '<div style="font-size: 32px; font-weight: 800; color: #27ae60; line-height: 1;">' + batchData.completed + '</div>';
+                    html += '<div style="font-size: 11px; color: #27ae60; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Completed</div>';
+                    html += '</div>';
+                    
+                    html += '<div style="background: linear-gradient(135deg, #fff3cd 0%, #ffe082 100%); padding: 16px; border-radius: 10px; text-align: center; border: 2px solid #ffc107;">';
+                    html += '<div style="font-size: 32px; font-weight: 800; color: #f57c00; line-height: 1;">' + batchData.processing + '</div>';
+                    html += '<div style="font-size: 11px; color: #f57c00; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Processing</div>';
+                    html += '</div>';
+                    
+                    html += '<div style="background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%); padding: 16px; border-radius: 10px; text-align: center; border: 2px solid #f44336;">';
+                    html += '<div style="font-size: 32px; font-weight: 800; color: #e74c3c; line-height: 1;">' + batchData.failed + '</div>';
+                    html += '<div style="font-size: 11px; color: #e74c3c; font-weight: 600; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Failed</div>';
+                    html += '</div>';
+                    
+                    html += '</div>';
+                    
+                    // Request ID badge
+                    html += '<div style="background: #f7fafc; padding: 12px 16px; border-radius: 8px; margin-bottom: 24px; border-left: 4px solid #667eea;">';
+                    html += '<div style="font-size: 11px; color: #718096; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Request ID</div>';
+                    html += '<code style="background: #e2e8f0; padding: 6px 10px; border-radius: 6px; font-size: 12px; color: #2d3748; font-weight: 600;">' + batchData.request_id + '</code>';
                     html += '</div>';
                     
                     // Per-post details
                     if (batchData.posts && Object.keys(batchData.posts).length > 0) {
-                        html += '<h4 style="margin: 20px 0 10px 0; color: #333;">Post-by-Post Details</h4>';
+                        html += '<div style="margin-bottom: 16px;">';
+                        html += '<h4 style="margin: 0 0 16px 0; color: #2d3748; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px;">';
+                        html += '<span class="dashicons dashicons-list-view" style="font-size: 18px; color: #667eea;"></span>';
+                        html += 'Post-by-Post Details';
+                        html += '</h4>';
+                        html += '</div>';
                         
                         Object.keys(batchData.posts).forEach(function(postId) {
                             const post = batchData.posts[postId];
                             
-                            const statusIcons = {
-                                'completed': { icon: 'yes-alt', color: '#27ae60' },
-                                'processing': { icon: 'update', color: '#ffc107' },
-                                'failed': { icon: 'dismiss', color: '#e74c3c' },
-                                'no_changes': { icon: 'minus', color: '#95a5a6' },
-                                'pending': { icon: 'clock', color: '#999' }
+                            const statusConfig = {
+                                'completed': { icon: 'yes-alt', color: '#27ae60', bg: '#e8f5e9', border: '#4caf50' },
+                                'success': { icon: 'yes-alt', color: '#27ae60', bg: '#e8f5e9', border: '#4caf50' },
+                                'processing': { icon: 'update', color: '#f57c00', bg: '#fff3cd', border: '#ffc107' },
+                                'failed': { icon: 'dismiss', color: '#e74c3c', bg: '#ffebee', border: '#f44336' },
+                                'no_changes': { icon: 'minus', color: '#718096', bg: '#f7fafc', border: '#cbd5e0' },
+                                'pending': { icon: 'clock', color: '#718096', bg: '#f7fafc', border: '#cbd5e0' }
                             };
                             
-                            const statusIcon = statusIcons[post.status] || statusIcons['pending'];
+                            const statusStyle = statusConfig[post.status] || statusConfig['pending'];
                             
-                            html += '<div style="background: #f9f9f9; border-left: 4px solid ' + statusIcon.color + '; padding: 15px; margin-bottom: 10px; border-radius: 4px;">';
-                            html += '<div style="display: flex; justify-content: space-between; align-items: start; gap: 15px;">';
+                            html += '<div style="background: ' + statusStyle.bg + '; border: 2px solid ' + statusStyle.border + '; border-left-width: 4px; padding: 18px 20px; margin-bottom: 12px; border-radius: 10px; transition: all 0.2s;" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,0.12)\'" onmouseout="this.style.boxShadow=\'none\'">';
+                            
+                            html += '<div style="display: flex; justify-content: space-between; align-items: start; gap: 16px;">';
                             html += '<div style="flex: 1;">';
-                            html += '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">';
-                            html += '<span class="dashicons dashicons-' + statusIcon.icon + '" style="color: ' + statusIcon.color + ';"></span>';
-                            html += '<strong>Post ID: ' + postId + '</strong>';
-                            html += '<span style="text-transform: uppercase; font-size: 11px; background: ' + statusIcon.color + '; color: white; padding: 2px 8px; border-radius: 3px; margin-left: 8px;">' + post.status + '</span>';
+                            
+                            // Post header
+                            html += '<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">';
+                            html += '<div style="background: ' + statusStyle.color + '; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">';
+                            html += '<span class="dashicons dashicons-' + statusStyle.icon + '" style="font-size: 18px; color: white;"></span>';
+                            html += '</div>';
+                            html += '<div>';
+                            html += '<div style="font-weight: 700; color: #2d3748; font-size: 15px;">Post ID: ' + postId + '</div>';
+                            html += '<div style="font-size: 11px; text-transform: uppercase; color: ' + statusStyle.color + '; font-weight: 700; letter-spacing: 0.5px; margin-top: 2px;">' + post.status.replace('_', ' ') + '</div>';
+                            html += '</div>';
                             html += '</div>';
                             
-                            html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #666; margin-bottom: 10px;">';
+                            // Stats
+                            html += '<div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #4a5568; margin-bottom: 12px;">';
                             if (post.links_found !== undefined) {
-                                html += '<div><strong>Links Found:</strong> ' + post.links_found + '</div>';
+                                html += '<div style="display: flex; align-items: center; gap: 6px;">';
+                                html += '<span class="dashicons dashicons-search" style="font-size: 14px; color: #667eea;"></span>';
+                                html += '<strong>Found:</strong> <span style="font-weight: 700; color: #2d3748;">' + post.links_found + '</span>';
+                                html += '</div>';
                             }
                             if (post.links_added !== undefined) {
-                                html += '<div><strong>Links Added:</strong> ' + post.links_added + '</div>';
+                                html += '<div style="display: flex; align-items: center; gap: 6px;">';
+                                html += '<span class="dashicons dashicons-plus-alt" style="font-size: 14px; color: #27ae60;"></span>';
+                                html += '<strong>Added:</strong> <span style="font-weight: 700; color: #2d3748;">' + post.links_added + '</span>';
+                                html += '</div>';
                             }
                             if (post.progress !== undefined) {
-                                html += '<div><strong>Progress:</strong> ' + Math.round(post.progress * 100) + '%</div>';
+                                const progressPercent = Math.round(post.progress * 100);
+                                html += '<div style="display: flex; align-items: center; gap: 6px;">';
+                                html += '<span class="dashicons dashicons-chart-bar" style="font-size: 14px; color: #f57c00;"></span>';
+                                html += '<strong>Progress:</strong> <span style="font-weight: 700; color: #2d3748;">' + progressPercent + '%</span>';
+                                html += '</div>';
                             }
+                            html += '</div>';
+                            
+                            // Message if exists
+                            if (post.message) {
+                                html += '<div style="background: rgba(255,255,255,0.7); padding: 10px 12px; border-radius: 6px; font-size: 12px; color: #4a5568; border-left: 3px solid ' + statusStyle.color + ';">';
+                                html += '<strong>Message:</strong> ' + post.message;
+                                html += '</div>';
+                            }
+                            
                             html += '</div>';
                             
                             // View logs button
-                            html += '<button class="button button-small view-post-logs-btn" data-request-id="' + batchData.request_id + '" data-post-id="' + postId + '" style="font-size: 12px;">';
-                            html += '<span class="dashicons dashicons-media-text" style="font-size: 14px; vertical-align: middle;"></span> View Full Logs';
+                            html += '<button class="button view-post-logs-btn" data-request-id="' + batchData.request_id + '" data-post-id="' + postId + '" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; font-weight: 600; padding: 10px 18px; font-size: 13px; border-radius: 8px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3); white-space: nowrap;" onmouseover="this.style.transform=\'translateY(-2px)\'; this.style.boxShadow=\'0 4px 12px rgba(102, 126, 234, 0.4)\'" onmouseout="this.style.transform=\'translateY(0)\'; this.style.boxShadow=\'0 2px 6px rgba(102, 126, 234, 0.3)\'">';
+                            html += '<span class="dashicons dashicons-media-text" style="font-size: 16px; vertical-align: middle; margin-right: 4px;"></span> View Logs';
                             html += '</button>';
                             
-                            html += '</div>';
                             html += '</div>';
                             html += '</div>';
                         });
@@ -1609,6 +1698,7 @@ class SmartLinkUpdater {
                     html += '</div>';
                 });
                 
+                html += '</div>';
                 html += '</div>';
                 
                 modal.html(html);
