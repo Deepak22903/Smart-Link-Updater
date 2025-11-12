@@ -1322,11 +1322,18 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         )
         
         # Resolve the correct post ID for the target site
-        target_post_id = resolve_post_id_for_site(config, target)
-        if not target_post_id:
-            raise Exception(f"No post ID configured for site '{target}'")
+        if target == "this":
+            # For "this" site, use the post_id directly (legacy support)
+            target_post_id = post_id
+            target_site_key = None  # No specific site key for "this"
+        else:
+            # For specific sites, resolve the site-specific post ID
+            target_post_id = resolve_post_id_for_site(config, target)
+            target_site_key = target
+            if not target_post_id:
+                raise Exception(f"No post ID configured for site '{target}'")
         
-        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target)
+        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
         new_links = dedupe_by_fingerprint(all_links, known_fps)
         
         await manager.update_post_state(
@@ -1336,13 +1343,18 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication"
         )
         
-        # Update WordPress with the correct post ID
-        wp_result = await update_post_links_section(target_post_id, new_links, target)
+        # Update WordPress with the correct post ID and site key
+        if target == "this":
+            # For "this" site, don't pass site key (uses default from environment)
+            wp_result = await update_post_links_section(target_post_id, new_links)
+        else:
+            # For specific sites, pass the site key
+            wp_result = await update_post_links_section(target_post_id, new_links, target)
         
         # Save fingerprints for this specific site using the correct post ID
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target)
+            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
         
         # Determine status based on results
         if wp_result['links_added'] > 0:
