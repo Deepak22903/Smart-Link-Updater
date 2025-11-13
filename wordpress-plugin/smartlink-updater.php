@@ -4290,8 +4290,21 @@ class SmartLinkUpdater {
             return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
         }
         
+        $status_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
+        
+        // Check if backend returned an error
+        if ($status_code >= 400) {
+            $error_data = json_decode($body, true);
+            $error_message = isset($error_data['detail']) ? $error_data['detail'] : 'Backend API error';
+            return new WP_Error('backend_error', $error_message, array('status' => $status_code));
+        }
+        
         $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return new WP_Error('json_error', 'Invalid JSON response from backend', array('status' => 500));
+        }
         
         return rest_ensure_response($data);
     }
@@ -4725,14 +4738,23 @@ class SmartLinkUpdater {
         ));
         
         if (is_wp_error($response)) {
-            return new WP_Error('api_error', 'Failed to fetch batch history from backend', array('status' => 500));
+            return new WP_Error('api_error', 'Failed to fetch batch history from backend: ' . $response->get_error_message(), array('status' => 500));
         }
         
+        $status_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
+        
+        // Check if backend returned an error
+        if ($status_code >= 400) {
+            $error_data = json_decode($body, true);
+            $error_message = isset($error_data['detail']) ? $error_data['detail'] : 'Backend API error';
+            return new WP_Error('backend_error', $error_message, array('status' => $status_code));
+        }
+        
         $data = json_decode($body, true);
         
-        if (!$data || !isset($data['history'])) {
-            return new WP_Error('invalid_response', 'Invalid response from backend', array('status' => 500));
+        if (json_last_error() !== JSON_ERROR_NONE || !$data || !isset($data['history'])) {
+            return new WP_Error('invalid_response', 'Invalid JSON response from backend', array('status' => 500));
         }
         
         return rest_ensure_response($data);
