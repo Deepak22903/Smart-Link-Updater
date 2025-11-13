@@ -1389,7 +1389,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             request_id, post_id,
             progress=80,
             message=f"Updating WordPress ({len(new_links)} new links)",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication (had {len(known_fps)} known fingerprints)"
         )
         
         # Update WordPress with the correct post ID and site key
@@ -1404,6 +1404,10 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
             mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
+            await manager.update_post_state(
+                request_id, post_id,
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for post_id={target_post_id}, date={today_iso}, site={target_site_key or 'default'}"
+            )
         
         # Determine status based on results
         if wp_result['links_added'] > 0:

@@ -234,10 +234,18 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
             elif not should_keep_section(section_text, section_date_str):
                 sections_to_remove.append((match.start(), match.end(), section_text))
     
+    # Log what we found
+    logging.info(f"[WP] Found {len(sections_to_remove)} sections to remove")
+    logging.info(f"[WP] Today's section exists: {today_section_exists}, existing links: {len(existing_links)}")
+    
     # Remove old sections and today's section (we'll recreate it with all links)
     # Sort by position (reverse order to maintain correct positions during removal)
     sections_to_remove.sort(key=lambda x: x[0], reverse=True)
     for start, end, section_text in sections_to_remove:
+        # Log each section being removed
+        date_match = re.search(date_pattern, section_text, re.DOTALL)
+        section_date = date_match.group(1) if date_match else "unknown date"
+        logging.info(f"[WP] Removing section with date: {section_date} at position {start}-{end}")
         cleaned_content = cleaned_content[:start] + cleaned_content[end:]
     
     # Merge new links with existing links from today (avoid duplicates)
