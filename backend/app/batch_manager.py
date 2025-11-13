@@ -107,6 +107,7 @@ class BatchUpdateRequest:
     def to_dict(self):
         return {
             "request_id": self.request_id,
+            "post_ids": self.post_ids,  # Include post_ids for MongoDB storage
             "initiator": self.initiator,
             "created_at": self.created_at,
             "started_at": self.started_at,
