@@ -1378,11 +1378,26 @@ class SmartLinkUpdater {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
                     },
                     success: function(response) {
+                        console.log('Batch history loaded:', response);
                         renderCronHistory(response.history);
                     },
-                    error: function(xhr) {
-                        console.error('Failed to load batch history:', xhr);
-                        contentDiv.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load batch history</p></div>');
+                    error: function(xhr, status, error) {
+                        console.error('Failed to load batch history:', {
+                            status: xhr.status,
+                            statusText: xhr.statusText,
+                            responseText: xhr.responseText,
+                            error: error
+                        });
+                        let errorMsg = 'Failed to load batch history';
+                        if (xhr.responseText) {
+                            try {
+                                const errorData = JSON.parse(xhr.responseText);
+                                errorMsg = errorData.message || errorData.detail || errorMsg;
+                            } catch (e) {
+                                errorMsg += ': ' + xhr.responseText.substring(0, 100);
+                            }
+                        }
+                        contentDiv.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>' + errorMsg + '</p></div>');
                     }
                 });
             }
@@ -2301,6 +2316,7 @@ class SmartLinkUpdater {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
                     },
                     success: function(response) {
+                        console.log('Batch status response:', response);
                         // Create entry format that renderDetailedLogs expects
                         const entry = {
                             request_id: response.request_id,
@@ -2310,9 +2326,25 @@ class SmartLinkUpdater {
                         };
                         renderDetailedLogs(entry, [{ site: 'this', data: response }]);
                     },
-                    error: function(xhr) {
-                        console.error('Failed to fetch batch status:', xhr);
-                        modalContent.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>Failed to load batch details</p><button class="button close-detailed-logs-btn">Close</button></div>');
+                    error: function(xhr, status, error) {
+                        console.error('Failed to fetch batch status:', {
+                            status: xhr.status,
+                            statusText: xhr.statusText,
+                            responseText: xhr.responseText,
+                            error: error
+                        });
+                        let errorMsg = 'Failed to load batch details';
+                        if (xhr.status === 404) {
+                            errorMsg = 'Batch request not found (may have been cleaned up from MongoDB)';
+                        } else if (xhr.responseText) {
+                            try {
+                                const errorData = JSON.parse(xhr.responseText);
+                                errorMsg = errorData.message || errorData.detail || errorMsg;
+                            } catch (e) {
+                                errorMsg = xhr.responseText;
+                            }
+                        }
+                        modalContent.html('<div style="text-align: center; padding: 40px; color: #e74c3c;"><span class="dashicons dashicons-warning" style="font-size: 48px;"></span><p>' + errorMsg + '</p><button class="button close-detailed-logs-btn">Close</button></div>');
                     }
                 });
             }
