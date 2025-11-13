@@ -192,10 +192,19 @@ class BatchUpdateManager:
         # Try MongoDB
         req_data = mongo_storage.get_batch_request(request_id)
         if req_data:
+            # Handle backward compatibility: reconstruct post_ids from posts if missing
+            post_ids = req_data.get("post_ids")
+            if not post_ids and "posts" in req_data:
+                # Old batch requests don't have post_ids, extract from posts dict
+                post_ids = [int(pid) for pid in req_data["posts"].keys()]
+            elif not post_ids:
+                # No post_ids and no posts, cannot reconstruct
+                return None
+            
             # Reconstruct and cache
             request = BatchUpdateRequest(
                 request_id=request_id,
-                post_ids=req_data["post_ids"],
+                post_ids=post_ids,
                 initiator=req_data.get("initiator", "unknown")
             )
             request.created_at = req_data["created_at"]
