@@ -12,6 +12,33 @@ WP_APPLICATION_PASSWORD = os.getenv("WP_APPLICATION_PASSWORD")
 WP_SITES_JSON = os.getenv("WP_SITES")  # JSON map of site_key -> {base_url, username, app_password}
 
 
+def get_link_target(url: str) -> str:
+    """
+    Determine whether a link should open in a new tab or same tab.
+    
+    Default: _blank (new tab) for external reward links
+    Override: _self (same tab) for specific patterns
+    
+    Customize this function based on your requirements.
+    Examples:
+    - telegram.org or t.me links -> _self (same tab)
+    - All others -> _blank (new tab)
+    """
+    url_lower = str(url).lower()
+    
+    # Add patterns here for links that should open in same tab
+    same_tab_patterns = [
+        # Example: 't.me/', 'telegram.org'
+    ]
+    
+    for pattern in same_tab_patterns:
+        if pattern in url_lower:
+            return '_self'
+    
+    # Default: open in new tab
+    return '_blank'
+
+
 def _load_wp_sites() -> Dict[str, Dict[str, Any]]:
     """Load WP sites mapping from env var `WP_SITES` (JSON).
 
@@ -276,18 +303,24 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     
     # Add existing links from today
     for idx, existing_link in enumerate(existing_links, start=1):
-        all_links_map[existing_link['url']] = {
-            'url': existing_link['url'],
+        url = existing_link['url']
+        all_links_map[url] = {
+            'url': url,
             'title': existing_link['title'],
+            'target': get_link_target(url),  # Determine target based on URL
             'order': idx
         }
     
     # Add new links (skip duplicates)
     for link in links:
-        if link.url not in all_links_map:
-            all_links_map[link.url] = {
-                'url': link.url,
+        url = str(link.url)
+        if url not in all_links_map:
+            # Get target from link object or determine from URL
+            target = getattr(link, 'target', None) or get_link_target(url)
+            all_links_map[url] = {
+                'url': url,
                 'title': link.title,
+                'target': target,
                 'order': len(all_links_map) + 1
             }
     
@@ -305,10 +338,14 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
         # Create button HTML for this pair
         buttons_in_pair = []
         for link in pair:
+            # Get target attribute (default to _blank for new tab)
+            target = link.get('target', '_blank')
+            rel_attr = ' rel="noopener noreferrer"' if target == '_blank' else ''
+            
             button_html = f'''<!-- wp:column {{"width":"50%"}} -->
 <div class="wp-block-column" style="flex-basis:50%">
     <div style="margin: 15px 0;">
-        <a href="{link['url']}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{link['order']:02d}. {link['title']}</a>
+        <a href="{link['url']}" target="{target}"{rel_attr} style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{link['order']:02d}. {link['title']}</a>
     </div>
 </div>
 <!-- /wp:column -->'''

@@ -9,6 +9,7 @@ class Link(BaseModel):
     published_date_iso: str  # YYYY-MM-DD
     summary: Optional[str] = None
     category: Optional[str] = None
+    target: Optional[str] = "_blank"  # "_blank" for new tab, "_self" for same tab
 
     class Config:
         json_encoders = {
