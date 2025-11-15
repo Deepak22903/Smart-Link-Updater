@@ -3202,11 +3202,8 @@ class SmartLinkUpdater {
                     $('.remove-url-btn').show();
                 }
                 
-                // Update extractor mapping if in per-url mode
-                const extractorMode = $('input[name="extractor-mode"]:checked').val();
-                if (extractorMode === 'per-url') {
-                    updateExtractorMapping();
-                }
+                // Always update extractor mapping (no more auto-detect mode)
+                updateExtractorMapping();
             }
             
             function removeSourceUrlField(e) {
