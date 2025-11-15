@@ -126,6 +126,14 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
         r.raise_for_status()
         post = r.json()
         content = post.get("content", {}).get("raw") or post.get("content", {}).get("rendered", "")
+    
+    # DEBUG: Save content to file for analysis
+    try:
+        with open(f"/tmp/wp_post_{post_id}_content.txt", "w") as f:
+            f.write(content)
+        logging.info(f"[WP DEBUG] Saved post {post_id} content to /tmp/wp_post_{post_id}_content.txt")
+    except Exception as e:
+        logging.warning(f"[WP DEBUG] Failed to save content: {e}")
 
     from datetime import datetime, timedelta
     import pytz
@@ -165,7 +173,8 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     
     # Find all link sections with dates using patterns for both old and new formats
     # Pattern 1: New WordPress block format with proper block comments
-    new_block_pattern = r'<!-- wp:group \{"className":"smartlink-updater-section"[^>]*?\} -->.*?<!-- /wp:group -->'
+    # Note: The JSON attributes may contain nested objects (like metadata), so we match until } -->
+    new_block_pattern = r'<!-- wp:group \{.*?"className"\s*:\s*"smartlink-updater-section".*?\} -->.*?<!-- /wp:group -->'
     # Pattern 2: Old div-based format (for backward compatibility)
     old_section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
     # Date pattern works for both formats
@@ -189,8 +198,17 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     sections_to_remove = []
     existing_links = []
     
+    logging.info(f"[WP DEBUG] Searching for sections with patterns:")
+    logging.info(f"[WP DEBUG]   - New block pattern: {new_block_pattern[:100]}...")
+    logging.info(f"[WP DEBUG]   - Old section pattern: {old_section_pattern[:100]}...")
+    logging.info(f"[WP DEBUG]   - Content length: {len(content)} chars")
+    logging.info(f"[WP DEBUG]   - Looking for today's date: {formatted_date}")
+    
     # Check new block format first
-    for match in re.finditer(new_block_pattern, content, re.DOTALL):
+    new_block_matches = list(re.finditer(new_block_pattern, content, re.DOTALL))
+    logging.info(f"[WP DEBUG] Found {len(new_block_matches)} matches with new_block_pattern")
+    
+    for match in new_block_matches:
         section_text = match.group(0)
         date_match = re.search(date_pattern, section_text, re.DOTALL)
         
@@ -212,7 +230,10 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
                 sections_to_remove.append((match.start(), match.end(), section_text))
     
     # Also check old format for backward compatibility
-    for match in re.finditer(old_section_pattern, content, re.DOTALL):
+    old_format_matches = list(re.finditer(old_section_pattern, content, re.DOTALL))
+    logging.info(f"[WP DEBUG] Found {len(old_format_matches)} matches with old_section_pattern")
+    
+    for match in old_format_matches:
         section_text = match.group(0)
         date_match = re.search(date_pattern, section_text, re.DOTALL)
         
@@ -323,7 +344,8 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # 3. If not found, insert after first H2 block
     # 4. This ensures we don't break other plugin content
     
-    smartlink_block_pattern = r'<!-- wp:group \{"className":"smartlink-updater-section"[^>]*?\} -->.*?<!-- /wp:group -->'
+    # Use the same pattern as above to find existing SmartLink blocks
+    smartlink_block_pattern = r'<!-- wp:group \{.*?"className"\s*:\s*"smartlink-updater-section".*?\} -->.*?<!-- /wp:group -->'
     existing_block_match = re.search(smartlink_block_pattern, cleaned_content, re.DOTALL)
     
     if existing_block_match:

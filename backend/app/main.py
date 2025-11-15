@@ -807,8 +807,8 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
             
             print(f"[DEBUG] Site: {target_site_key}, Post ID: {target_post_id}, Total extracted: {len(all_links)}, After dedup: {len(new_links)}")
             
-            # Step 4: Update WordPress if wp_site is configured
-            if wp_site and new_links:
+            # Step 4: Update WordPress (wp_site can be None to use environment defaults, or explicit config)
+            if new_links:
                 try:
                     # Determine which site to update and resolve correct post ID
                     if isinstance(wp_site, str):
@@ -830,6 +830,9 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                                 wp_result = await update_post_links_section(site_post_id, new_links, first_site_key)
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
+                    elif wp_site is None:
+                        # No wp_site specified - use environment variables (default site)
+                        wp_result = await update_post_links_section(target_post_id, new_links, None)
                     else:
                         wp_result = {"error": "Invalid wp_site configuration"}
                     
@@ -861,14 +864,15 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                         "errors": errors
                     })
             else:
-                # No wp_site configured or no new links - just return the links
+                # No new links after deduplication
                 return JSONResponse({
                     "success": True,
                     "post_id": post_id,
-                    "message": "No WordPress site configured" if not wp_site else "No new links after deduplication",
+                    "message": "No new links after deduplication - all links already exist",
                     "links_found": len(all_links),
-                    "new_links": len(new_links),
-                    "links": [link.dict() for link in new_links],
+                    "new_links": 0,
+                    "links_added": 0,
+                    "sections_pruned": 0,
                     "errors": errors
                 })
 
@@ -1188,9 +1192,7 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
                 print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
                 extracted_links = extractor.extract(html, today_iso)
                 print(f"Extracted {len(extracted_links)} links: {extracted_links}")
-                links = [link.dict() for link in extracted_links]
-                for link in links:
-                    link['url'] = str(link['url'])
+                links = [{"title": link.title, "url": str(link.url), "published_date_iso": link.published_date_iso} for link in extracted_links]
                 results.append({"url": url, "links": links})
             except Exception as e:
                 errors.append({"url": url, "error": str(e)})
