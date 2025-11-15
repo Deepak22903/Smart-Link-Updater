@@ -173,9 +173,9 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     
     # Find all link sections with dates using patterns for both old and new formats
     # Pattern 1: New WordPress block format - NOTE: WordPress strips block comments from raw content
-    # So we match the actual div with smartlink-updater-section class
-    # Structure: <div class="wp-block-group smartlink-updater-section ...">...<div class="wp-block-group__inner-container">...</div></div>
-    new_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^"]*"[^>]*>.*?</div>\s*</div>'
+    # Match from outer div with smartlink-updater-section to the "Last updated" timestamp paragraph and closing tags
+    # This is more reliable than trying to match nested divs
+    new_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
     # Pattern 2: Old div-based format (for backward compatibility)
     old_section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
     # Date pattern works for both formats
@@ -345,8 +345,8 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # 3. If not found, insert after first H2 block
     # 4. This ensures we don't break other plugin content
     
-    # Use the same pattern as above - match the div structure (WordPress strips block comments)
-    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^"]*"[^>]*>.*?</div>\s*</div>'
+    # Use the same pattern - match to the "Last updated" timestamp as anchor
+    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
     existing_block_match = re.search(smartlink_block_pattern, cleaned_content, re.DOTALL)
     
     if existing_block_match:
