@@ -120,8 +120,9 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     base_url = _get_wp_base_url(wp_site)
     auth_headers = _auth_header(wp_site)
 
-    # Fetch existing content
-    async with httpx.AsyncClient() as client:
+    # Fetch existing content with increased timeout for WordPress
+    timeout = httpx.Timeout(30.0, connect=10.0)  # 30s read, 10s connect
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.get(f"{base_url}/wp-json/wp/v2/posts/{post_id}", headers=auth_headers)
         r.raise_for_status()
         post = r.json()
@@ -372,11 +373,12 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # Update the post
     payload = {"content": new_content}
 
-    # Update the post
+    # Update the post with increased timeout for WordPress
     import json
+    timeout = httpx.Timeout(60.0, connect=10.0)  # 60s read for POST (can be slow), 10s connect
     logging.info(f"[WP] Updating post {post_id} at {base_url}/wp-json/wp/v2/posts/{post_id}")
     logging.info(f"[WP] Payload: {json.dumps(payload)[:500]} ...")
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(
             f"{base_url}/wp-json/wp/v2/posts/{post_id}",
             headers={"Content-Type": "application/json", **auth_headers},

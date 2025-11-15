@@ -1234,8 +1234,9 @@ async def process_batch_updates(request_id: str, target: str = "this"):
     
     batch_request.start()
     
-    # Process posts with concurrency limit (10 at a time to avoid overwhelming Cloud Run)
-    semaphore = asyncio.Semaphore(10)
+    # Process posts with concurrency limit (3 at a time to avoid overwhelming WordPress)
+    # WordPress can be slow with large content updates, so we keep concurrency low
+    semaphore = asyncio.Semaphore(3)
     
     async def process_single_post(post_id: int):
         async with semaphore:
