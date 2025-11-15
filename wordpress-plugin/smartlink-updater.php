@@ -1038,7 +1038,7 @@ class SmartLinkUpdater {
                 $('#add-new-config-btn').on('click', openAddConfigModal);
                 $('#save-config-btn').on('click', savePostConfig);
                 $('#add-url-btn').on('click', addSourceUrlField);
-                $('input[name="extractor-mode"]').on('change', toggleExtractorMode);
+                // Removed: extractor-mode toggle - now always manual configuration
                 
                 // Delegate checkbox change event
                 $(document).on('change', '.post-checkbox', updateSelectedCount);
@@ -2133,7 +2133,7 @@ class SmartLinkUpdater {
                     row.append($('<td>').text(post.title || ('Post ' + post.post_id)));
                     
                     // Extractor - show from extractor_map or fallback to old field
-                    let extractorDisplay = 'Auto-detect';
+                    let extractorDisplay = 'Not configured';
                     if (post.extractor_map && Object.keys(post.extractor_map).length > 0) {
                         const extractors = Object.values(post.extractor_map);
                         const uniqueExtractors = [...new Set(extractors)];
@@ -2713,29 +2713,22 @@ class SmartLinkUpdater {
                         
                         // Set extractor mode
                         const extractorMap = postConfig.extractor_map || {};
-                        const hasExtractorMap = Object.keys(extractorMap).length > 0;
                         
-                        if (hasExtractorMap) {
-                            $('input[name="extractor-mode"][value="per-url"]').prop('checked', true);
-                            toggleExtractorMode();
-                            updateExtractorMapping();
-                            
-                            // Populate extractor map after DOM updates
-                            setTimeout(function() {
-                                Object.keys(extractorMap).forEach(function(url) {
-                                    const selector = $(`select.extractor-url-mapping[data-url="${url}"]`);
-                                    if (selector.length > 0) {
-                                        selector.val(extractorMap[url]);
-                                        console.log('Set extractor for', url, 'to', extractorMap[url]);
-                                    } else {
-                                        console.warn('Could not find selector for URL:', url);
-                                    }
-                                });
-                            }, 100);
-                        } else {
-                            $('input[name="extractor-mode"][value="auto"]').prop('checked', true);
-                            toggleExtractorMode();
-                        }
+                        // Always show per-URL extractor mapping (no auto-detect mode)
+                        updateExtractorMapping();
+                        
+                        // Populate extractor map after DOM updates
+                        setTimeout(function() {
+                            Object.keys(extractorMap).forEach(function(url) {
+                                const selector = $(`select.extractor-url-mapping[data-url="${url}"]`);
+                                if (selector.length > 0) {
+                                    selector.val(extractorMap[url]);
+                                    console.log('Set extractor for', url, 'to', extractorMap[url]);
+                                } else {
+                                    console.warn('Could not find selector for URL:', url);
+                                }
+                            });
+                        }, 100);
                         
                         // Load site post IDs
                         loadSitePostIdFields(postConfig.site_post_ids);
@@ -2800,27 +2793,31 @@ class SmartLinkUpdater {
                     configData.site_post_ids = sitePostIds;
                 }
                 
-                // Handle extractor configuration - only save extractor_map if per-url mode
-                const extractorMode = $('input[name="extractor-mode"]:checked').val();
+                // Handle extractor configuration - always require manual configuration per URL
+                const extractorMap = {};
+                let hasAllExtractors = true;
                 
-                console.log('Extractor mode:', extractorMode);
-                
-                if (extractorMode === 'per-url') {
-                    const extractorMap = {};
-                    $('.extractor-url-mapping').each(function() {
-                        const url = $(this).data('url');
-                        const extractor = $(this).val();
-                        console.log('Processing URL:', url, 'Extractor:', extractor);
-                        if (extractor) {  // Only add if not empty (not auto-detect)
-                            extractorMap[url] = extractor;
-                        }
-                    });
-                    console.log('Final extractor_map:', extractorMap);
-                    if (Object.keys(extractorMap).length > 0) {
-                        configData.extractor_map = extractorMap;
+                $('.extractor-url-mapping').each(function() {
+                    const url = $(this).data('url');
+                    const extractor = $(this).val();
+                    console.log('Processing URL:', url, 'Extractor:', extractor);
+                    
+                    if (!extractor) {
+                        hasAllExtractors = false;
+                    } else {
+                        extractorMap[url] = extractor;
                     }
+                });
+                
+                // Validate that all URLs have extractors
+                if (!hasAllExtractors) {
+                    showToast('Please select an extractor for all source URLs', 'error');
+                    $btn.prop('disabled', false).html('<span class="dashicons dashicons-yes"></span> <span id="save-config-text">Save Configuration</span>');
+                    return;
                 }
-                // If auto mode, don't send any extractor config - backend will auto-detect
+                
+                console.log('Final extractor_map:', extractorMap);
+                configData.extractor_map = extractorMap;
                 
                 console.log('Config data to send:', configData);                
                 // Disable button and show loading
@@ -3194,16 +3191,7 @@ class SmartLinkUpdater {
                 }
             }
             
-            function toggleExtractorMode() {
-                const mode = $('input[name="extractor-mode"]:checked').val();
-                
-                $('#per-url-extractor-config').hide();
-                
-                if (mode === 'per-url') {
-                    $('#per-url-extractor-config').show();
-                    updateExtractorMapping();
-                }
-            }
+            // Removed toggleExtractorMode - now always manual configuration
             
             function updateExtractorMapping() {
                 const container = $('#extractor-mapping-container');
@@ -3219,12 +3207,12 @@ class SmartLinkUpdater {
                                 URL ${index + 1}: ${url.length > 50 ? url.substring(0, 50) + '...' : url}
                             </label>
                             <select class="extractor-url-mapping smartlink-select" data-url="${url}" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
-                                <option value="">Auto-detect</option>
+                                <option value="">-- Select Extractor --</option>
                                 <option value="simplegameguide">Simple Game Guide</option>
                                 <option value="mosttechs">Most Techs</option>
                                 <option value="crazyashwin">Crazy Ashwin</option>
                                 <option value="techyhigher">Techy Higher</option>
-                                <option value="default">Default Extractor</option>
+                                <option value="default">Default Extractor (Gemini AI)</option>
                             </select>
                         </div>
                     `);
@@ -3842,28 +3830,15 @@ class SmartLinkUpdater {
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
                                     <span class="dashicons dashicons-admin-tools" style="font-size: 16px; vertical-align: middle;"></span>
-                                    Extractor Configuration (Optional)
+                                    Extractor Configuration (Required)
                                 </label>
                                 
                                 <div style="margin-bottom: 12px;">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="radio" name="extractor-mode" value="auto" checked>
-                                        <strong>Auto-detect for all URLs</strong> <span style="color: #666; font-size: 13px;">(Recommended - Smart detection based on URL)</span>
-                                    </label>
-                                </div>
-                                
-                                <div style="margin-bottom: 12px;">
-                                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="radio" name="extractor-mode" value="per-url">
-                                        <strong>Manually specify extractor per URL</strong>
-                                    </label>
-                                    <div id="per-url-extractor-config" style="display: none; margin-left: 28px; margin-top: 8px;">
-                                        <p style="color: #666; font-size: 13px; margin-bottom: 12px;">
-                                            <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
-                                            Only specify extractors for URLs where auto-detection doesn't work. Leave blank to auto-detect.
-                                        </p>
-                                        <div id="extractor-mapping-container"></div>
-                                    </div>
+                                    <p style="color: #666; font-size: 13px; margin-bottom: 12px;">
+                                        <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                        Specify the extractor for each source URL. This determines how links are extracted from the page.
+                                    </p>
+                                    <div id="extractor-mapping-container"></div>
                                 </div>
                             </div>
                             

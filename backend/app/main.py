@@ -1,4 +1,5 @@
 import logging
+
 logging.basicConfig(level=logging.INFO)
 
 from fastapi import FastAPI, Body, HTTPException, BackgroundTasks
@@ -41,7 +42,7 @@ app.add_middleware(
         "https://www.minecraftcirclegenerater.com",
         "http://www.minecraftcirclegenerater.com",
         "http://localhost:3000",  # For local development
-        "*"  # Allow all origins (you can restrict this later)
+        "*",  # Allow all origins (you can restrict this later)
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -54,17 +55,18 @@ task_status: Dict[str, dict] = {}
 
 # ==================== Helper Functions ====================
 
+
 def resolve_post_id_for_site(config: Dict, site_key: str) -> int:
     """
     Resolve the correct post ID for a specific WordPress site.
-    
+
     Args:
         config: Post configuration dict
         site_key: Site identifier (e.g., "minecraft", "this", "site_b")
-    
+
     Returns:
         int: The post ID for that specific site
-    
+
     Examples:
         config = {
             "post_id": 105,  # Legacy field (for "this" site)
@@ -76,32 +78,43 @@ def resolve_post_id_for_site(config: Dict, site_key: str) -> int:
                 "blog": 234
             }
         }
-        
+
         resolve_post_id_for_site(config, "casino") -> 89
         resolve_post_id_for_site(config, "this") -> 105
     """
     # Check if site_post_ids mapping exists
     site_post_ids = config.get("site_post_ids", {})
-    
+
     if site_post_ids and site_key in site_post_ids:
         return site_post_ids[site_key]
-    
+
     # Fallback to legacy post_id field
     return config.get("post_id")
 
 
 # ==================== Pydantic Models ====================
 
+
 class PostConfig(BaseModel):
     post_id: int
     source_urls: List[HttpUrl]
     timezone: Optional[str] = os.getenv("TIMEZONE", "Asia/Kolkata")
     extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
-    extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
-    wp_site: Optional[Dict[str, str]] = None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
-    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
-    content_slug: Optional[str] = None  # NEW: Universal identifier across sites (e.g., "coin-master-free-spins")
-    site_post_ids: Optional[Dict[str, int]] = None  # NEW: Maps site_key -> post_id for multi-site support
+    extractor_map: Optional[Dict[str, str]] = (
+        None  # Per-source extractor mapping. URLs not mapped default to Gemini.
+    )
+    wp_site: Optional[Dict[str, str]] = (
+        None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
+    )
+    insertion_point: Optional[Dict[str, str]] = (
+        None  # Deprecated: links auto-insert after first <h2>
+    )
+    content_slug: Optional[str] = (
+        None  # NEW: Universal identifier across sites (e.g., "coin-master-free-spins")
+    )
+    site_post_ids: Optional[Dict[str, int]] = (
+        None  # NEW: Maps site_key -> post_id for multi-site support
+    )
 
 
 class UpdateJob(BaseModel):
@@ -115,6 +128,7 @@ class UpdateJob(BaseModel):
 
 class BatchUpdateRequest(BaseModel):
     """Batch update request from WordPress dashboard"""
+
     post_ids: List[int]
     sync: Optional[bool] = False
     initiator: Optional[str] = "wp-plugin"
@@ -123,14 +137,21 @@ class BatchUpdateRequest(BaseModel):
 
 class PostConfigUpdate(BaseModel):
     """Model for partial updates to post configuration"""
+
     source_urls: Optional[List[HttpUrl]] = None
     timezone: Optional[str] = None
     extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
-    extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping. URLs not mapped default to Gemini.
+    extractor_map: Optional[Dict[str, str]] = (
+        None  # Per-source extractor mapping. URLs not mapped default to Gemini.
+    )
     wp_site: Optional[Dict[str, str]] = None
-    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: links auto-insert after first <h2>
+    insertion_point: Optional[Dict[str, str]] = (
+        None  # Deprecated: links auto-insert after first <h2>
+    )
     content_slug: Optional[str] = None  # Universal identifier for content across sites
-    site_post_ids: Optional[Dict[str, int]] = None  # Maps site_key -> post_id for each WordPress site
+    site_post_ids: Optional[Dict[str, int]] = (
+        None  # Maps site_key -> post_id for each WordPress site
+    )
 
 
 @app.get("/health")
@@ -142,7 +163,7 @@ async def health():
 async def health_extractors():
     """
     Get health status of all monitored source URLs.
-    
+
     Returns monitoring data including:
     - Status (healthy, warning, failing)
     - Recent extraction statistics
@@ -158,10 +179,10 @@ async def health_extractor(source_url: str):
     """Get health status for a specific source URL"""
     monitor = get_monitor()
     health = monitor.get_source_health(source_url)
-    
+
     if health["status"] == "unknown":
         raise HTTPException(status_code=404, detail="Source URL not monitored")
-    
+
     return health
 
 
@@ -170,10 +191,7 @@ async def get_alerts(hours: int = 24):
     """Get recent alerts from the monitoring system"""
     monitor = get_monitor()
     alerts = monitor.get_recent_alerts(hours=hours)
-    return {
-        "alerts": [alert.model_dump() for alert in alerts],
-        "count": len(alerts)
-    }
+    return {"alerts": [alert.model_dump() for alert in alerts], "count": len(alerts)}
 
 
 @app.get("/alerts/unnotified")
@@ -181,17 +199,14 @@ async def get_unnotified_alerts():
     """Get alerts that haven't been sent yet"""
     monitor = get_monitor()
     alerts = monitor.get_unnotified_alerts()
-    return {
-        "alerts": [alert.model_dump() for alert in alerts],
-        "count": len(alerts)
-    }
+    return {"alerts": [alert.model_dump() for alert in alerts], "count": len(alerts)}
 
 
 @app.post("/alerts/send")
 async def send_pending_alerts():
     """
     Process and send all unnotified alerts.
-    
+
     Useful for:
     - Manual testing of notification system
     - Cron job to periodically check and send alerts
@@ -207,8 +222,6 @@ async def list_available_extractors():
     return {"extractors": list_extractors()}
 
 
-
-
 @app.post("/config/post")
 async def configure_post(config: PostConfig = Body(...)):
     """Configure target URLs for a WordPress post, optionally with custom WordPress site credentials."""
@@ -218,29 +231,29 @@ async def configure_post(config: PostConfig = Body(...)):
         "timezone": config.timezone,
         "extractor": config.extractor,
         "wp_site": config.wp_site,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.utcnow().isoformat(),
     }
-    
+
     # Add optional multi-site fields
     if config.content_slug:
         post_config["content_slug"] = config.content_slug
     if config.site_post_ids:
         post_config["site_post_ids"] = config.site_post_ids
-    
+
     # Add extractor_map if provided
     if config.extractor_map:
         post_config["extractor_map"] = config.extractor_map
-    
+
     mongo_storage.set_post_config(post_config)
-    
+
     response = {
         "success": True,
         "post_id": config.post_id,
         "source_urls": [str(url) for url in config.source_urls],
         "timezone": config.timezone,
-        "extractor": config.extractor
+        "extractor": config.extractor,
     }
-    
+
     # Include multi-site fields in response
     if config.content_slug:
         response["content_slug"] = config.content_slug
@@ -248,11 +261,11 @@ async def configure_post(config: PostConfig = Body(...)):
         response["site_post_ids"] = config.site_post_ids
     if config.extractor_map:
         response["extractor_map"] = config.extractor_map
-    
+
     if config.wp_site:
         response["wp_site"] = {
             "base_url": config.wp_site.get("base_url"),
-            "username": config.wp_site.get("username")
+            "username": config.wp_site.get("username"),
             # Don't return password in response
         }
     return response
@@ -286,10 +299,10 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
         raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
 
     update_data = config_update.model_dump(exclude_unset=True)
-    
+
     # Convert HttpUrl objects to strings if present
-    if 'source_urls' in update_data and update_data['source_urls'] is not None:
-        update_data['source_urls'] = [str(url) for url in update_data['source_urls']]
+    if "source_urls" in update_data and update_data["source_urls"] is not None:
+        update_data["source_urls"] = [str(url) for url in update_data["source_urls"]]
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
@@ -300,15 +313,17 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     # Create the full updated configuration object to be saved
     # This ensures we don't accidentally remove fields
     final_config = {**existing_config, **update_data}
-    
+
     # Remove _id field as it's immutable in MongoDB and managed by the database
-    final_config.pop('_id', None)
+    final_config.pop("_id", None)
 
     if mongo_storage.set_post_config(final_config):
         # Return the complete, updated configuration
         return mongo_storage.get_post_config(post_id)
     else:
-        raise HTTPException(status_code=500, detail="Failed to update post configuration")
+        raise HTTPException(
+            status_code=500, detail="Failed to update post configuration"
+        )
 
 
 @app.delete("/config/post/{post_id}")
@@ -317,15 +332,17 @@ async def delete_post_config(post_id: int):
     existing_config = mongo_storage.get_post_config(post_id)
     if not existing_config:
         raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
-    
+
     if mongo_storage.delete_post_config(post_id):
         return {
             "success": True,
             "message": f"Post {post_id} configuration deleted successfully",
-            "post_id": post_id
+            "post_id": post_id,
         }
     else:
-        raise HTTPException(status_code=500, detail="Failed to delete post configuration")
+        raise HTTPException(
+            status_code=500, detail="Failed to delete post configuration"
+        )
 
 
 @app.get("/config/post/{post_id}")
@@ -341,19 +358,19 @@ async def get_post_config_endpoint(post_id: int):
 # BATCH UPDATE ENDPOINTS (WordPress Dashboard Real-Time Updates)
 # ============================================================================
 
+
 @app.post("/api/batch-update")
 async def start_batch_update(
-    request: BatchUpdateRequest,
-    background_tasks: BackgroundTasks
+    request: BatchUpdateRequest, background_tasks: BackgroundTasks
 ):
     """
     Start batch update for multiple posts with progress tracking.
-    
+
     Returns request_id for polling status endpoint.
     """
     manager = get_batch_manager()
     batch_request = manager.create_request(request.post_ids, request.initiator)
-    
+
     if request.sync:
         # Synchronous mode: wait for completion
         await process_batch_updates(batch_request.request_id, request.target)
@@ -362,16 +379,18 @@ async def start_batch_update(
             "started_at": batch_request.started_at,
             "total_posts": len(request.post_ids),
             "mode": "sync",
-            "status": batch_request.to_dict()
+            "status": batch_request.to_dict(),
         }
     else:
         # Asynchronous mode: start background task
-        background_tasks.add_task(process_batch_updates, batch_request.request_id, request.target)
+        background_tasks.add_task(
+            process_batch_updates, batch_request.request_id, request.target
+        )
         return {
             "request_id": batch_request.request_id,
             "created_at": batch_request.created_at,
             "total_posts": len(request.post_ids),
-            "mode": "background"
+            "mode": "background",
         }
 
 
@@ -399,62 +418,65 @@ async def get_post_logs(request_id: str, post_id: int, tail: int = 50):
     """Get logs for specific post in batch update."""
     manager = get_batch_manager()
     state = manager.get_post_state(request_id, post_id)
-    
+
     if not state:
         raise HTTPException(status_code=404, detail="Post state not found")
-    
-    return {
-        "post_id": post_id,
-        "logs": state.logs[-tail:] if tail > 0 else state.logs
-    }
+
+    return {"post_id": post_id, "logs": state.logs[-tail:] if tail > 0 else state.logs}
 
 
 @app.get("/api/batch-history")
 async def get_batch_history(limit: int = 50, skip: int = 0):
     """
     Get paginated batch update history.
-    
+
     Returns list of batch requests with summary information, sorted by newest first.
     """
     from . import mongo_storage
-    
+
     # Get batch requests from MongoDB
     all_requests = mongo_storage.get_recent_batch_requests(limit=limit + skip)
-    
+
     # Apply pagination
-    paginated = all_requests[skip:skip + limit]
-    
+    paginated = all_requests[skip : skip + limit]
+
     # Format response with summary info
     history = []
     for req in paginated:
         # Calculate summary statistics
         posts = req.get("posts", {})
         total = len(posts)
-        completed = sum(1 for p in posts.values() if p.get("status") in ["success", "no_changes", "failed"])
+        completed = sum(
+            1
+            for p in posts.values()
+            if p.get("status") in ["success", "no_changes", "failed"]
+        )
         successful = sum(1 for p in posts.values() if p.get("status") == "success")
         failed = sum(1 for p in posts.values() if p.get("status") == "failed")
         no_changes = sum(1 for p in posts.values() if p.get("status") == "no_changes")
-        
-        history.append({
-            "request_id": req.get("request_id"),
-            "created_at": req.get("created_at"),
-            "started_at": req.get("started_at"),
-            "completed_at": req.get("completed_at"),
-            "overall_status": req.get("overall_status"),
-            "initiator": req.get("initiator", "unknown"),
-            "total_posts": total,
-            "completed_posts": completed,
-            "successful_posts": successful,
-            "failed_posts": failed,
-            "no_changes_posts": no_changes,
-            "post_ids": req.get("post_ids", [])
-        })
-    
+
+        history.append(
+            {
+                "request_id": req.get("request_id"),
+                "created_at": req.get("created_at"),
+                "started_at": req.get("started_at"),
+                "completed_at": req.get("completed_at"),
+                "overall_status": req.get("overall_status"),
+                "initiator": req.get("initiator", "unknown"),
+                "total_posts": total,
+                "completed_posts": completed,
+                "successful_posts": successful,
+                "failed_posts": failed,
+                "no_changes_posts": no_changes,
+                "post_ids": req.get("post_ids", []),
+            }
+        )
+
     return {
         "history": history,
         "total": len(all_requests),
         "limit": limit,
-        "skip": skip
+        "skip": skip,
     }
 
 
@@ -474,44 +496,35 @@ class ManualLinkRequest(BaseModel):
 async def add_manual_links(request: ManualLinkRequest):
     """
     Add links manually to a post.
-    
+
     - Performs deduplication against existing links
     - Updates WordPress post with new links
     - Stores fingerprints for future deduplication
     """
     from .models import Link
-    
+
     # Get post configuration
     config = mongo_storage.get_post_config(request.post_id)
     if not config:
         raise HTTPException(
-            status_code=404,
-            detail=f"Post {request.post_id} not configured"
+            status_code=404, detail=f"Post {request.post_id} not configured"
         )
-    
+
     wp_site = config.get("wp_site")
-    
+
     # Convert manual links to Link objects
     manual_links = [
-        Link(
-            title=link.title,
-            url=str(link.url),
-            published_date_iso=request.date
-        )
+        Link(title=link.title, url=str(link.url), published_date_iso=request.date)
         for link in request.links
     ]
-    
+
     if not manual_links:
-        return {
-            "success": False,
-            "message": "No links provided",
-            "links_added": 0
-        }
-    
+        return {"success": False, "message": "No links provided", "links_added": 0}
+
     # Determine target site and post ID
     target_site_key = None
     target_post_id = request.post_id
-    
+
     # Use the target from the request to determine which site to update
     if request.target and request.target != "this":
         # User selected a specific site
@@ -522,69 +535,75 @@ async def add_manual_links(request: ManualLinkRequest):
         else:
             # If no site-specific post ID, use the default post_id
             target_post_id = request.post_id
-    
+
     # Deduplicate against known links
-    known_fps = mongo_storage.get_known_fingerprints(target_post_id, request.date, target_site_key)
+    known_fps = mongo_storage.get_known_fingerprints(
+        target_post_id, request.date, target_site_key
+    )
     new_links = dedupe_by_fingerprint(manual_links, known_fps)
-    
+
     if not new_links:
         return {
             "success": True,
             "message": "All links were duplicates",
             "links_provided": len(manual_links),
             "links_added": 0,
-            "duplicates": len(manual_links)
+            "duplicates": len(manual_links),
         }
-    
+
     # Update WordPress
     try:
         if target_site_key:
             # Update specific site
-            wp_result = await update_post_links_section(target_post_id, new_links, target_site_key)
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, target_site_key
+            )
         else:
             # Update "this" site (default)
             wp_result = await update_post_links_section(target_post_id, new_links)
-        
+
         # Store fingerprints for deduplication
         new_fps = {fingerprint(link) for link in new_links}
-        mongo_storage.save_new_links(target_post_id, request.date, new_fps, target_site_key)
-        
+        mongo_storage.save_new_links(
+            target_post_id, request.date, new_fps, target_site_key
+        )
+
         return {
             "success": True,
             "message": f"Successfully added {len(new_links)} manual links",
             "links_provided": len(manual_links),
             "links_added": wp_result.get("links_added", len(new_links)),
             "duplicates": len(manual_links) - len(new_links),
-            "sections_pruned": wp_result.get("sections_pruned", 0)
+            "sections_pruned": wp_result.get("sections_pruned", 0),
         }
-        
+
     except Exception as e:
         logging.error(f"Error adding manual links: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to add links: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to add links: {str(e)}")
 
 
 @app.get("/api/extractors/list")
 async def list_available_extractors_detailed():
     """Get detailed list of registered extractors with priorities."""
     extractor_names = list_extractors()
-    
+
     extractors_info = []
     for name in extractor_names:
         try:
             extractor = get_extractor(name)
-            extractors_info.append({
-                "name": name,
-                "priority": getattr(extractor.__class__, 'priority', 0),
-                "can_handle": ["*"] if name == "default" else [name],
-                "description": extractor.__class__.__doc__ or f"Extractor for {name}"
-            })
+            extractors_info.append(
+                {
+                    "name": name,
+                    "priority": getattr(extractor.__class__, "priority", 0),
+                    "can_handle": ["*"] if name == "default" else [name],
+                    "description": extractor.__class__.__doc__
+                    or f"Extractor for {name}",
+                }
+            )
         except Exception as e:
             # Log error but continue
             print(f"Error loading extractor {name}: {e}")
-    
+
     return {"extractors": extractors_info}
 
 
@@ -593,7 +612,7 @@ async def list_posts_detailed():
     """Get detailed list of configured posts with health status."""
     posts = mongo_storage.list_configured_posts()
     monitor = get_monitor()
-    
+
     detailed_posts = []
     for post in posts:
         # Get health status for first source URL
@@ -601,18 +620,20 @@ async def list_posts_detailed():
         if post.get("source_urls"):
             source_url = post["source_urls"][0]
             health = monitor.get_source_health(source_url)
-        
+
         # Normalize timestamp fields
         last_updated = post.get("last_updated") or post.get("updated_at")
-        
-        detailed_posts.append({
-            **post,
-            "health_status": health.get("status") if health else "unknown",
-            "last_check": health.get("last_check") if health else None,
-            "last_updated": last_updated,
-            "extractor": post.get("extractor") or "default"
-        })
-    
+
+        detailed_posts.append(
+            {
+                **post,
+                "health_status": health.get("status") if health else "unknown",
+                "last_check": health.get("last_check") if health else None,
+                "last_updated": last_updated,
+                "extractor": post.get("extractor") or "default",
+            }
+        )
+
     return {"posts": detailed_posts}
 
 
@@ -620,7 +641,7 @@ async def list_posts_detailed():
 async def list_wordpress_sites():
     """Get list of configured WordPress sites (without credentials)."""
     sites = get_configured_wp_sites()
-    
+
     # Return sites with only public info (no passwords)
     public_sites = {}
     for site_key, site_conf in sites.items():
@@ -630,7 +651,7 @@ async def list_wordpress_sites():
             "username": site_conf.get("username", ""),
             # Do not expose app_password
         }
-    
+
     return {"sites": public_sites}
 
 
@@ -638,29 +659,27 @@ async def list_wordpress_sites():
 async def update_post_config_api(post_id: int, config: PostConfig):
     """Update configuration for a post (posts.json editor)."""
     # Validate extractor exists if specified
-    if hasattr(config, 'extractor') and config.extractor:
+    if hasattr(config, "extractor") and config.extractor:
         try:
             get_extractor(config.extractor)
         except:
-            raise HTTPException(status_code=400, detail=f"Extractor '{config.extractor}' not found")
-    
+            raise HTTPException(
+                status_code=400, detail=f"Extractor '{config.extractor}' not found"
+            )
+
     # Prepare post configuration dictionary
     post_config = {
         "post_id": post_id,
         "source_urls": [str(url) for url in config.source_urls],
         "timezone": config.timezone,
-        "extractor": getattr(config, 'extractor', None),
-        "updated_at": datetime.utcnow().isoformat()
+        "extractor": getattr(config, "extractor", None),
+        "updated_at": datetime.utcnow().isoformat(),
     }
-    
+
     # Save config
     mongo_storage.set_post_config(post_config)
-    
-    return {
-        "success": True,
-        "post_id": post_id,
-        "message": "Configuration updated"
-    }
+
+    return {"success": True, "post_id": post_id, "message": "Configuration updated"}
 
 
 @app.post("/trigger")
@@ -668,20 +687,20 @@ async def trigger_update(job: UpdateJob = Body(...)):
     """Trigger link update for a post (with optional source URLs override)."""
     # Use provided URLs or fetch from config
     source_urls = [str(url) for url in job.source_urls] if job.source_urls else None
-    
+
     if not source_urls:
         # Try to get from stored config
         config = mongo_storage.get_post_config(job.post_id)
         if not config:
             raise HTTPException(
                 status_code=400,
-                detail=f"Post {job.post_id} not configured. Use /config/post to set source URLs first."
+                detail=f"Post {job.post_id} not configured. Use /config/post to set source URLs first.",
             )
         source_urls = config["source_urls"]
         timezone = config.get("timezone", job.timezone)
     else:
         timezone = job.timezone
-    
+
     task = celery_app.send_task(
         "tasks.update_post_task",
         kwargs={
@@ -691,11 +710,18 @@ async def trigger_update(job: UpdateJob = Body(...)):
             "today_iso": job.today_iso,
         },
     )
-    return JSONResponse({"enqueued": True, "task_id": task.id, "source_urls": source_urls})
+    return JSONResponse(
+        {"enqueued": True, "task_id": task.id, "source_urls": source_urls}
+    )
 
 
 @app.post("/update-post/{post_id}")
-async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync: bool = False, target: Optional[str] = "this"):
+async def update_post_now(
+    post_id: int,
+    background_tasks: BackgroundTasks,
+    sync: bool = False,
+    target: Optional[str] = "this",
+):
     """
     Trigger link update for a post.
 
@@ -709,82 +735,92 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
     if not config:
         raise HTTPException(
             status_code=404,
-            detail=f"Post {post_id} not configured. Use /config/post to set it up first."
+            detail=f"Post {post_id} not configured. Use /config/post to set it up first.",
         )
 
     source_urls = config["source_urls"]
     timezone = config.get("timezone", "Asia/Kolkata")
     extractor_name = config.get("extractor")
     extractor_map = config.get("extractor_map", {})  # New: per-source extractor mapping
-    
+
     if isinstance(extractor_name, str):
         pass
     elif extractor_name is not None:
         extractor_name = str(extractor_name)
     else:
         extractor_name = None
-    wp_site = config.get("wp_site") if "wp_site" in config else None  # Ensure wp_site is always defined
-    
+    wp_site = (
+        config.get("wp_site") if "wp_site" in config else None
+    )  # Ensure wp_site is always defined
+
     # Helper function to get extractor for a URL
     def get_extractor_for_source(url: str):
         """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
         print(f"[DEBUG] get_extractor_for_source called with url: {url}")
         print(f"[DEBUG] extractor_map: {extractor_map}")
-        
+
         # Priority 1: Check extractor_map for this specific URL (manual or smart match)
         if extractor_map:
             # Normalize URL for comparison (handle trailing slash)
-            url_normalized = url.rstrip('/')
+            url_normalized = url.rstrip("/")
             for map_url, map_extractor in extractor_map.items():
-                map_url_normalized = map_url.rstrip('/')
+                map_url_normalized = map_url.rstrip("/")
                 if url_normalized == map_url_normalized:
                     if map_extractor:
-                        print(f"[DEBUG] Using mapped extractor '{map_extractor}' for {url}")
+                        print(
+                            f"[DEBUG] Using mapped extractor '{map_extractor}' for {url}"
+                        )
                         return get_extractor(map_extractor)
-        
+
         # Priority 2: Default to the default extractor (Gemini-based)
         print(f"[DEBUG] No mapping found for {url}, using default extractor")
         return get_extractor("default")
-    
+
     # If sync mode (for WordPress), run immediately and return results
     if sync:
         # Calculate today's date in the configured timezone
         tz = pytz.timezone(timezone)
         today = datetime.now(tz)
         today_iso = today.strftime("%Y-%m-%d")
-        
+
         # target: 'this' (default), site_key (string), or 'all'
         if target == "this":
             all_links = []
             errors = []
-            
+
             # Step 1: Extract links from all sources
             for url in source_urls:
                 try:
                     html = await fetch_html(url)
                     extractor = get_extractor_for_source(url)
-                    print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
+                    print(
+                        f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}"
+                    )
                     extracted_links = extractor.extract(html, today_iso)
-                    print(f"Extracted {len(extracted_links)} links from {url}: {extracted_links}")
+                    print(
+                        f"Extracted {len(extracted_links)} links from {url}: {extracted_links}"
+                    )
                     all_links.extend(extracted_links)
                 except Exception as e:
                     errors.append({"url": url, "error": str(e)})
-            
+
             # Step 2: Check if we have any links
             if not all_links:
-                return JSONResponse({
-                    "success": True,
-                    "post_id": post_id,
-                    "message": "No links found for today",
-                    "links_found": 0,
-                    "links_added": 0,
-                    "errors": errors
-                })
-            
+                return JSONResponse(
+                    {
+                        "success": True,
+                        "post_id": post_id,
+                        "message": "No links found for today",
+                        "links_found": 0,
+                        "links_added": 0,
+                        "errors": errors,
+                    }
+                )
+
             # Determine the target site key and post ID for fingerprint tracking
             target_site_key = None
             target_post_id = post_id  # Default to config's post_id
-            
+
             if wp_site:
                 if isinstance(wp_site, str):
                     target_site_key = wp_site
@@ -800,13 +836,17 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                         resolved_id = resolve_post_id_for_site(config, target_site_key)
                         if resolved_id:
                             target_post_id = resolved_id
-            
+
             # Step 3: Deduplicate against known links for this specific site using the correct post ID
-            known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
+            known_fps = mongo_storage.get_known_fingerprints(
+                target_post_id, today_iso, target_site_key
+            )
             new_links = dedupe_by_fingerprint(all_links, known_fps)
-            
-            print(f"[DEBUG] Site: {target_site_key}, Post ID: {target_post_id}, Total extracted: {len(all_links)}, After dedup: {len(new_links)}")
-            
+
+            print(
+                f"[DEBUG] Site: {target_site_key}, Post ID: {target_post_id}, Total extracted: {len(all_links)}, After dedup: {len(new_links)}"
+            )
+
             # Step 4: Update WordPress (wp_site can be None to use environment defaults, or explicit config)
             if new_links:
                 try:
@@ -815,66 +855,86 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                         # wp_site is a site key - resolve post ID for this site
                         site_post_id = resolve_post_id_for_site(config, wp_site)
                         if not site_post_id:
-                            wp_result = {"error": f"No post ID configured for site '{wp_site}'"}
+                            wp_result = {
+                                "error": f"No post ID configured for site '{wp_site}'"
+                            }
                         else:
-                            wp_result = await update_post_links_section(site_post_id, new_links, wp_site)
+                            wp_result = await update_post_links_section(
+                                site_post_id, new_links, wp_site
+                            )
                     elif isinstance(wp_site, dict) and "url" in wp_site:
                         # wp_site is the actual site config - use first configured site
                         sites = get_configured_wp_sites()
                         if sites:
                             first_site_key = list(sites.keys())[0]
-                            site_post_id = resolve_post_id_for_site(config, first_site_key)
+                            site_post_id = resolve_post_id_for_site(
+                                config, first_site_key
+                            )
                             if not site_post_id:
-                                wp_result = {"error": f"No post ID configured for site '{first_site_key}'"}
+                                wp_result = {
+                                    "error": f"No post ID configured for site '{first_site_key}'"
+                                }
                             else:
-                                wp_result = await update_post_links_section(site_post_id, new_links, first_site_key)
+                                wp_result = await update_post_links_section(
+                                    site_post_id, new_links, first_site_key
+                                )
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
                     elif wp_site is None:
                         # No wp_site specified - use environment variables (default site)
-                        wp_result = await update_post_links_section(target_post_id, new_links, None)
+                        wp_result = await update_post_links_section(
+                            target_post_id, new_links, None
+                        )
                     else:
                         wp_result = {"error": "Invalid wp_site configuration"}
-                    
+
                     # Step 5: Save fingerprints for deduplication (site-specific with correct post ID)
                     if new_links and not wp_result.get("error"):
                         new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
-                        
+                        mongo_storage.save_new_links(
+                            target_post_id, today_iso, new_fps, target_site_key
+                        )
+
                         # Update last_updated timestamp
                         config["last_updated"] = datetime.utcnow().isoformat()
                         mongo_storage.set_post_config(config)
-                    
-                    return JSONResponse({
-                        "success": True,
-                        "post_id": post_id,
-                        "links_found": len(all_links),
-                        "links_added": wp_result.get("links_added", len(new_links)),
-                        "wordpress_updated": not wp_result.get("error"),
-                        "wp_result": wp_result,
-                        "errors": errors
-                    })
+
+                    return JSONResponse(
+                        {
+                            "success": True,
+                            "post_id": post_id,
+                            "links_found": len(all_links),
+                            "links_added": wp_result.get("links_added", len(new_links)),
+                            "wordpress_updated": not wp_result.get("error"),
+                            "wp_result": wp_result,
+                            "errors": errors,
+                        }
+                    )
                 except Exception as e:
                     print(f"[ERROR] WordPress update failed: {e}")
-                    return JSONResponse({
-                        "success": False,
-                        "post_id": post_id,
-                        "error": f"WordPress update failed: {str(e)}",
-                        "links_found": len(all_links),
-                        "errors": errors
-                    })
+                    return JSONResponse(
+                        {
+                            "success": False,
+                            "post_id": post_id,
+                            "error": f"WordPress update failed: {str(e)}",
+                            "links_found": len(all_links),
+                            "errors": errors,
+                        }
+                    )
             else:
                 # No new links after deduplication
-                return JSONResponse({
-                    "success": True,
-                    "post_id": post_id,
-                    "message": "No new links after deduplication - all links already exist",
-                    "links_found": len(all_links),
-                    "new_links": 0,
-                    "links_added": 0,
-                    "sections_pruned": 0,
-                    "errors": errors
-                })
+                return JSONResponse(
+                    {
+                        "success": True,
+                        "post_id": post_id,
+                        "message": "No new links after deduplication - all links already exist",
+                        "links_found": len(all_links),
+                        "new_links": 0,
+                        "links_added": 0,
+                        "sections_pruned": 0,
+                        "errors": errors,
+                    }
+                )
 
         # If target is 'all', extract once and update all configured sites
         if target == "all":
@@ -889,23 +949,29 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                 try:
                     html = await fetch_html(url)
                     extractor = get_extractor_for_source(url)
-                    print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
+                    print(
+                        f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}"
+                    )
                     extracted_links = extractor.extract(html, today_iso)
-                    print(f"Extracted {len(extracted_links)} links from {url}: {extracted_links}")
+                    print(
+                        f"Extracted {len(extracted_links)} links from {url}: {extracted_links}"
+                    )
                     links = extracted_links
                     all_links.extend(links)
                 except Exception as e:
                     print(f"Error processing URL {url}: {e}")
 
             if not all_links:
-                return JSONResponse({
-                    "success": True,
-                    "post_id": post_id,
-                    "message": "No links found for today",
-                    "links_found": 0,
-                    "links_added": 0,
-                    "sections_pruned": 0
-                })
+                return JSONResponse(
+                    {
+                        "success": True,
+                        "post_id": post_id,
+                        "message": "No links found for today",
+                        "links_found": 0,
+                        "links_added": 0,
+                        "sections_pruned": 0,
+                    }
+                )
 
             # Step 2: Update each configured site with site-specific deduplication
             sites = get_configured_wp_sites()
@@ -915,55 +981,71 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
                     # Resolve the correct post ID for this specific site
                     site_post_id = resolve_post_id_for_site(config, site_key)
                     if not site_post_id:
-                        results[site_key] = {"error": f"No post ID configured for site '{site_key}'"}
+                        results[site_key] = {
+                            "error": f"No post ID configured for site '{site_key}'"
+                        }
                         continue
-                    
+
                     # Deduplicate against known links for THIS specific site using the correct post ID
-                    known_fps = mongo_storage.get_known_fingerprints(site_post_id, today_iso, site_key)
+                    known_fps = mongo_storage.get_known_fingerprints(
+                        site_post_id, today_iso, site_key
+                    )
                     new_links = dedupe_by_fingerprint(all_links, known_fps)
-                    
-                    print(f"[DEBUG] Site '{site_key}': Post ID={site_post_id}, Total={len(all_links)}, After dedup={len(new_links)}")
-                    
+
+                    print(
+                        f"[DEBUG] Site '{site_key}': Post ID={site_post_id}, Total={len(all_links)}, After dedup={len(new_links)}"
+                    )
+
                     if not new_links:
                         results[site_key] = {
                             "message": "No new links for this site",
-                            "links_added": 0
+                            "links_added": 0,
                         }
                         continue
-                    
+
                     # Update this site with resolved post ID
-                    wp_result = await update_post_links_section(site_post_id, new_links, site_key)
+                    wp_result = await update_post_links_section(
+                        site_post_id, new_links, site_key
+                    )
                     results[site_key] = wp_result
-                    
+
                     # Save fingerprints for this specific site using the correct post ID
                     if not wp_result.get("error"):
                         new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(site_post_id, today_iso, new_fps, site_key)
-                        
+                        mongo_storage.save_new_links(
+                            site_post_id, today_iso, new_fps, site_key
+                        )
+
                 except Exception as e:
                     results[site_key] = {"error": str(e)}
 
-            return JSONResponse({"success": True, "post_id": post_id, "results": results})
+            return JSONResponse(
+                {"success": True, "post_id": post_id, "results": results}
+            )
 
         # If target is a site key
         site_conf = None
         if target and target != "this":
             # Pass the site key through with config - run_update_sync will resolve it
-            return await run_update_sync(post_id, source_urls, timezone, extractor_name, target, config)
+            return await run_update_sync(
+                post_id, source_urls, timezone, extractor_name, target, config
+            )
 
         # Fallback: default behavior
-        return await run_update_sync(post_id, source_urls, timezone, extractor_name, wp_site, config)
-    
+        return await run_update_sync(
+            post_id, source_urls, timezone, extractor_name, wp_site, config
+        )
+
     # Background mode (for Cloud Scheduler parallel updates)
     task_id = f"task_{post_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
+
     # Initialize task status
     task_status[task_id] = {
         "post_id": post_id,
         "status": "running",
-        "started_at": datetime.now().isoformat()
+        "started_at": datetime.now().isoformat(),
     }
-    
+
     # Add to background tasks
     background_tasks.add_task(
         run_update_task,
@@ -973,23 +1055,32 @@ async def update_post_now(post_id: int, background_tasks: BackgroundTasks, sync:
         timezone=timezone,
         extractor_name=extractor_name,
         extractor_map=extractor_map,
-        wp_site=wp_site
+        wp_site=wp_site,
     )
-    
-    return JSONResponse({
-        "success": True,
-        "message": f"Update started for post {post_id}",
-        "task_id": task_id,
-        "post_id": post_id,
-        "status_url": f"/task-status/{task_id}"
-    })
+
+    return JSONResponse(
+        {
+            "success": True,
+            "message": f"Update started for post {post_id}",
+            "task_id": task_id,
+            "post_id": post_id,
+            "status_url": f"/task-status/{task_id}",
+        }
+    )
 
 
-async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, wp_site: Optional[dict] = None, config: Optional[dict] = None):
+async def run_update_sync(
+    post_id: int,
+    source_urls: List[str],
+    timezone: str,
+    extractor_name: Optional[str] = None,
+    wp_site: Optional[dict] = None,
+    config: Optional[dict] = None,
+):
     """
     Synchronous update function that returns full results immediately.
     Used when WordPress plugin needs immediate response.
-    
+
     Args:
         post_id: WordPress post ID (legacy - used as fallback)
         source_urls: List of URLs to scrape
@@ -1002,29 +1093,31 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
     tz = pytz.timezone(timezone)
     today = datetime.now(tz)
     today_iso = today.strftime("%Y-%m-%d")
-    
+
     monitor = get_monitor()
-    
+
     try:
         # Step 1: Scrape and extract
         all_links = []
         for url in source_urls:
             html = await fetch_html(url)
-            
+
             # Choose extractor: mapped > default
             if extractor_name:
                 extractor = get_extractor(extractor_name)
             else:
                 # Default to the default extractor (Gemini-based)
                 extractor = get_extractor("default")
-            
+
             # Extract links using the chosen extractor
-            print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
+            print(
+                f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}"
+            )
             extracted_links = extractor.extract(html, today_iso)
             print(f"Extracted {len(extracted_links)} links: {extracted_links}")
             links = extracted_links
             all_links.extend(links)
-            
+
             # Record extraction for monitoring (with HTML for fingerprinting)
             monitor.record_extraction(
                 source_url=url,
@@ -1032,23 +1125,25 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
                 links_found=len(links),
                 confidence=0.9 if links else 0.0,  # Simple confidence for now
                 success=True,
-                html=html
+                html=html,
             )
-        
+
         if not all_links:
-            return JSONResponse({
-                "success": True,
-                "post_id": post_id,
-                "message": "No links found for today",
-                "links_found": 0,
-                "links_added": 0,
-                "sections_pruned": 0
-            })
-        
+            return JSONResponse(
+                {
+                    "success": True,
+                    "post_id": post_id,
+                    "message": "No links found for today",
+                    "links_found": 0,
+                    "links_added": 0,
+                    "sections_pruned": 0,
+                }
+            )
+
         # Determine target site key and resolve correct post ID
         target_site_key = None
         target_post_id = post_id  # Default fallback
-        
+
         if wp_site:
             if isinstance(wp_site, str):
                 target_site_key = wp_site
@@ -1069,19 +1164,23 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
                             if resolved_id:
                                 target_post_id = resolved_id
                         break
-        
+
         # Step 2: Deduplicate against known links for this specific site using correct post ID
-        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
+        known_fps = mongo_storage.get_known_fingerprints(
+            target_post_id, today_iso, target_site_key
+        )
         new_links = dedupe_by_fingerprint(all_links, known_fps)
-        
+
         # Step 3: Update WordPress using the resolved post ID
         wp_result = await update_post_links_section(target_post_id, new_links, wp_site)
-        
+
         # Step 4: Save fingerprints for new links (site-specific with correct post ID)
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
-        
+            mongo_storage.save_new_links(
+                target_post_id, today_iso, new_fps, target_site_key
+            )
+
         # Build response message
         message_parts = []
         if wp_result["links_added"] > 0:
@@ -1090,21 +1189,27 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
             message_parts.append("All links already exist - no duplicates added")
         else:
             message_parts.append("No new links found for today")
-        
+
         if wp_result["sections_pruned"] > 0:
             message_parts.append(f"pruned {wp_result['sections_pruned']} old sections")
-        
-        return JSONResponse({
-            "success": True,
-            "post_id": post_id,
-            "message": ", ".join(message_parts),
-            "links_found": len(all_links),
-            "links_added": wp_result["links_added"],
-            "sections_pruned": wp_result["sections_pruned"],
-            "date": today_iso,
-            "links": [{"title": link.title, "url": str(link.url)} for link in new_links] if new_links else []
-        })
-        
+
+        return JSONResponse(
+            {
+                "success": True,
+                "post_id": post_id,
+                "message": ", ".join(message_parts),
+                "links_found": len(all_links),
+                "links_added": wp_result["links_added"],
+                "sections_pruned": wp_result["sections_pruned"],
+                "date": today_iso,
+                "links": [
+                    {"title": link.title, "url": str(link.url)} for link in new_links
+                ]
+                if new_links
+                else [],
+            }
+        )
+
     except Exception as e:
         # Record failed extraction for each source URL
         monitor = get_monitor()
@@ -1115,7 +1220,7 @@ async def run_update_sync(post_id: int, source_urls: List[str], timezone: str, e
                 links_found=0,
                 confidence=0.0,
                 success=False,
-                error=str(e)
+                error=str(e),
             )
         raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
 
@@ -1136,7 +1241,7 @@ async def get_task_status(task_id: str):
         "success": task.get("success"),
         "results": task.get("results", []),
         "errors": task.get("errors", []),
-        "completed_at": task.get("completed_at")
+        "completed_at": task.get("completed_at"),
     }
 
     print("DEBUG: detailed_status:", detailed_status)  # Debug statement
@@ -1144,7 +1249,15 @@ async def get_task_status(task_id: str):
     return JSONResponse(detailed_status)
 
 
-async def run_update_task(task_id: str, post_id: int, source_urls: List[str], timezone: str, extractor_name: Optional[str] = None, extractor_map: Optional[dict] = None, wp_site: Optional[dict] = None):
+async def run_update_task(
+    task_id: str,
+    post_id: int,
+    source_urls: List[str],
+    timezone: str,
+    extractor_name: Optional[str] = None,
+    extractor_map: Optional[dict] = None,
+    wp_site: Optional[dict] = None,
+):
     """
     Background task that runs the update pipeline.
     Updates task_status with progress and results.
@@ -1158,24 +1271,26 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
         # Initialize results and errors
         results = []
         errors = []
-        
+
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
             """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
             print(f"[DEBUG] BG get_extractor_for_source called with url: {url}")
             print(f"[DEBUG] BG extractor_map: {extractor_map}")
-            
+
             # Priority 1: Check extractor_map for this specific URL (manual or smart match)
             if extractor_map:
                 # Normalize URL for comparison (handle trailing slash)
-                url_normalized = url.rstrip('/')
+                url_normalized = url.rstrip("/")
                 for map_url, map_extractor in extractor_map.items():
-                    map_url_normalized = map_url.rstrip('/')
+                    map_url_normalized = map_url.rstrip("/")
                     if url_normalized == map_url_normalized:
                         if map_extractor:
-                            print(f"[DEBUG] BG Using mapped extractor '{map_extractor}' for {url}")
+                            print(
+                                f"[DEBUG] BG Using mapped extractor '{map_extractor}' for {url}"
+                            )
                             return get_extractor(map_extractor)
-            
+
             # Priority 2: Default to the default extractor (Gemini-based)
             print(f"[DEBUG] BG No mapping found for {url}, using default extractor")
             return get_extractor("default")
@@ -1189,10 +1304,19 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
                 extractor = get_extractor_for_source(url)
 
                 # Extract links using the chosen extractor
-                print(f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}")
+                print(
+                    f"Extractor: {extractor.__class__.__name__}, Params: html_length={len(html)}, today_iso={today_iso}"
+                )
                 extracted_links = extractor.extract(html, today_iso)
                 print(f"Extracted {len(extracted_links)} links: {extracted_links}")
-                links = [{"title": link.title, "url": str(link.url), "published_date_iso": link.published_date_iso} for link in extracted_links]
+                links = [
+                    {
+                        "title": link.title,
+                        "url": str(link.url),
+                        "published_date_iso": link.published_date_iso,
+                    }
+                    for link in extracted_links
+                ]
                 results.append({"url": url, "links": links})
             except Exception as e:
                 errors.append({"url": url, "error": str(e)})
@@ -1204,7 +1328,7 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
             "success": len(errors) == 0,
             "results": results,
             "errors": errors,
-            "completed_at": datetime.now().isoformat()
+            "completed_at": datetime.now().isoformat(),
         }
 
     except Exception as e:
@@ -1213,13 +1337,14 @@ async def run_update_task(task_id: str, post_id: int, source_urls: List[str], ti
             "status": "failed",
             "success": False,
             "error": str(e),
-            "completed_at": datetime.now().isoformat()
+            "completed_at": datetime.now().isoformat(),
         }
 
 
 # ============================================================================
 # BATCH UPDATE PROCESSOR (Background Task for Dashboard)
 # ============================================================================
+
 
 async def process_batch_updates(request_id: str, target: str = "this"):
     """
@@ -1228,24 +1353,24 @@ async def process_batch_updates(request_id: str, target: str = "this"):
     """
     manager = get_batch_manager()
     batch_request = manager.get_request(request_id)
-    
+
     if not batch_request:
         return
-    
+
     batch_request.start()
-    
+
     # Process posts with concurrency limit (3 at a time to avoid overwhelming WordPress)
     # WordPress can be slow with large content updates, so we keep concurrency low
-    semaphore = asyncio.Semaphore(3)
-    
+    semaphore = asyncio.Semaphore(5)
+
     async def process_single_post(post_id: int):
         async with semaphore:
             await process_post_update(request_id, post_id, target)
-    
+
     # Start all post updates
     tasks = [process_single_post(post_id) for post_id in batch_request.post_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     batch_request.complete()
 
 
@@ -1255,27 +1380,32 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
     Calls the same extraction logic as /trigger but with state management.
     """
     manager = get_batch_manager()
-    
+
     try:
         # Update to running
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             status=UpdateStatus.RUNNING,
             progress=0,
             message="Starting update",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Starting update for post {post_id}"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Starting update for post {post_id}",
         )
-        
+
         # Get post config
         config = mongo_storage.get_post_config(post_id)
         if not config:
             raise Exception(f"Post {post_id} not configured")
-        
+
         source_urls = config.get("source_urls", [])
         timezone = config.get("timezone", "Asia/Kolkata")
         extractor_name = config.get("extractor")
-        extractor_map = config.get("extractor_map", {})  # NEW: per-source extractor mapping
-        insertion_point = config.get("insertion_point")  # NEW v2.3: Custom link placement
+        extractor_map = config.get(
+            "extractor_map", {}
+        )  # NEW: per-source extractor mapping
+        insertion_point = config.get(
+            "insertion_point"
+        )  # NEW v2.3: Custom link placement
         if isinstance(extractor_name, str):
             pass
         elif extractor_name is not None:
@@ -1283,96 +1413,104 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         else:
             extractor_name = None
         wp_site = config.get("wp_site") if "wp_site" in config else None
-        
+
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
             """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
             # Priority 1: Check extractor_map for this specific URL (manual or smart match)
             if extractor_map:
                 # Normalize URL for comparison (handle trailing slash)
-                url_normalized = url.rstrip('/')
+                url_normalized = url.rstrip("/")
                 for map_url, map_extractor in extractor_map.items():
-                    map_url_normalized = map_url.rstrip('/')
+                    map_url_normalized = map_url.rstrip("/")
                     if url_normalized == map_url_normalized:
                         if map_extractor:
-                            print(f"[BATCH] Using mapped extractor '{map_extractor}' for {url}")
+                            print(
+                                f"[BATCH] Using mapped extractor '{map_extractor}' for {url}"
+                            )
                             return get_extractor(map_extractor)
-            
+
             # Priority 2: Default to the default extractor (Gemini-based)
             print(f"[BATCH] No mapping found for {url}, using default extractor")
             return get_extractor("default")
 
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             progress=10,
             message="Configuration loaded",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Source URLs: {', '.join(source_urls)}"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Source URLs: {', '.join(source_urls)}",
         )
-        
+
         # Determine today's date
         tz = pytz.timezone(timezone)
         today = datetime.now(tz)
         today_iso = today.strftime("%Y-%m-%d")
-        
+
         # Extract links
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             progress=20,
             message="Fetching HTML",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetching HTML from source URLs..."
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetching HTML from source URLs...",
         )
-        
+
         all_links = []
         for url in source_urls:
             html = await fetch_html(url)
-            
+
             await manager.update_post_state(
-                request_id, post_id,
+                request_id,
+                post_id,
                 progress=40,
                 message=f"Extracting links from {url[:50]}...",
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetched {len(html)} bytes from {url}"
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetched {len(html)} bytes from {url}",
             )
-            
+
             # Choose extractor using the helper function (checks extractor_map first)
             extractor = get_extractor_for_source(url)
-            
+
             # Extract with monitoring
             monitor = get_monitor()
-            
+
             # Extract links using the extractor's extract method
             links = extractor.extract(html, today_iso)
             all_links.extend(links)
-            
+
             # Record extraction for monitoring
             monitor.record_extraction(url, today_iso, len(links), 1.0, html)
-            
+
             await manager.update_post_state(
-                request_id, post_id,
+                request_id,
+                post_id,
                 progress=60,
                 message=f"Extracted {len(links)} links",
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(links)} links using {extractor.__class__.__name__} extractor"
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(links)} links using {extractor.__class__.__name__} extractor",
             )
-        
+
         if not all_links:
             await manager.update_post_state(
-                request_id, post_id,
+                request_id,
+                post_id,
                 status=UpdateStatus.SUCCESS,
                 progress=100,
                 message="No new links found",
                 links_found=0,
                 links_added=0,
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] No links found for today"
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] No links found for today",
             )
             return
-        
+
         # Deduplicate against known links for this specific site
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             progress=70,
             message="Deduplicating links",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {len(all_links)} links for site '{target}'..."
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {len(all_links)} links for site '{target}'...",
         )
-        
+
         # Resolve the correct post ID for the target site
         if target == "this":
             # For "this" site, use the post_id directly (legacy support)
@@ -1384,36 +1522,44 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             target_site_key = target
             if not target_post_id:
                 raise Exception(f"No post ID configured for site '{target}'")
-        
-        known_fps = mongo_storage.get_known_fingerprints(target_post_id, today_iso, target_site_key)
+
+        known_fps = mongo_storage.get_known_fingerprints(
+            target_post_id, today_iso, target_site_key
+        )
         new_links = dedupe_by_fingerprint(all_links, known_fps)
-        
+
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             progress=80,
             message=f"Updating WordPress ({len(new_links)} new links)",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication (had {len(known_fps)} known fingerprints)"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication (had {len(known_fps)} known fingerprints)",
         )
-        
+
         # Update WordPress with the correct post ID and site key
         if target == "this":
             # For "this" site, don't pass site key (uses default from environment)
             wp_result = await update_post_links_section(target_post_id, new_links)
         else:
             # For specific sites, pass the site key
-            wp_result = await update_post_links_section(target_post_id, new_links, target)
-        
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, target
+            )
+
         # Save fingerprints for this specific site using the correct post ID
         if new_links:
             new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(target_post_id, today_iso, new_fps, target_site_key)
-            await manager.update_post_state(
-                request_id, post_id,
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for post_id={target_post_id}, date={today_iso}, site={target_site_key or 'default'}"
+            mongo_storage.save_new_links(
+                target_post_id, today_iso, new_fps, target_site_key
             )
-        
+            await manager.update_post_state(
+                request_id,
+                post_id,
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for post_id={target_post_id}, date={today_iso}, site={target_site_key or 'default'}",
+            )
+
         # Determine status based on results
-        if wp_result['links_added'] > 0:
+        if wp_result["links_added"] > 0:
             status = UpdateStatus.SUCCESS
             message = f"Added {wp_result['links_added']} links"
         elif len(all_links) > 0:
@@ -1424,27 +1570,29 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             # No links found at all
             status = UpdateStatus.NO_CHANGES
             message = "No links found"
-        
+
         # Success or No Changes
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             status=status,
             progress=100,
             message=message,
             links_found=len(all_links),
             links_added=wp_result["links_added"],
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {wp_result['links_added']} links added, {wp_result['sections_pruned']} old sections pruned"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {wp_result['links_added']} links added, {wp_result['sections_pruned']} old sections pruned",
         )
-        
+
     except Exception as e:
         # Failed
         await manager.update_post_state(
-            request_id, post_id,
+            request_id,
+            post_id,
             status=UpdateStatus.FAILED,
             progress=0,
             message=f"Error: {str(e)[:100]}",
             error=str(e),
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Update failed: {repr(e)}"
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Update failed: {repr(e)}",
         )
 
 
@@ -1456,14 +1604,15 @@ async def configure_post_114():
 
 # ==================== Analytics Endpoints ====================
 
+
 @app.get("/api/analytics/dashboard")
 async def get_analytics_dashboard(days: int = 30):
     """
     Get dashboard summary with key metrics
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns high-level metrics including:
     - Total updates, success rate
     - Total links added
@@ -1478,18 +1627,18 @@ async def get_analytics_dashboard(days: int = 30):
 async def get_analytics_timeline(days: int = 30, granularity: str = "daily"):
     """
     Get timeline of updates over period
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
     - granularity: 'hourly', 'daily', or 'weekly' (default 'daily')
-    
+
     Returns timeline data with success/failure counts per time period
     """
     analytics = get_analytics_engine()
     return {
         "timeline": analytics.get_update_timeline(days=days, granularity=granularity),
         "period_days": days,
-        "granularity": granularity
+        "granularity": granularity,
     }
 
 
@@ -1497,50 +1646,44 @@ async def get_analytics_timeline(days: int = 30, granularity: str = "daily"):
 async def get_post_analytics(days: int = 30):
     """
     Get performance metrics per post
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns performance data for each post including:
     - Total updates, success rate
     - Links added
     - Last update time
     """
     analytics = get_analytics_engine()
-    return {
-        "posts": analytics.get_post_performance(days=days),
-        "period_days": days
-    }
+    return {"posts": analytics.get_post_performance(days=days), "period_days": days}
 
 
 @app.get("/api/analytics/sources")
 async def get_source_analytics(days: int = 30):
     """
     Get performance metrics per source URL
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns metrics for each source including:
     - Extraction success rate
     - Links extracted
     - Current health status
     """
     analytics = get_analytics_engine()
-    return {
-        "sources": analytics.get_source_performance(days=days),
-        "period_days": days
-    }
+    return {"sources": analytics.get_source_performance(days=days), "period_days": days}
 
 
 @app.get("/api/analytics/extractors")
 async def get_extractor_analytics(days: int = 30):
     """
     Get performance metrics per extractor type
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns metrics for each extractor including:
     - Total updates, success rate
     - Links extracted
@@ -1549,7 +1692,7 @@ async def get_extractor_analytics(days: int = 30):
     analytics = get_analytics_engine()
     return {
         "extractors": analytics.get_extractor_performance(days=days),
-        "period_days": days
+        "period_days": days,
     }
 
 
@@ -1557,36 +1700,33 @@ async def get_extractor_analytics(days: int = 30):
 async def get_site_analytics(days: int = 30):
     """
     Get performance metrics per WordPress site
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns metrics for each site including:
     - Total links added
     - Unique posts updated
     - Average links per post
     """
     analytics = get_analytics_engine()
-    return {
-        "sites": analytics.get_site_performance(days=days),
-        "period_days": days
-    }
+    return {"sites": analytics.get_site_performance(days=days), "period_days": days}
 
 
 @app.get("/api/analytics/hourly-pattern")
 async def get_hourly_pattern_analytics(days: int = 7):
     """
     Get update patterns by hour of day
-    
+
     Query params:
     - days: Number of days to analyze (default 7)
-    
+
     Returns 24 data points showing update activity by hour
     """
     analytics = get_analytics_engine()
     return {
         "hourly_pattern": analytics.get_hourly_pattern(days=days),
-        "period_days": days
+        "period_days": days,
     }
 
 
@@ -1594,14 +1734,11 @@ async def get_hourly_pattern_analytics(days: int = 7):
 async def get_links_trend_analytics(days: int = 30):
     """
     Get daily trend of links added
-    
+
     Query params:
     - days: Number of days to analyze (default 30)
-    
+
     Returns daily data points with links added per site
     """
     analytics = get_analytics_engine()
-    return {
-        "trend": analytics.get_links_added_trend(days=days),
-        "period_days": days
-    }
+    return {"trend": analytics.get_links_added_trend(days=days), "period_days": days}
