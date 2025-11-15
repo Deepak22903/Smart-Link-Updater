@@ -971,25 +971,35 @@ class SmartLinkUpdater {
             // ========== UTILITY FUNCTIONS ==========
             
             /**
-             * Convert UTC timestamp string to local timezone
-             * @param {string} utcTimeString - Format: 'YYYY-MM-DD HH:MM:SS'
-             * @returns {string} - Local time in same format
+             * Convert UTC timestamp string to IST 12-hour format
+             * @param {string} utcTimeString - Format: 'YYYY-MM-DD HH:MM:SS' or ISO format
+             * @returns {string} - IST time in 12-hour format: 'DD MMM YYYY, hh:mm:ss AM/PM IST'
              */
-            function convertUTCToLocal(utcTimeString) {
+            function convertUTCToIST(utcTimeString) {
                 if (!utcTimeString) return '-';
                 
-                // Parse UTC time string (assuming format: 'YYYY-MM-DD HH:MM:SS')
-                const utcDate = new Date(utcTimeString.replace(' ', 'T') + 'Z'); // Add 'Z' to indicate UTC
+                // Parse UTC time string
+                const utcDate = new Date(utcTimeString.replace(' ', 'T') + (utcTimeString.includes('Z') ? '' : 'Z'));
                 
-                // Format to local timezone
-                const year = utcDate.getFullYear();
-                const month = String(utcDate.getMonth() + 1).padStart(2, '0');
-                const day = String(utcDate.getDate()).padStart(2, '0');
-                const hours = String(utcDate.getHours()).padStart(2, '0');
-                const minutes = String(utcDate.getMinutes()).padStart(2, '0');
-                const seconds = String(utcDate.getSeconds()).padStart(2, '0');
+                // Convert to IST (UTC+5:30)
+                const istOptions = {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'short',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                };
                 
-                return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                const istString = utcDate.toLocaleString('en-IN', istOptions);
+                return istString + ' IST';
+            }
+            
+            // Alias for backward compatibility
+            function convertUTCToLocal(utcTimeString) {
+                return convertUTCToIST(utcTimeString);
             }
             
             function attachEventListeners() {
@@ -1161,13 +1171,19 @@ class SmartLinkUpdater {
                 // Increment server time by 1 second
                 serverTime.setSeconds(serverTime.getSeconds() + 1);
                 
-                const year = serverTime.getFullYear();
-                const month = String(serverTime.getMonth() + 1).padStart(2, '0');
-                const day = String(serverTime.getDate()).padStart(2, '0');
-                const hours = String(serverTime.getHours()).padStart(2, '0');
-                const minutes = String(serverTime.getMinutes()).padStart(2, '0');
-                const seconds = String(serverTime.getSeconds()).padStart(2, '0');
-                const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                // Format to IST 12-hour format
+                const istOptions = {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'short',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
+                };
+                
+                const formattedTime = serverTime.toLocaleString('en-IN', istOptions) + ' IST';
                 $('#cron-current-time').text(formattedTime);
             }
             
@@ -1470,7 +1486,17 @@ class SmartLinkUpdater {
                     // Time display
                     html += '<div style="text-align: right; min-width: 140px;">';
                     const createdDate = new Date(entry.created_at);
-                    html += '<div style="font-size: 13px; color: #666;">' + createdDate.toLocaleString() + '</div>';
+                    const istTime = createdDate.toLocaleString('en-IN', {
+                        timeZone: 'Asia/Kolkata',
+                        year: 'numeric',
+                        month: 'short',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                    }) + ' IST';
+                    html += '<div style="font-size: 13px; color: #666;">' + istTime + '</div>';
                     const timeAgo = getTimeAgo(createdDate);
                     html += '<div style="font-size: 12px; color: #999; margin-top: 4px;">' + timeAgo + '</div>';
                     html += '</div>';
@@ -2271,7 +2297,14 @@ class SmartLinkUpdater {
                 if (diffMins < 60) return diffMins + ' mins ago';
                 if (diffHours < 24) return diffHours + ' hours ago';
                 if (diffDays < 30) return diffDays + ' days ago';
-                return past.toLocaleDateString();
+                // Return IST 12-hour format for old dates
+                return past.toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    year: 'numeric',
+                    month: 'short',
+                    day: '2-digit',
+                    hour12: true
+                });
             }
             
             function getHealthBadge(status) {
