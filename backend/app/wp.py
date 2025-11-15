@@ -327,6 +327,16 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # Convert back to list and sort by order
     merged_links = sorted(all_links_map.values(), key=lambda x: x['order'])
     
+    # Update targets: all links open in same tab (_self) except the last one (_blank)
+    total_links = len(merged_links)
+    for idx, link in enumerate(merged_links):
+        if idx == total_links - 1:
+            # Last link opens in new tab
+            link['target'] = '_blank'
+        else:
+            # All other links open in same tab
+            link['target'] = '_self'
+    
     # Create styled buttons grouped in pairs (2 buttons per column block)
     # Using proper WordPress block format with block comments
     column_blocks = []
