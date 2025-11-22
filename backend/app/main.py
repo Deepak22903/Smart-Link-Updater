@@ -6,7 +6,7 @@ from fastapi import FastAPI, Body, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import os
 from dotenv import load_dotenv
 import asyncio
@@ -115,6 +115,11 @@ class PostConfig(BaseModel):
     site_post_ids: Optional[Dict[str, int]] = (
         None  # NEW: Maps site_key -> post_id for multi-site support
     )
+    ad_codes: Optional[List[Dict[str, Any]]] = (
+        None  # NEW: Ad codes to insert between sections
+        # Format: [{"code": "<script>...</script>", "position": "after_today"}, ...]
+        # Positions: "after_today", "after_yesterday", "after_N_days" (where N is number of days ago)
+    )
 
 
 class UpdateJob(BaseModel):
@@ -151,6 +156,9 @@ class PostConfigUpdate(BaseModel):
     content_slug: Optional[str] = None  # Universal identifier for content across sites
     site_post_ids: Optional[Dict[str, int]] = (
         None  # Maps site_key -> post_id for each WordPress site
+    )
+    ad_codes: Optional[List[Dict[str, Any]]] = (
+        None  # Ad codes to insert between sections
     )
 
 
@@ -244,6 +252,15 @@ async def configure_post(config: PostConfig = Body(...)):
     if config.extractor_map:
         post_config["extractor_map"] = config.extractor_map
 
+    # Add ad_codes if provided
+    if config.ad_codes:
+        post_config["ad_codes"] = config.ad_codes
+        logging.info(
+            f"[SAVE CONFIG] Saving ad_codes for post {config.post_id}: {config.ad_codes}"
+        )
+    else:
+        logging.info(f"[SAVE CONFIG] No ad_codes provided for post {config.post_id}")
+
     mongo_storage.set_post_config(post_config)
 
     response = {
@@ -261,6 +278,8 @@ async def configure_post(config: PostConfig = Body(...)):
         response["site_post_ids"] = config.site_post_ids
     if config.extractor_map:
         response["extractor_map"] = config.extractor_map
+    if config.ad_codes:
+        response["ad_codes"] = config.ad_codes
 
     if config.wp_site:
         response["wp_site"] = {
@@ -298,7 +317,20 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     if not existing_config:
         raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
 
-    update_data = config_update.model_dump(exclude_unset=True)
+    # Use exclude_none instead of exclude_unset to allow empty arrays
+    update_data = config_update.model_dump(exclude_unset=True, exclude_none=False)
+
+    # Debug logging for ad_codes
+    import logging
+
+    logging.info(
+        f"[UPDATE CONFIG] Received update_data keys: {list(update_data.keys())}"
+    )
+    logging.info(f"[UPDATE CONFIG] Raw config_update.ad_codes: {config_update.ad_codes}")
+    if "ad_codes" in update_data:
+        logging.info(f"[UPDATE CONFIG] ad_codes in update: {update_data['ad_codes']}")
+    else:
+        logging.info(f"[UPDATE CONFIG] ad_codes NOT in update_data")
 
     # Convert HttpUrl objects to strings if present
     if "source_urls" in update_data and update_data["source_urls"] is not None:
@@ -313,6 +345,14 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     # Create the full updated configuration object to be saved
     # This ensures we don't accidentally remove fields
     final_config = {**existing_config, **update_data}
+
+    logging.info(
+        f"[UPDATE CONFIG] final_config has ad_codes: {'ad_codes' in final_config}"
+    )
+    if "ad_codes" in final_config:
+        logging.info(
+            f"[UPDATE CONFIG] final_config ad_codes value: {final_config['ad_codes']}"
+        )
 
     # Remove _id field as it's immutable in MongoDB and managed by the database
     final_config.pop("_id", None)
@@ -351,6 +391,16 @@ async def get_post_config_endpoint(post_id: int):
     config = mongo_storage.get_post_config(post_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Post {post_id} not configured")
+
+    # Debug logging
+    import logging
+
+    logging.info(
+        f"[GET CONFIG] Returning config for post {post_id}: ad_codes present = {('ad_codes' in config)}"
+    )
+    if "ad_codes" in config:
+        logging.info(f"[GET CONFIG] ad_codes value: {config['ad_codes']}")
+
     return config
 
 
@@ -556,11 +606,13 @@ async def add_manual_links(request: ManualLinkRequest):
         if target_site_key:
             # Update specific site
             wp_result = await update_post_links_section(
-                target_post_id, new_links, target_site_key
+                target_post_id, new_links, target_site_key, config
             )
         else:
             # Update "this" site (default)
-            wp_result = await update_post_links_section(target_post_id, new_links)
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, None, config
+            )
 
         # Store fingerprints for deduplication
         new_fps = {fingerprint(link) for link in new_links}
@@ -642,17 +694,123 @@ async def list_wordpress_sites():
     """Get list of configured WordPress sites (without credentials)."""
     sites = get_configured_wp_sites()
 
-    # Return sites with only public info (no passwords)
-    public_sites = {}
-    for site_key, site_conf in sites.items():
-        public_sites[site_key] = {
-            "site_key": site_key,
-            "base_url": site_conf.get("base_url", ""),
-            "username": site_conf.get("username", ""),
-            # Do not expose app_password
-        }
+    # Return sites with all info including credentials for management UI
+    return {"sites": sites}
 
-    return {"sites": public_sites}
+
+@app.post("/api/sites/add")
+async def add_wordpress_site(site_data: dict):
+    """Add a new WordPress site to configuration."""
+    import os
+    import json
+    
+    site_key = site_data.get("site_key", "").strip()
+    base_url = site_data.get("base_url", "").strip()
+    username = site_data.get("username", "").strip()
+    app_password = site_data.get("app_password", "").strip()
+    
+    if not all([site_key, base_url, username, app_password]):
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    # Load current sites
+    sites = get_configured_wp_sites()
+    
+    # Check if site_key already exists
+    if site_key in sites:
+        raise HTTPException(status_code=400, detail=f"Site key '{site_key}' already exists")
+    
+    # Add new site
+    sites[site_key] = {
+        "base_url": base_url,
+        "username": username,
+        "app_password": app_password
+    }
+    
+    # Save to environment variable (this requires restart or update deployment)
+    # For now, we'll save to a file and user needs to update env
+    try:
+        # Save to a config file that can be used to update env
+        config_file = "/tmp/wp_sites_config.json"
+        with open(config_file, "w") as f:
+            json.dump(sites, f, indent=2)
+        
+        # Update the in-memory environment variable
+        os.environ["WP_SITES"] = json.dumps(sites)
+        
+        return {"message": "Site added successfully", "site_key": site_key, "sites": sites}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save site: {str(e)}")
+
+
+@app.put("/api/sites/{site_key}")
+async def update_wordpress_site(site_key: str, site_data: dict):
+    """Update an existing WordPress site configuration."""
+    import os
+    import json
+    
+    base_url = site_data.get("base_url", "").strip()
+    username = site_data.get("username", "").strip()
+    app_password = site_data.get("app_password", "").strip()
+    
+    if not all([base_url, username, app_password]):
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    # Load current sites
+    sites = get_configured_wp_sites()
+    
+    # Check if site exists
+    if site_key not in sites:
+        raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
+    
+    # Update site
+    sites[site_key] = {
+        "base_url": base_url,
+        "username": username,
+        "app_password": app_password
+    }
+    
+    try:
+        # Save to config file
+        config_file = "/tmp/wp_sites_config.json"
+        with open(config_file, "w") as f:
+            json.dump(sites, f, indent=2)
+        
+        # Update the in-memory environment variable
+        os.environ["WP_SITES"] = json.dumps(sites)
+        
+        return {"message": "Site updated successfully", "site_key": site_key, "sites": sites}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update site: {str(e)}")
+
+
+@app.delete("/api/sites/{site_key}")
+async def delete_wordpress_site(site_key: str):
+    """Delete a WordPress site from configuration."""
+    import os
+    import json
+    
+    # Load current sites
+    sites = get_configured_wp_sites()
+    
+    # Check if site exists
+    if site_key not in sites:
+        raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
+    
+    # Remove site
+    del sites[site_key]
+    
+    try:
+        # Save to config file
+        config_file = "/tmp/wp_sites_config.json"
+        with open(config_file, "w") as f:
+            json.dump(sites, f, indent=2)
+        
+        # Update the in-memory environment variable
+        os.environ["WP_SITES"] = json.dumps(sites)
+        
+        return {"message": "Site deleted successfully", "site_key": site_key, "sites": sites}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete site: {str(e)}")
 
 
 @app.put("/api/posts/{post_id}/config")
@@ -860,7 +1018,7 @@ async def update_post_now(
                             }
                         else:
                             wp_result = await update_post_links_section(
-                                site_post_id, new_links, wp_site
+                                site_post_id, new_links, wp_site, config
                             )
                     elif isinstance(wp_site, dict) and "url" in wp_site:
                         # wp_site is the actual site config - use first configured site
@@ -876,14 +1034,14 @@ async def update_post_now(
                                 }
                             else:
                                 wp_result = await update_post_links_section(
-                                    site_post_id, new_links, first_site_key
+                                    site_post_id, new_links, first_site_key, config
                                 )
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
                     elif wp_site is None:
                         # No wp_site specified - use environment variables (default site)
                         wp_result = await update_post_links_section(
-                            target_post_id, new_links, None
+                            target_post_id, new_links, None, config
                         )
                     else:
                         wp_result = {"error": "Invalid wp_site configuration"}
@@ -1005,7 +1163,7 @@ async def update_post_now(
 
                     # Update this site with resolved post ID
                     wp_result = await update_post_links_section(
-                        site_post_id, new_links, site_key
+                        site_post_id, new_links, site_key, config
                     )
                     results[site_key] = wp_result
 
@@ -1172,7 +1330,9 @@ async def run_update_sync(
         new_links = dedupe_by_fingerprint(all_links, known_fps)
 
         # Step 3: Update WordPress using the resolved post ID
-        wp_result = await update_post_links_section(target_post_id, new_links, wp_site)
+        wp_result = await update_post_links_section(
+            target_post_id, new_links, wp_site, config
+        )
 
         # Step 4: Save fingerprints for new links (site-specific with correct post ID)
         if new_links:
@@ -1361,7 +1521,7 @@ async def process_batch_updates(request_id: str, target: str = "this"):
 
     # Process posts with concurrency limit (3 at a time to avoid overwhelming WordPress)
     # WordPress can be slow with large content updates, so we keep concurrency low
-    semaphore = asyncio.Semaphore(5)
+    semaphore = asyncio.Semaphore(3)
 
     async def process_single_post(post_id: int):
         async with semaphore:
@@ -1539,11 +1699,13 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         # Update WordPress with the correct post ID and site key
         if target == "this":
             # For "this" site, don't pass site key (uses default from environment)
-            wp_result = await update_post_links_section(target_post_id, new_links)
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, None, config
+            )
         else:
             # For specific sites, pass the site key
             wp_result = await update_post_links_section(
-                target_post_id, new_links, target
+                target_post_id, new_links, target, config
             )
 
         # Save fingerprints for this specific site using the correct post ID

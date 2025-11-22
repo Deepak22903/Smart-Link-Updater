@@ -17,7 +17,9 @@ if (!defined('ABSPATH')) {
 
 class SmartLinkUpdater {
     
-    private $api_base_url = 'https://smartlink-api-601738079869.us-central1.run.app';
+    // TEMPORARY: Using ngrok for local debugging - revert before production!
+    private $api_base_url = 'https://poly-storm-sites-type.trycloudflare.com';
+    // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
         // Add meta box to post editor
@@ -67,6 +69,16 @@ class SmartLinkUpdater {
             'edit_posts',                   // Capability
             'smartlink-analytics',          // Menu slug
             array($this, 'render_analytics_page') // Callback
+        );
+        
+        // Add Sites Management submenu
+        add_submenu_page(
+            'smartlink-updater',            // Parent slug
+            'Sites Management',             // Page title
+            'Sites',                        // Menu title
+            'manage_options',               // Capability
+            'smartlink-sites',              // Menu slug
+            array($this, 'render_sites_page') // Callback
         );
     }
     
@@ -1048,6 +1060,7 @@ class SmartLinkUpdater {
                 $('#add-new-config-btn').on('click', openAddConfigModal);
                 $('#save-config-btn').on('click', savePostConfig);
                 $('#add-url-btn').on('click', addSourceUrlField);
+                $('#add-ad-code-btn').on('click', function() { addAdCodeField(); });
                 // Removed: extractor-mode toggle - now always manual configuration
                 
                 // Delegate checkbox change event
@@ -1058,6 +1071,7 @@ class SmartLinkUpdater {
                 $(document).on('click', '.edit-config-btn', openEditConfigModal);
                 $(document).on('click', '.delete-config-btn', deletePostConfig);
                 $(document).on('click', '.remove-url-btn', removeSourceUrlField);
+                $(document).on('click', '.remove-ad-code-btn', removeAdCodeField);
                 $(document).on('click', '.close-detailed-logs-btn', function() {
                     $('#detailed-logs-modal').fadeOut(200, function() { $(this).remove(); });
                 });
@@ -2720,6 +2734,12 @@ class SmartLinkUpdater {
                     },
                     success: function(postConfig) {
                         console.log('Loaded config:', postConfig);
+                        console.log('postConfig.ad_codes:', postConfig.ad_codes);
+                        console.log('typeof postConfig.ad_codes:', typeof postConfig.ad_codes);
+                        const allKeys = Object.keys(postConfig);
+                        console.log('All config keys:', allKeys);
+                        console.log('Total keys:', allKeys.length);
+                        console.log('Last key:', allKeys[allKeys.length - 1]);
                         
                         // Populate content slug
                         $('#config-content-slug').val(postConfig.content_slug || '');
@@ -2765,6 +2785,20 @@ class SmartLinkUpdater {
                         
                         // Load site post IDs
                         loadSitePostIdFields(postConfig.site_post_ids);
+                        
+                        // Load ad codes
+                        const adCodes = postConfig.ad_codes || [];
+                        console.log('Loading ad codes:', adCodes);
+                        $('#ad-codes-container').empty();
+                        if (adCodes.length > 0) {
+                            console.log('Creating fields for', adCodes.length, 'ad codes');
+                            adCodes.forEach(adCode => {
+                                console.log('Adding ad code field:', adCode);
+                                addAdCodeField(adCode);
+                            });
+                        } else {
+                            console.log('No ad codes to load');
+                        }
                         
                         $('#post-config-modal').fadeIn();
                     },
@@ -2825,6 +2859,12 @@ class SmartLinkUpdater {
                 if (hasSiteIds) {
                     configData.site_post_ids = sitePostIds;
                 }
+                
+                // Add ad codes (always include, even if empty array)
+                const adCodes = getAdCodes();
+                console.log('Ad codes collected:', adCodes);
+                configData.ad_codes = adCodes;
+                console.log('Ad codes added to configData');
                 
                 // Handle extractor configuration - always require manual configuration per URL
                 const extractorMap = {};
@@ -3222,6 +3262,70 @@ class SmartLinkUpdater {
             }
             
             // Removed toggleExtractorMode - now always manual configuration
+            
+            // ============ Ad Code Management Functions ============
+            
+            function addAdCodeField(adCode = null) {
+                const adCodeId = 'ad-code-' + Date.now();
+                const newField = $(`
+                    <div class="ad-code-row" data-id="${adCodeId}" style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white;">
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px;">
+                                Position (Insert After):
+                            </label>
+                            <select class="ad-position-select" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                                <option value="after_today">After Today's Section</option>
+                                <option value="after_1_day">After 1 Day Ago</option>
+                                <option value="after_2_days">After 2 Days Ago</option>
+                                <option value="after_3_days">After 3 Days Ago</option>
+                                <option value="after_4_days">After 4 Days Ago</option>
+                                <option value="after_5_days">After 5 Days Ago</option>
+                                <option value="after_6_days">After 6 Days Ago</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px;">
+                                Ad Code (HTML/JavaScript):
+                            </label>
+                            <textarea class="ad-code-textarea" rows="4" placeholder="Paste your Google AdSense or ad code here..."
+                                      style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
+                        </div>
+                        <button type="button" class="button remove-ad-code-btn" style="background: #dc3545; color: white; border: none;">
+                            <span class="dashicons dashicons-trash"></span>
+                            Remove
+                        </button>
+                    </div>
+                `);
+                
+                // Set values if editing existing ad code
+                if (adCode) {
+                    newField.find('.ad-position-select').val(adCode.position);
+                    newField.find('.ad-code-textarea').val(adCode.code);
+                }
+                
+                $('#ad-codes-container').append(newField);
+            }
+            
+            function removeAdCodeField(e) {
+                $(e.currentTarget).closest('.ad-code-row').remove();
+            }
+            
+            function getAdCodes() {
+                const adCodes = [];
+                $('.ad-code-row').each(function() {
+                    const position = $(this).find('.ad-position-select').val();
+                    const code = $(this).find('.ad-code-textarea').val().trim();
+                    if (code) {  // Only include if code is not empty
+                        adCodes.push({
+                            position: position,
+                            code: code
+                        });
+                    }
+                });
+                return adCodes;  // Always return array, even if empty
+            }
+            
+            // ============ End Ad Code Management ============
             
             function updateExtractorMapping() {
                 const container = $('#extractor-mapping-container');
@@ -3872,6 +3976,24 @@ class SmartLinkUpdater {
                                 </div>
                             </div>
                             
+                            <!-- Ad Codes Configuration -->
+                            <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
+                                <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
+                                    <span class="dashicons dashicons-megaphone" style="font-size: 18px; vertical-align: middle; color: #ff9800;"></span>
+                                    Ad Code Placements (Optional)
+                                </label>
+                                <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                                    Add Google AdSense or other ad codes to display between date sections
+                                </p>
+                                <div id="ad-codes-container">
+                                    <!-- Ad code rows will be inserted here -->
+                                </div>
+                                <button type="button" id="add-ad-code-btn" class="button" style="margin-top: 10px;">
+                                    <span class="dashicons dashicons-plus-alt"></span>
+                                    Add Ad Code
+                                </button>
+                            </div>
+                            
                             <!-- Timezone -->
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
@@ -4000,6 +4122,33 @@ class SmartLinkUpdater {
             'callback' => array($this, 'handle_list_sites_rest'),
             'permission_callback' => function() {
                 return current_user_can('edit_posts');
+            }
+        ));
+        
+        // Add WordPress site endpoint
+        register_rest_route('smartlink/v1', '/sites', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'handle_add_site_rest'),
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
+            }
+        ));
+        
+        // Update WordPress site endpoint
+        register_rest_route('smartlink/v1', '/sites/(?P<site_key>[a-zA-Z0-9_-]+)', array(
+            'methods' => 'PUT',
+            'callback' => array($this, 'handle_update_site_rest'),
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
+            }
+        ));
+        
+        // Delete WordPress site endpoint
+        register_rest_route('smartlink/v1', '/sites/(?P<site_key>[a-zA-Z0-9_-]+)', array(
+            'methods' => 'DELETE',
+            'callback' => array($this, 'handle_delete_site_rest'),
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
             }
         ));
         
@@ -4411,6 +4560,102 @@ class SmartLinkUpdater {
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle add site REST request (server-side proxy)
+     */
+    public function handle_add_site_rest($request) {
+        $body = $request->get_json_params();
+        
+        if (empty($body) || empty($body['site_key']) || empty($body['base_url']) || empty($body['username']) || empty($body['app_password'])) {
+            return new WP_Error('invalid_data', 'Missing required fields', array('status' => 400));
+        }
+        
+        $api_url = $this->api_base_url . '/api/sites/add';
+        
+        $response = wp_remote_post($api_url, array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode($body),
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $data = json_decode($response_body, true);
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to add site', array('status' => $status_code));
+        }
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle update site REST request (server-side proxy)
+     */
+    public function handle_update_site_rest($request) {
+        $site_key = $request->get_param('site_key');
+        $body = $request->get_json_params();
+        
+        if (empty($body)) {
+            return new WP_Error('invalid_data', 'Request body is empty', array('status' => 400));
+        }
+        
+        $api_url = $this->api_base_url . '/api/sites/' . urlencode($site_key);
+        
+        $response = wp_remote_request($api_url, array(
+            'method' => 'PUT',
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode($body),
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $data = json_decode($response_body, true);
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to update site', array('status' => $status_code));
+        }
+        
+        return rest_ensure_response($data);
+    }
+    
+    /**
+     * Handle delete site REST request (server-side proxy)
+     */
+    public function handle_delete_site_rest($request) {
+        $site_key = $request->get_param('site_key');
+        
+        $api_url = $this->api_base_url . '/api/sites/' . urlencode($site_key);
+        
+        $response = wp_remote_request($api_url, array(
+            'method' => 'DELETE',
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $data = json_decode($response_body, true);
+        
+        if ($status_code >= 400) {
+            return new WP_Error('api_error', $data['detail'] ?? 'Failed to delete site', array('status' => $status_code));
+        }
         
         return rest_ensure_response($data);
     }
@@ -5554,6 +5799,342 @@ class SmartLinkUpdater {
             
             // Initial load
             loadAnalytics();
+        });
+        </script>
+        <?php
+    }
+    
+    /**
+     * Render Sites Management page
+     */
+    public function render_sites_page() {
+        ?>
+        <div class="wrap smartlink-sites-wrap">
+            <h1 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 30px; border-radius: 12px; margin: 20px 0; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                <span class="dashicons dashicons-admin-multisite" style="font-size: 32px;"></span>
+                WordPress Sites Management
+            </h1>
+            
+            <div style="background: white; padding: 25px; border-radius: 12px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">Configured Sites</h2>
+                    <button id="add-site-btn" class="button button-primary" style="padding: 8px 20px; height: auto;">
+                        <span class="dashicons dashicons-plus-alt"></span> Add New Site
+                    </button>
+                </div>
+                
+                <div id="sites-table-container">
+                    <p style="text-align: center; color: #999;">Loading sites...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Add/Edit Site Modal -->
+        <div id="site-modal" class="smartlink-modal" style="display: none;">
+            <div class="smartlink-modal-content" style="max-width: 600px;">
+                <span class="smartlink-modal-close">&times;</span>
+                <h2 id="site-modal-title">Add New Site</h2>
+                
+                <form id="site-form" style="margin-top: 20px;">
+                    <input type="hidden" id="site-mode" value="add">
+                    <input type="hidden" id="original-site-key" value="">
+                    
+                    <div class="form-row">
+                        <label for="site-key">Site Key <span style="color: red;">*</span></label>
+                        <input type="text" id="site-key" class="smartlink-input" placeholder="e.g., mysite" required>
+                        <small>Unique identifier (lowercase, no spaces)</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <label for="site-base-url">Site URL <span style="color: red;">*</span></label>
+                        <input type="url" id="site-base-url" class="smartlink-input" placeholder="https://example.com" required>
+                        <small>WordPress site URL (without trailing slash)</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <label for="site-username">Username <span style="color: red;">*</span></label>
+                        <input type="text" id="site-username" class="smartlink-input" placeholder="admin@example.com" required>
+                        <small>WordPress admin username or email</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <label for="site-app-password">Application Password <span style="color: red;">*</span></label>
+                        <input type="text" id="site-app-password" class="smartlink-input" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" required>
+                        <small>Generate in WordPress: Users → Profile → Application Passwords</small>
+                    </div>
+                    
+                    <div style="margin-top: 25px; text-align: right;">
+                        <button type="button" id="cancel-site-btn" class="button" style="margin-right: 10px;">Cancel</button>
+                        <button type="submit" id="save-site-btn" class="button button-primary">
+                            <span class="dashicons dashicons-yes"></span>
+                            <span id="save-site-text">Add Site</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <style>
+        .smartlink-sites-wrap {
+            max-width: 1200px;
+        }
+        
+        .form-row {
+            margin-bottom: 20px;
+        }
+        
+        .form-row label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-row small {
+            display: block;
+            margin-top: 5px;
+            color: #666;
+            font-size: 12px;
+        }
+        
+        .sites-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .sites-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        .sites-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .sites-table tr:hover {
+            background: #f9f9f9;
+        }
+        
+        .site-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .site-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .site-badge.active {
+            background: #d4edda;
+            color: #155724;
+        }
+        </style>
+        
+        <script>
+        jQuery(document).ready(function($) {
+            const config = {
+                restUrl: '<?php echo esc_js(rest_url('smartlink/v1')); ?>',
+                nonce: '<?php echo esc_js(wp_create_nonce('wp_rest')); ?>',
+                apiUrl: '<?php echo esc_js($this->api_base_url); ?>'
+            };
+            
+            let sitesData = [];
+            
+            // Load sites
+            function loadSites() {
+                $('#sites-table-container').html('<p style="text-align: center; color: #999;"><span class="spinner is-active" style="float: none;"></span> Loading sites...</p>');
+                
+                $.ajax({
+                    url: config.restUrl + '/sites',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        sitesData = response.sites || {};
+                        renderSitesTable();
+                    },
+                    error: function(xhr) {
+                        $('#sites-table-container').html('<p style="color: #d63638;">Failed to load sites</p>');
+                    }
+                });
+            }
+            
+            function renderSitesTable() {
+                if (Object.keys(sitesData).length === 0) {
+                    $('#sites-table-container').html('<p style="text-align: center; color: #999;">No sites configured yet. Click "Add New Site" to get started.</p>');
+                    return;
+                }
+                
+                let html = '<table class="sites-table">';
+                html += '<thead><tr><th>Site Key</th><th>URL</th><th>Username</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+                
+                Object.keys(sitesData).forEach(siteKey => {
+                    const site = sitesData[siteKey];
+                    html += `<tr>
+                        <td><strong>${siteKey}</strong></td>
+                        <td><a href="${site.base_url}" target="_blank">${site.base_url}</a></td>
+                        <td>${site.username}</td>
+                        <td><span class="site-badge active">Active</span></td>
+                        <td class="site-actions">
+                            <button class="button button-small edit-site-btn" data-site-key="${siteKey}">
+                                <span class="dashicons dashicons-edit"></span> Edit
+                            </button>
+                            <button class="button button-small button-link-delete delete-site-btn" data-site-key="${siteKey}">
+                                <span class="dashicons dashicons-trash"></span> Delete
+                            </button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                $('#sites-table-container').html(html);
+            }
+            
+            // Add site modal
+            $('#add-site-btn').on('click', function() {
+                $('#site-modal-title').text('Add New Site');
+                $('#site-mode').val('add');
+                $('#save-site-text').text('Add Site');
+                $('#site-form')[0].reset();
+                $('#site-key').prop('readonly', false);
+                $('#site-modal').fadeIn();
+            });
+            
+            // Edit site
+            $(document).on('click', '.edit-site-btn', function() {
+                const siteKey = $(this).data('site-key');
+                const site = sitesData[siteKey];
+                
+                $('#site-modal-title').text('Edit Site');
+                $('#site-mode').val('edit');
+                $('#save-site-text').text('Update Site');
+                $('#original-site-key').val(siteKey);
+                $('#site-key').val(siteKey).prop('readonly', true);
+                $('#site-base-url').val(site.base_url);
+                $('#site-username').val(site.username);
+                $('#site-app-password').val(site.app_password);
+                $('#site-modal').fadeIn();
+            });
+            
+            // Delete site
+            $(document).on('click', '.delete-site-btn', function() {
+                const siteKey = $(this).data('site-key');
+                
+                if (!confirm(`Are you sure you want to delete site "${siteKey}"?\n\nThis will remove the site configuration but won't affect your WordPress installation.`)) {
+                    return;
+                }
+                
+                $.ajax({
+                    url: config.restUrl + '/sites/' + siteKey,
+                    method: 'DELETE',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        showToast('Site deleted successfully', 'success');
+                        loadSites();
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.message || 'Failed to delete site';
+                        showToast(error, 'error');
+                    }
+                });
+            });
+            
+            // Save site
+            $('#site-form').on('submit', function(e) {
+                e.preventDefault();
+                
+                const mode = $('#site-mode').val();
+                const siteKey = $('#site-key').val().trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                const baseUrl = $('#site-base-url').val().trim().replace(/\/$/, '');
+                const username = $('#site-username').val().trim();
+                const appPassword = $('#site-app-password').val().trim().replace(/\s/g, '');
+                
+                if (!siteKey || !baseUrl || !username || !appPassword) {
+                    showToast('Please fill in all required fields', 'error');
+                    return;
+                }
+                
+                const data = {
+                    site_key: siteKey,
+                    base_url: baseUrl,
+                    username: username,
+                    app_password: appPassword
+                };
+                
+                const $btn = $('#save-site-btn');
+                const originalHtml = $btn.html();
+                $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
+                
+                const url = mode === 'add' ? config.restUrl + '/sites' : config.restUrl + '/sites/' + $('#original-site-key').val();
+                const method = mode === 'add' ? 'POST' : 'PUT';
+                
+                $.ajax({
+                    url: url,
+                    method: method,
+                    contentType: 'application/json',
+                    data: JSON.stringify(data),
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(response) {
+                        showToast(mode === 'add' ? 'Site added successfully' : 'Site updated successfully', 'success');
+                        $('#site-modal').fadeOut();
+                        loadSites();
+                    },
+                    error: function(xhr) {
+                        const error = xhr.responseJSON?.message || 'Failed to save site';
+                        showToast(error, 'error');
+                    },
+                    complete: function() {
+                        $btn.prop('disabled', false).html(originalHtml);
+                    }
+                });
+            });
+            
+            // Close modal
+            $('.smartlink-modal-close, #cancel-site-btn').on('click', function() {
+                $('#site-modal').fadeOut();
+            });
+            
+            // Toast notification
+            function showToast(message, type) {
+                const bgColor = type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6';
+                $('<div class="smartlink-toast">' + message + '</div>')
+                    .css({
+                        'position': 'fixed',
+                        'top': '20px',
+                        'right': '20px',
+                        'background': bgColor,
+                        'color': 'white',
+                        'padding': '15px 25px',
+                        'border-radius': '8px',
+                        'box-shadow': '0 4px 12px rgba(0,0,0,0.15)',
+                        'z-index': 9999,
+                        'font-weight': '500'
+                    })
+                    .appendTo('body')
+                    .fadeIn()
+                    .delay(3000)
+                    .fadeOut(function() {
+                        $(this).remove();
+                    });
+            }
+            
+            // Initial load
+            loadSites();
         });
         </script>
         <?php
