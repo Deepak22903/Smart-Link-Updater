@@ -132,7 +132,7 @@ def get_configured_wp_sites() -> Dict[str, Dict[str, Any]]:
     return _load_wp_sites()
 
 
-async def update_post_links_section(post_id: int, links: List[Link], wp_site: Optional[Dict] = None, post_config: Optional[Dict] = None) -> None:
+async def update_post_links_section(post_id: int, links: List[Link], target_site_key: Optional[str] = None, post_config: Optional[Dict] = None, wp_site: Optional[Dict] = None) -> None:
     """
     Update WordPress post by inserting a styled 'Links for Today' section using proper WordPress block format.
     
@@ -431,8 +431,7 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     # Pattern 2: In case WordPress adds extra formatting
     ad_code_pattern_2 = r'<div\s+class="smartlink-ad-placement"[^>]*>.*?</div>'
     
-    # Log ad_codes configuration
-    configured_ad_codes = post_config.get('ad_codes', []) if post_config else []
+    # Site-specific ad codes are logged when inserted
     
     # Try both patterns
     existing_ad_matches = []
@@ -488,66 +487,103 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
             logging.warning(f"[WP] No <h2> block found, prepending SmartLink block to beginning")
     
     # Insert ad codes if configured
-    ad_codes = post_config.get('ad_codes', []) if post_config else []
+    # Use site-specific ad codes only
+    ad_codes = []
+    
+    if post_config:
+        all_site_ads = post_config.get('site_ad_codes', {})
+        
+        if target_site_key and target_site_key in all_site_ads:
+            # Specific site requested and has ad codes
+            ad_codes = all_site_ads[target_site_key]
+            logging.info(f"[WP] Using site-specific ad codes for site '{target_site_key}': {len(ad_codes)} ads")
+        elif not target_site_key and 'default' in all_site_ads:
+            # No site key provided (default site), check for 'default' entry
+            ad_codes = all_site_ads['default']
+            logging.info(f"[WP] Using default site ad codes: {len(ad_codes)} ads")
+        elif target_site_key:
+            logging.info(f"[WP] No ad codes configured for site '{target_site_key}'")
+        else:
+            logging.info(f"[WP] No ad codes configured for default site")
     
     if ad_codes and isinstance(ad_codes, list):
-        logging.info(f"[WP] Inserting {len(ad_codes)} ad codes")
+        logging.info(f"[WP] Inserting {len(ad_codes)} ad codes within today's section")
         
-        # Find all sections in the content to determine insertion points
+        # Find today's section (first section in the content)
         all_sections = list(re.finditer(smartlink_block_pattern, new_content, re.DOTALL))
         
-        # Process ad codes in reverse order to maintain correct positions
-        ad_codes_sorted = sorted(ad_codes, key=lambda x: x.get('position', 'after_today'), reverse=True)
+        logging.info(f"[WP] Found {len(all_sections)} total sections matching pattern")
         
-        for ad_code_config in ad_codes_sorted:
-            position = ad_code_config.get('position', 'after_today')
-            code = ad_code_config.get('code', '')
+        # If no sections found with the strict pattern, try a more flexible pattern
+        if not all_sections:
+            flexible_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?</div>\s*<!-- /wp:group -->'
+            all_sections = list(re.finditer(flexible_pattern, new_content, re.DOTALL))
+            logging.info(f"[WP] Flexible pattern found {len(all_sections)} sections")
+        
+        if all_sections:
+            today_section = all_sections[0]
+            today_section_content = today_section.group(0)
+            today_section_start = today_section.start()
             
-            if not code:
-                continue
+            # Find all button rows within today's section (each wp:columns block contains 3 buttons)
+            button_rows_pattern = r'<!-- wp:columns[^>]*?-->(.*?)<!-- /wp:columns -->'
+            button_rows = list(re.finditer(button_rows_pattern, today_section_content, re.DOTALL))
             
-            # Determine which section to insert after based on position
-            # after_today = after 1st section (index 0)
-            # after_1_day = after 2nd section (index 1)
-            # after_2_days = after 3rd section (index 2), etc.
-            section_index = 0
-            if position == 'after_today':
-                section_index = 0
-            elif position == 'after_1_day':
-                section_index = 1
-            elif position == 'after_2_days':
-                section_index = 2
-            elif position == 'after_3_days':
-                section_index = 3
-            elif position == 'after_4_days':
-                section_index = 4
-            elif position == 'after_5_days':
-                section_index = 5
-            elif position == 'after_6_days':
-                section_index = 6
+            logging.info(f"[WP] Found {len(button_rows)} button rows in today's section")
             
-            # Check if section exists
-            if section_index < len(all_sections):
-                section = all_sections[section_index]
-                # Insert after this section
-                insertion_point = section.end()
+            # Process ad codes in reverse order to maintain correct positions
+            ad_codes_sorted = sorted(ad_codes, key=lambda x: int(x.get('position', 1)), reverse=True)
+            
+            for ad_code_config in ad_codes_sorted:
+                position = ad_code_config.get('position', 1)  # Row number after which to insert (1-based)
+                code = ad_code_config.get('code', '')
                 
-                # Wrap ad code in a div with class for styling
-                ad_html = f'''
+                if not code:
+                    continue
+                
+                # Convert position to integer if it's a string
+                try:
+                    position = int(position)
+                except (ValueError, TypeError):
+                    logging.warning(f"[WP] Invalid position value: {position}, defaulting to 1")
+                    position = 1
+                
+                # Convert position to row index (1-based to 0-based)
+                # position=1 means after first row (index 0)
+                row_index = position - 1
+                
+                if row_index < len(button_rows):
+                    # Get the position after this row within today's section
+                    row = button_rows[row_index]
+                    relative_insertion_point = row.end()
+                    
+                    # Convert to absolute position in full content
+                    absolute_insertion_point = today_section_start + relative_insertion_point
+                    
+                    # Wrap ad code in a div with class for styling
+                    ad_html = f'''
+
 <!-- wp:html -->
 <div class="smartlink-ad-placement" style="margin: 20px 0; padding: 20px; text-align: center; background-color: #f8f9fa;">
 {code}
 </div>
 <!-- /wp:html -->
 '''
-                
-                new_content = new_content[:insertion_point] + ad_html + new_content[insertion_point:]
-                logging.info(f"[WP] Inserted ad after section {section_index} ({position})")
-                
-                # Re-find sections after insertion (positions have changed)
-                all_sections = list(re.finditer(smartlink_block_pattern, new_content, re.DOTALL))
-            else:
-                logging.warning(f"[WP] Cannot insert ad at position {position} - section {section_index} not found")
+                    
+                    new_content = new_content[:absolute_insertion_point] + ad_html + new_content[absolute_insertion_point:]
+                    logging.info(f"[WP] Inserted ad after button row {position} (row index {row_index})")
+                    
+                    # Re-find sections after insertion (positions have changed)
+                    all_sections = list(re.finditer(smartlink_block_pattern, new_content, re.DOTALL))
+                    if all_sections:
+                        today_section = all_sections[0]
+                        today_section_content = today_section.group(0)
+                        today_section_start = today_section.start()
+                        button_rows = list(re.finditer(button_rows_pattern, today_section_content, re.DOTALL))
+                else:
+                    logging.warning(f"[WP] Cannot insert ad after row {position} - only {len(button_rows)} rows exist")
+        else:
+            logging.warning(f"[WP] No sections found, cannot insert ad codes")
     
     # Update the post
     payload = {"content": new_content}
@@ -557,7 +593,7 @@ async def update_post_links_section(post_id: int, links: List[Link], wp_site: Op
     timeout = httpx.Timeout(60.0, connect=20.0)  # 60s read for POST (can be slow), 20s connect (increased from 10s)
     max_retries = 3
     
-    logging.info(f"[WP] Updating post {post_id}: {len(merged_links)} links, {len(configured_ad_codes)} ads")
+    logging.info(f"[WP] Updating post {post_id}: {len(merged_links)} links")
     
     for attempt in range(max_retries):
         try:

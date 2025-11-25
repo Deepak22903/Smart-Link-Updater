@@ -117,8 +117,12 @@ class PostConfig(BaseModel):
     )
     ad_codes: Optional[List[Dict[str, Any]]] = (
         None  # NEW: Ad codes to insert between sections
-        # Format: [{"code": "<script>...</script>", "position": "after_today"}, ...]
-        # Positions: "after_today", "after_yesterday", "after_N_days" (where N is number of days ago)
+        # Format: [{"code": "<script>...</script>", "position": 1}, ...]
+        # Position is integer: 1 = after first button row, 2 = after second row, etc.
+    )
+    site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = (
+        None  # NEW: Per-site ad codes. Maps site_key -> List[AdCode]
+        # Format: {"default": [{"position": 1, "code": "..."}], "site1": [...]}
     )
 
 
@@ -157,8 +161,8 @@ class PostConfigUpdate(BaseModel):
     site_post_ids: Optional[Dict[str, int]] = (
         None  # Maps site_key -> post_id for each WordPress site
     )
-    ad_codes: Optional[List[Dict[str, Any]]] = (
-        None  # Ad codes to insert between sections
+    site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = (
+        None  # Per-site ad codes
     )
 
 
@@ -252,14 +256,12 @@ async def configure_post(config: PostConfig = Body(...)):
     if config.extractor_map:
         post_config["extractor_map"] = config.extractor_map
 
-    # Add ad_codes if provided
-    if config.ad_codes:
-        post_config["ad_codes"] = config.ad_codes
+    # Add site_ad_codes if provided
+    if config.site_ad_codes:
+        post_config["site_ad_codes"] = config.site_ad_codes
         logging.info(
-            f"[SAVE CONFIG] Saving ad_codes for post {config.post_id}: {config.ad_codes}"
+            f"[SAVE CONFIG] Saving site_ad_codes for post {config.post_id}: {len(config.site_ad_codes)} sites"
         )
-    else:
-        logging.info(f"[SAVE CONFIG] No ad_codes provided for post {config.post_id}")
 
     mongo_storage.set_post_config(post_config)
 
@@ -326,11 +328,9 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     logging.info(
         f"[UPDATE CONFIG] Received update_data keys: {list(update_data.keys())}"
     )
-    logging.info(f"[UPDATE CONFIG] Raw config_update.ad_codes: {config_update.ad_codes}")
-    if "ad_codes" in update_data:
-        logging.info(f"[UPDATE CONFIG] ad_codes in update: {update_data['ad_codes']}")
-    else:
-        logging.info(f"[UPDATE CONFIG] ad_codes NOT in update_data")
+    
+    if "site_ad_codes" in update_data:
+        logging.info(f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites")
 
     # Convert HttpUrl objects to strings if present
     if "source_urls" in update_data and update_data["source_urls"] is not None:
@@ -345,14 +345,9 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     # Create the full updated configuration object to be saved
     # This ensures we don't accidentally remove fields
     final_config = {**existing_config, **update_data}
-
-    logging.info(
-        f"[UPDATE CONFIG] final_config has ad_codes: {'ad_codes' in final_config}"
-    )
-    if "ad_codes" in final_config:
-        logging.info(
-            f"[UPDATE CONFIG] final_config ad_codes value: {final_config['ad_codes']}"
-        )
+    
+    # Clean up any legacy ad_codes field that might exist
+    final_config.pop("ad_codes", None)
 
     # Remove _id field as it's immutable in MongoDB and managed by the database
     final_config.pop("_id", None)
@@ -571,67 +566,119 @@ async def add_manual_links(request: ManualLinkRequest):
     if not manual_links:
         return {"success": False, "message": "No links provided", "links_added": 0}
 
-    # Determine target site and post ID
-    target_site_key = None
-    target_post_id = request.post_id
-
-    # Use the target from the request to determine which site to update
-    if request.target and request.target != "this":
+    # Determine targets to process
+    targets_to_process = []
+    
+    if request.target == "all":
+        # Fetch all configured sites
+        sites = get_configured_wp_sites()
+        logging.info(f"[MANUAL LINKS] Target=all, found {len(sites)} configured sites")
+        
+        # Always include default site if it has a post ID
+        default_post_id = config.get("post_id")
+        if default_post_id:
+            targets_to_process.append({"site_key": None, "post_id": default_post_id})
+            logging.info(f"[MANUAL LINKS] Added default site with post_id={default_post_id}")
+        
+        # Add all configured sites from WP_SITES
+        if sites:
+            for site_key in sites:
+                site_post_id = resolve_post_id_for_site(config, site_key)
+                if site_post_id:
+                    targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
+                    logging.info(f"[MANUAL LINKS] Added target: site={site_key}, post_id={site_post_id}")
+                else:
+                    logging.warning(f"[MANUAL LINKS] No post ID for site {site_key} on post {request.post_id}")
+        
+        if not targets_to_process:
+            logging.warning(f"[MANUAL LINKS] No targets found for 'all', falling back to request.post_id")
+            targets_to_process.append({"site_key": None, "post_id": request.post_id})
+            
+    elif request.target and request.target != "this":
         # User selected a specific site
         target_site_key = request.target
         resolved_id = resolve_post_id_for_site(config, request.target)
-        if resolved_id:
-            target_post_id = resolved_id
-        else:
-            # If no site-specific post ID, use the default post_id
-            target_post_id = request.post_id
+        target_post_id = resolved_id if resolved_id else request.post_id
+        targets_to_process.append({"site_key": target_site_key, "post_id": target_post_id})
+        logging.info(f"[MANUAL LINKS] Single target: site={target_site_key}, post_id={target_post_id}")
+    else:
+        # Default to "this" site
+        targets_to_process.append({"site_key": None, "post_id": request.post_id})
+        logging.info(f"[MANUAL LINKS] Default 'this' site with post_id={request.post_id}")
+    
+    logging.info(f"[MANUAL LINKS] Total targets to process: {len(targets_to_process)}")
 
-    # Deduplicate against known links
-    known_fps = mongo_storage.get_known_fingerprints(
-        target_post_id, request.date, target_site_key
-    )
-    new_links = dedupe_by_fingerprint(manual_links, known_fps)
+    total_links_added = 0
+    total_sections_pruned = 0
+    sites_updated_count = 0
+    duplicates_count = 0
+    
+    # Process each target
+    for target_info in targets_to_process:
+        target_site_key = target_info["site_key"]
+        target_post_id = target_info["post_id"]
+        
+        logging.info(f"[MANUAL LINKS] Processing site={target_site_key or 'default'}, post_id={target_post_id}")
+        
+        # Deduplicate against known links for this specific site
+        known_fps = mongo_storage.get_known_fingerprints(
+            target_post_id, request.date, target_site_key
+        )
+        new_links = dedupe_by_fingerprint(manual_links, known_fps)
+        
+        logging.info(f"[MANUAL LINKS] Site {target_site_key}: {len(manual_links)} provided, {len(new_links)} new after dedup")
+        
+        if not new_links:
+            duplicates_count += len(manual_links)
+            logging.info(f"[MANUAL LINKS] All links were duplicates for site {target_site_key}")
+            continue
 
-    if not new_links:
+        # Update WordPress
+        try:
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, target_site_key, config, target_site_key
+            )
+            
+            if not wp_result.get("error"):
+                total_links_added += wp_result.get("links_added", 0)
+                total_sections_pruned += wp_result.get("sections_pruned", 0)
+                sites_updated_count += 1
+                
+                logging.info(f"[MANUAL LINKS] Successfully updated site {target_site_key}: {len(new_links)} links added")
+                
+                # Store fingerprints for deduplication
+                new_fps = {fingerprint(link) for link in new_links}
+                mongo_storage.save_new_links(
+                    target_post_id, request.date, new_fps, target_site_key
+                )
+            else:
+                logging.error(f"[MANUAL LINKS] Error result from WordPress for site {target_site_key}: {wp_result.get('error')}")
+        except Exception as e:
+            logging.error(f"[MANUAL LINKS] Exception updating site {target_site_key}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            # Continue to next site
+
+    if sites_updated_count == 0 and len(targets_to_process) > 0:
+        # If we tried to update but everything was a duplicate or failed
         return {
             "success": True,
-            "message": "All links were duplicates",
+            "message": "All links were duplicates or updates failed",
             "links_provided": len(manual_links),
             "links_added": 0,
             "duplicates": len(manual_links),
         }
 
-    # Update WordPress
-    try:
-        if target_site_key:
-            # Update specific site
-            wp_result = await update_post_links_section(
-                target_post_id, new_links, target_site_key, config
-            )
-        else:
-            # Update "this" site (default)
-            wp_result = await update_post_links_section(
-                target_post_id, new_links, None, config
-            )
+    return {
+        "success": True,
+        "message": f"Successfully added {total_links_added} manual links across {sites_updated_count} sites" if request.target == "all" else f"Successfully added {total_links_added} manual links",
+        "links_provided": len(manual_links),
+        "links_added": total_links_added,
+        "duplicates": len(manual_links) * len(targets_to_process) - total_links_added if request.target == "all" else len(manual_links) - total_links_added, # Approx metric for all sites
+        "sections_pruned": total_sections_pruned,
+    }
 
-        # Store fingerprints for deduplication
-        new_fps = {fingerprint(link) for link in new_links}
-        mongo_storage.save_new_links(
-            target_post_id, request.date, new_fps, target_site_key
-        )
 
-        return {
-            "success": True,
-            "message": f"Successfully added {len(new_links)} manual links",
-            "links_provided": len(manual_links),
-            "links_added": wp_result.get("links_added", len(new_links)),
-            "duplicates": len(manual_links) - len(new_links),
-            "sections_pruned": wp_result.get("sections_pruned", 0),
-        }
-
-    except Exception as e:
-        logging.error(f"Error adding manual links: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to add links: {str(e)}")
 
 
 @app.get("/api/extractors/list")
@@ -1017,8 +1064,9 @@ async def update_post_now(
                                 "error": f"No post ID configured for site '{wp_site}'"
                             }
                         else:
+                            # Pass wp_site as both target_site_key and wp_site for proper resolution
                             wp_result = await update_post_links_section(
-                                site_post_id, new_links, wp_site, config
+                                site_post_id, new_links, wp_site, config, wp_site
                             )
                     elif isinstance(wp_site, dict) and "url" in wp_site:
                         # wp_site is the actual site config - use first configured site
@@ -1033,15 +1081,16 @@ async def update_post_now(
                                     "error": f"No post ID configured for site '{first_site_key}'"
                                 }
                             else:
+                                # Pass site_key for both target and wp_site
                                 wp_result = await update_post_links_section(
-                                    site_post_id, new_links, first_site_key, config
+                                    site_post_id, new_links, first_site_key, config, first_site_key
                                 )
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
                     elif wp_site is None:
                         # No wp_site specified - use environment variables (default site)
                         wp_result = await update_post_links_section(
-                            target_post_id, new_links, None, config
+                            target_post_id, new_links, None, config, None
                         )
                     else:
                         wp_result = {"error": "Invalid wp_site configuration"}
@@ -1163,7 +1212,7 @@ async def update_post_now(
 
                     # Update this site with resolved post ID
                     wp_result = await update_post_links_section(
-                        site_post_id, new_links, site_key, config
+                        site_post_id, new_links, site_key, config, site_key
                     )
                     results[site_key] = wp_result
 
@@ -1331,7 +1380,7 @@ async def run_update_sync(
 
         # Step 3: Update WordPress using the resolved post ID
         wp_result = await update_post_links_section(
-            target_post_id, new_links, wp_site, config
+            target_post_id, new_links, target_site_key, config, target_site_key
         )
 
         # Step 4: Save fingerprints for new links (site-specific with correct post ID)
@@ -1672,58 +1721,89 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         )
 
         # Resolve the correct post ID for the target site
-        if target == "this":
+        targets_to_process = []
+        
+        if target == "all":
+            # Fetch all configured sites
+            sites = get_configured_wp_sites()
+            if not sites:
+                # If no sites configured, maybe fallback to default env? 
+                # For now, let's assume at least one site or default env
+                targets_to_process.append({"site_key": None, "post_id": post_id})
+            else:
+                for site_key in sites:
+                    site_post_id = resolve_post_id_for_site(config, site_key)
+                    if site_post_id:
+                        targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
+                    else:
+                        print(f"[BATCH] Warning: No post ID for site {site_key} on post {post_id}")
+        elif target == "this":
             # For "this" site, use the post_id directly (legacy support)
-            target_post_id = post_id
-            target_site_key = None  # No specific site key for "this"
+            targets_to_process.append({"site_key": None, "post_id": post_id})
         else:
             # For specific sites, resolve the site-specific post ID
             target_post_id = resolve_post_id_for_site(config, target)
-            target_site_key = target
             if not target_post_id:
                 raise Exception(f"No post ID configured for site '{target}'")
+            targets_to_process.append({"site_key": target, "post_id": target_post_id})
 
-        known_fps = mongo_storage.get_known_fingerprints(
-            target_post_id, today_iso, target_site_key
-        )
-        new_links = dedupe_by_fingerprint(all_links, known_fps)
-
-        await manager.update_post_state(
-            request_id,
-            post_id,
-            progress=80,
-            message=f"Updating WordPress ({len(new_links)} new links)",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Found {len(new_links)} new links after deduplication (had {len(known_fps)} known fingerprints)",
-        )
-
-        # Update WordPress with the correct post ID and site key
-        if target == "this":
-            # For "this" site, don't pass site key (uses default from environment)
-            wp_result = await update_post_links_section(
-                target_post_id, new_links, None, config
+        total_links_added = 0
+        total_sections_pruned = 0
+        sites_updated_count = 0
+        
+        for target_info in targets_to_process:
+            target_site_key = target_info["site_key"]
+            target_post_id = target_info["post_id"]
+            
+            # Deduplicate against known links for this specific site
+            known_fps = mongo_storage.get_known_fingerprints(
+                target_post_id, today_iso, target_site_key
             )
-        else:
-            # For specific sites, pass the site key
-            wp_result = await update_post_links_section(
-                target_post_id, new_links, target, config
-            )
+            new_links = dedupe_by_fingerprint(all_links, known_fps)
 
-        # Save fingerprints for this specific site using the correct post ID
-        if new_links:
-            new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(
-                target_post_id, today_iso, new_fps, target_site_key
-            )
             await manager.update_post_state(
                 request_id,
                 post_id,
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for post_id={target_post_id}, date={today_iso}, site={target_site_key or 'default'}",
+                progress=80,
+                message=f"Updating {target_site_key or 'default'} ({len(new_links)} new)",
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {len(new_links)} new links",
             )
 
+            # Update WordPress
+            wp_result = await update_post_links_section(
+                target_post_id, new_links, target_site_key, config, target_site_key
+            )
+            
+            if not wp_result.get("error"):
+                total_links_added += wp_result.get("links_added", 0)
+                total_sections_pruned += wp_result.get("sections_pruned", 0)
+                sites_updated_count += 1
+                
+                # Save fingerprints for this specific site
+                if new_links:
+                    new_fps = {fingerprint(link) for link in new_links}
+                    mongo_storage.save_new_links(
+                        target_post_id, today_iso, new_fps, target_site_key
+                    )
+                    await manager.update_post_state(
+                        request_id,
+                        post_id,
+                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for site {target_site_key or 'default'}",
+                    )
+            else:
+                await manager.update_post_state(
+                    request_id,
+                    post_id,
+                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Error updating site {target_site_key or 'default'}: {wp_result.get('error')}",
+                )
+
         # Determine status based on results
-        if wp_result["links_added"] > 0:
+        if total_links_added > 0:
             status = UpdateStatus.SUCCESS
-            message = f"Added {wp_result['links_added']} links"
+            if target == "all":
+                message = f"Added {total_links_added} links across {sites_updated_count} sites"
+            else:
+                message = f"Added {total_links_added} links"
         elif len(all_links) > 0:
             # Links were found but all were duplicates
             status = UpdateStatus.NO_CHANGES
@@ -1741,8 +1821,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             progress=100,
             message=message,
             links_found=len(all_links),
-            links_added=wp_result["links_added"],
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {wp_result['links_added']} links added, {wp_result['sections_pruned']} old sections pruned",
+            links_added=total_links_added,
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {total_links_added} links added, {total_sections_pruned} old sections pruned",
         )
 
     except Exception as e:

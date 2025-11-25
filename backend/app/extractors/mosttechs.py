@@ -17,103 +17,73 @@ class MostTechsExtractor(BaseExtractor):
     def extract(self, html: str, date: str) -> List[Link]:
         """
         Extract links from HTML content for a specific date.
-        Extracts all links from today's date section until yesterday's date heading is encountered.
+        Links are in format: <p>1.<a href="...">4x free credits 25.11.2025</a></p>
+        Date is embedded in the link text as DD.MM.YYYY format.
         """
         soup = BeautifulSoup(html, 'html.parser')
         links = []
 
-        # Parse the date and create multiple format variations
+        # Parse the target date
         try:
             date_obj = datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
             try:
                 date_obj = datetime.strptime(date, "%d %b %Y")
             except ValueError:
-                date_obj = None
-        
-        if not date_obj:
-            print(f"[MostTechsExtractor] Could not parse date: {date}")
-            return links
-        
-        # Calculate yesterday's date
-        yesterday_obj = date_obj - timedelta(days=1)
-        
-        # Format variations for today: "9 Nov 2025", "9 November 2025", "09 Nov 2025", "09 November 2025"
-        today_short = date_obj.strftime("%d %b %Y").lstrip('0')     # "9 Nov 2025"
-        today_long = date_obj.strftime("%d %B %Y").lstrip('0')      # "9 November 2025"
-        today_short_padded = date_obj.strftime("%d %b %Y")          # "09 Nov 2025"
-        today_long_padded = date_obj.strftime("%d %B %Y")           # "09 November 2025"
-        
-        # Format variations for yesterday: "8 Nov 2025", "8 November 2025", etc.
-        yesterday_short = yesterday_obj.strftime("%d %b %Y").lstrip('0')
-        yesterday_long = yesterday_obj.strftime("%d %B %Y").lstrip('0')
-        yesterday_short_padded = yesterday_obj.strftime("%d %b %Y")
-        yesterday_long_padded = yesterday_obj.strftime("%d %B %Y")
+                print(f"[MostTechsExtractor] Could not parse date: {date}")
+                return links
         
         date_iso = date_obj.isoformat()
-
-        # Find the <p> tag containing today's date
-        date_heading_p = None
-        for p_tag in soup.find_all("p"):
-            p_text = p_tag.get_text(strip=True)
-            if (today_short in p_text or today_long in p_text or 
-                today_short_padded in p_text or today_long_padded in p_text):
-                date_heading_p = p_tag
-                print(f"[MostTechsExtractor] Found today's date heading: {p_text}")
-                break
-
-        if not date_heading_p:
-            print(f"[MostTechsExtractor] No heading found for date: '{today_short}' or '{today_long}'")
-            return links
-
-        # Extract links from following siblings until we hit yesterday's date heading
-        date_pattern = re.compile(
-            r"\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|"
-            r"Jul|July|Aug|August|Sep|September|Oct|October|Nov|November|Dec|December)\s+\d{4}", 
-            re.IGNORECASE
-        )
+        
+        # Format target date as DD.MM.YYYY (e.g., "25.11.2025")
+        target_date_str = date_obj.strftime("%d.%m.%Y")
+        
+        print(f"[MostTechsExtractor] Looking for links with date: {target_date_str}")
+        
+        # Pattern to match dates in DD.MM.YYYY format within link text
+        date_in_text_pattern = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{4})')
         
         link_count = 0
-        for sibling in date_heading_p.find_next_siblings():
-            # Skip non-paragraph elements and divs (like ad blocks)
-            if sibling.name not in ["p", "div"]:
+        
+        # Find all <p> tags that contain links
+        for p_tag in soup.find_all("p"):
+            a_tag = p_tag.find("a")
+            if not a_tag:
                 continue
             
-            # Check if this sibling contains yesterday's date (stop boundary)
-            sibling_text = sibling.get_text(strip=True)
-            if (yesterday_short in sibling_text or yesterday_long in sibling_text or
-                yesterday_short_padded in sibling_text or yesterday_long_padded in sibling_text):
-                print(f"[MostTechsExtractor] Encountered yesterday's date boundary: {sibling_text}")
-                break
+            href = a_tag.get("href", "")
+            if not href.startswith("http"):
+                continue
             
-            # Skip if it's another future date heading (shouldn't happen but good safeguard)
-            if date_pattern.search(sibling_text):
-                matched_date = date_pattern.search(sibling_text).group()
-                # Parse the matched date to check if it's before yesterday
-                try:
-                    matched_obj = datetime.strptime(matched_date, "%d %b %Y")
-                except ValueError:
-                    try:
-                        matched_obj = datetime.strptime(matched_date, "%d %B %Y")
-                    except ValueError:
-                        matched_obj = None
-                
-                if matched_obj and matched_obj < yesterday_obj:
-                    print(f"[MostTechsExtractor] Encountered older date boundary: {matched_date}")
-                    break
+            # Get the link text
+            link_text = a_tag.get_text(strip=True)
             
-            # Extract link from this paragraph or div
-            a_tag = sibling.find("a")
-            if a_tag and a_tag.get("href") and a_tag.get("href").startswith("http"):
+            # Check if the link text contains a date in DD.MM.YYYY format
+            date_match = date_in_text_pattern.search(link_text)
+            if not date_match:
+                continue
+            
+            # Parse the date from the link text
+            day, month, year = date_match.groups()
+            try:
+                link_date_obj = datetime(int(year), int(month), int(day))
+            except ValueError:
+                continue
+            
+            # Check if this link's date matches our target date
+            if link_date_obj.date() == date_obj.date():
                 link_count += 1
-                link_title = a_tag.get_text(strip=True) or f"Link {link_count}"
+                
+                # Clean up the title (remove number prefix if present)
+                clean_title = re.sub(r'^\d+\.\s*', '', link_text)
+                
                 links.append(Link(
-                    title=link_title,
-                    url=a_tag.get("href"),
+                    title=clean_title,
+                    url=href,
                     date=date,
                     published_date_iso=date_iso
                 ))
-                print(f"[MostTechsExtractor] Extracted link {link_count}: {link_title}")
+                print(f"[MostTechsExtractor] Extracted link {link_count}: {clean_title} ({href})")
         
-        print(f"[MostTechsExtractor] Total links extracted: {len(links)}")
+        print(f"[MostTechsExtractor] Total links extracted for {target_date_str}: {len(links)}")
         return links

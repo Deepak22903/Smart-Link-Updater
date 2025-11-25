@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://poly-storm-sites-type.trycloudflare.com';
+    private $api_base_url = 'https://audit-magazines-themes-receiving.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -1060,7 +1060,7 @@ class SmartLinkUpdater {
                 $('#add-new-config-btn').on('click', openAddConfigModal);
                 $('#save-config-btn').on('click', savePostConfig);
                 $('#add-url-btn').on('click', addSourceUrlField);
-                $('#add-ad-code-btn').on('click', function() { addAdCodeField(); });
+                // Ad code buttons are now handled per-site in initializeAdCodeAccordion()
                 // Removed: extractor-mode toggle - now always manual configuration
                 
                 // Delegate checkbox change event
@@ -2712,6 +2712,10 @@ class SmartLinkUpdater {
                 `);
                 
                 loadSitePostIdFields();
+                
+                // Initialize ad code accordion
+                initializeAdCodeAccordion();
+                
                 $('#post-config-modal').fadeIn();
             }
             
@@ -2734,71 +2738,44 @@ class SmartLinkUpdater {
                     },
                     success: function(postConfig) {
                         console.log('Loaded config:', postConfig);
-                        console.log('postConfig.ad_codes:', postConfig.ad_codes);
-                        console.log('typeof postConfig.ad_codes:', typeof postConfig.ad_codes);
-                        const allKeys = Object.keys(postConfig);
-                        console.log('All config keys:', allKeys);
-                        console.log('Total keys:', allKeys.length);
-                        console.log('Last key:', allKeys[allKeys.length - 1]);
                         
                         // Populate content slug
                         $('#config-content-slug').val(postConfig.content_slug || '');
                         
-                        // Populate source URLs
+                        // Populate source URLs with extractors
                         const sourceUrls = postConfig.source_urls || [];
+                        const extractorMap = postConfig.extractor_map || {};
                         $('#source-urls-container').empty();
                         
-                        sourceUrls.forEach(function(url, index) {
-                            const showRemove = sourceUrls.length > 1;
-                            $('#source-urls-container').append(`
-                                <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
-                                    <input type="url" class="source-url-input smartlink-input" value="${url}" required
-                                           style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
-                                    <button type="button" class="button remove-url-btn" style="${showRemove ? '' : 'display: none;'}">
-                                        <span class="dashicons dashicons-no-alt"></span>
-                                    </button>
-                                </div>
-                            `);
-                        });
+                        if (sourceUrls.length === 0) {
+                            // Add one empty row if no URLs
+                            addSourceUrlField();
+                        } else {
+                            sourceUrls.forEach(function(url) {
+                                const extractor = extractorMap[url] || '';
+                                addSourceUrlField(url, extractor);
+                            });
+                        }
                         
                         // Set timezone
                         $('#config-timezone').val(postConfig.timezone || 'Asia/Kolkata');
                         
-                        // Set extractor mode
-                        const extractorMap = postConfig.extractor_map || {};
-                        
-                        // Always show per-URL extractor mapping (no auto-detect mode)
-                        updateExtractorMapping();
-                        
-                        // Populate extractor map after DOM updates
-                        setTimeout(function() {
-                            Object.keys(extractorMap).forEach(function(url) {
-                                const selector = $(`select.extractor-url-mapping[data-url="${url}"]`);
-                                if (selector.length > 0) {
-                                    selector.val(extractorMap[url]);
-                                    console.log('Set extractor for', url, 'to', extractorMap[url]);
-                                } else {
-                                    console.warn('Could not find selector for URL:', url);
-                                }
-                            });
-                        }, 100);
-                        
                         // Load site post IDs
                         loadSitePostIdFields(postConfig.site_post_ids);
                         
-                        // Load ad codes
-                        const adCodes = postConfig.ad_codes || [];
-                        console.log('Loading ad codes:', adCodes);
-                        $('#ad-codes-container').empty();
-                        if (adCodes.length > 0) {
-                            console.log('Creating fields for', adCodes.length, 'ad codes');
-                            adCodes.forEach(adCode => {
-                                console.log('Adding ad code field:', adCode);
-                                addAdCodeField(adCode);
-                            });
-                        } else {
-                            console.log('No ad codes to load');
-                        }
+                        // Initialize ad code accordion
+                        initializeAdCodeAccordion();
+                        
+                        // Load site-specific ad codes
+                        setTimeout(function() {
+                            const siteAdCodes = postConfig.site_ad_codes || {};
+                            
+                            console.log('site_ad_codes:', siteAdCodes);
+                            
+                            if (Object.keys(siteAdCodes).length > 0) {
+                                loadSiteAdCodes(siteAdCodes);
+                            }
+                        }, 300);  // Wait for accordion to initialize
                         
                         $('#post-config-modal').fadeIn();
                     },
@@ -2812,6 +2789,7 @@ class SmartLinkUpdater {
                 const mode = $('#config-mode').val();
                 const postId = parseInt($('#config-post-id').val());
                 const contentSlug = $('#config-content-slug').val().trim();
+                const $btn = $('#save-config-btn');
                 
                 // Collect site_post_ids
                 const sitePostIds = {};
@@ -2860,41 +2838,41 @@ class SmartLinkUpdater {
                     configData.site_post_ids = sitePostIds;
                 }
                 
-                // Add ad codes (always include, even if empty array)
-                const adCodes = getAdCodes();
-                console.log('Ad codes collected:', adCodes);
-                configData.ad_codes = adCodes;
-                console.log('Ad codes added to configData');
+                // Add site-specific ad codes
+                let siteAdCodes = getSiteAdCodes();
+                console.log('Site ad codes collected:', siteAdCodes);
+                // Ensure it's always an object (never array), or omit if empty
+                if (Object.keys(siteAdCodes).length > 0) {
+                    configData.site_ad_codes = siteAdCodes;
+                    console.log('Site ad codes added to configData:', configData.site_ad_codes);
+                } else {
+                    // Don't include site_ad_codes if empty to avoid serialization issues
+                    console.log('No site ad codes to add');
+                }
                 
-                // Handle extractor configuration - always require manual configuration per URL
+                // Handle extractor configuration from inline selectors
+                // Only include mappings for URLs where an extractor is explicitly selected.
+                // If no extractor is chosen for a URL, the backend will default to Gemini.
                 const extractorMap = {};
-                let hasAllExtractors = true;
-                
-                $('.extractor-url-mapping').each(function() {
-                    const url = $(this).data('url');
-                    const extractor = $(this).val();
-                    console.log('Processing URL:', url, 'Extractor:', extractor);
-                    
-                    if (!extractor) {
-                        hasAllExtractors = false;
-                    } else {
+                $('.source-url-row').each(function() {
+                    const url = $(this).find('.source-url-input').val().trim();
+                    const extractor = $(this).find('.extractor-select').val();
+
+                    if (url && extractor) {
                         extractorMap[url] = extractor;
                     }
                 });
-                
-                // Validate that all URLs have extractors
-                if (!hasAllExtractors) {
-                    showToast('Please select an extractor for all source URLs', 'error');
-                    $btn.prop('disabled', false).html('<span class="dashicons dashicons-yes"></span> <span id="save-config-text">Save Configuration</span>');
-                    return;
+
+                // If any extractors were chosen, send the mapping; otherwise omit it
+                if (Object.keys(extractorMap).length > 0) {
+                    console.log('Final extractor_map:', extractorMap);
+                    configData.extractor_map = extractorMap;
+                } else {
+                    console.log('No extractor_map provided; backend will use default extractor');
                 }
-                
-                console.log('Final extractor_map:', extractorMap);
-                configData.extractor_map = extractorMap;
                 
                 console.log('Config data to send:', configData);                
                 // Disable button and show loading
-                const $btn = $('#save-config-btn');
                 $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
                 
                 // Send to API
@@ -2917,7 +2895,19 @@ class SmartLinkUpdater {
                         loadPosts(); // Refresh posts table
                     },
                     error: function(xhr) {
-                        showToast('Failed to save configuration: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
+                        console.error('Save config error:', xhr);
+                        let errorMsg = 'Unknown error';
+                        if (xhr.responseJSON && xhr.responseJSON.message) {
+                            errorMsg = xhr.responseJSON.message;
+                        } else if (xhr.responseText) {
+                            try {
+                                const errorData = JSON.parse(xhr.responseText);
+                                errorMsg = errorData.message || errorData.detail || xhr.statusText;
+                            } catch (e) {
+                                errorMsg = xhr.statusText || 'Server error';
+                            }
+                        }
+                        showToast('Failed to save configuration: ' + errorMsg, 'error');
                     },
                     complete: function() {
                         $btn.prop('disabled', false).html(
@@ -3005,6 +2995,7 @@ class SmartLinkUpdater {
                                     </label>
                                     <select id="manual-links-site" style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: white;">
                                         <option value="this">This Site (Current WordPress Installation)</option>
+                                        <option value="all">All Sites</option>
                                     </select>
                                     <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Choose which site to update with these links</div>
                                 </div>
@@ -3224,16 +3215,36 @@ class SmartLinkUpdater {
                 });
             }
             
-            function addSourceUrlField() {
+            function addSourceUrlField(url = '', extractor = '') {
+                const showRemove = $('.source-url-row').length >= 1;
                 const newField = $(`
-                    <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
-                        <input type="url" class="source-url-input smartlink-input" placeholder="https://example.com/links/" required
-                               style="flex: 1; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
-                        <button type="button" class="button remove-url-btn">
-                            <span class="dashicons dashicons-no-alt"></span>
+                    <div class="source-url-row" style="display: grid; grid-template-columns: 2fr 1.5fr auto; gap: 8px; margin-bottom: 12px; padding: 12px; background: #f9f9f9; border-radius: 8px; align-items: center;">
+                        <div>
+                            <label style="display: block; margin-bottom: 4px; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase;">Source URL</label>
+                            <input type="url" class="source-url-input smartlink-input" placeholder="https://example.com/links/" value="${url}" required
+                                   style="width: 100%; padding: 10px; font-size: 14px; border: 2px solid #ddd; border-radius: 6px;">
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 4px; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase;">Extractor</label>
+                            <select class="extractor-select smartlink-select" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;">
+                                <option value="">-- Select Extractor --</option>
+                                <option value="simplegameguide">Simple Game Guide</option>
+                                <option value="mosttechs">Most Techs</option>
+                                <option value="crazyashwin">Crazy Ashwin</option>
+                                <option value="techyhigher">Techy Higher</option>
+                                <option value="default">Default (Gemini AI)</option>
+                            </select>
+                        </div>
+                        <button type="button" class="button remove-url-btn" style="${showRemove ? '' : 'display: none;'}; margin-top: 20px; height: 42px;">
+                            <span class="dashicons dashicons-trash"></span>
                         </button>
                     </div>
                 `);
+                
+                // Set extractor value if provided
+                if (extractor) {
+                    newField.find('.extractor-select').val(extractor);
+                }
                 
                 $('#source-urls-container').append(newField);
                 
@@ -3241,9 +3252,6 @@ class SmartLinkUpdater {
                 if ($('.source-url-row').length > 1) {
                     $('.remove-url-btn').show();
                 }
-                
-                // Always update extractor mapping (no more auto-detect mode)
-                updateExtractorMapping();
             }
             
             function removeSourceUrlField(e) {
@@ -3253,47 +3261,157 @@ class SmartLinkUpdater {
                 if ($('.source-url-row').length === 1) {
                     $('.remove-url-btn').hide();
                 }
-                
-                // Update extractor mapping if in per-url mode
-                const extractorMode = $('input[name="extractor-mode"]:checked').val();
-                if (extractorMode === 'per-url') {
-                    updateExtractorMapping();
-                }
             }
             
             // Removed toggleExtractorMode - now always manual configuration
             
             // ============ Ad Code Management Functions ============
             
-            function addAdCodeField(adCode = null) {
+            // New accordion-based UI (no need for currentAdSite tracking)
+            
+            function initializeAdCodeAccordion() {
+                // Get all available sites
+                $.ajax({
+                    url: config.apiUrl + '/api/sites/list',
+                    method: 'GET',
+                    success: function(response) {
+                        const sites = response.sites || {};
+                        const siteKeys = ['default', ...Object.keys(sites)];
+                        
+                        // Generate accordion sections
+                        const $accordion = $('#ad-codes-accordion');
+                        $accordion.empty();
+                        
+                        siteKeys.forEach(function(siteKey, index) {
+                            const isDefault = siteKey === 'default';
+                            const siteName = isDefault ? 'Default Site' : (sites[siteKey]?.base_url || siteKey);
+                            const siteUrl = isDefault ? '' : (sites[siteKey]?.base_url || '');
+                            const isFirst = index === 0;
+                            
+                            $accordion.append(`
+                                <div class="ad-site-section" data-site="${siteKey}" style="margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; background: white;">
+                                    <div class="ad-site-header" data-site="${siteKey}" style="padding: 15px; cursor: pointer; background: ${isFirst ? '#f0f7ff' : '#fafafa'}; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <span class="dashicons dashicons-arrow-down-alt2 ad-toggle-icon" style="font-size: 20px; color: #666; transition: transform 0.2s; transform: ${isFirst ? 'rotate(0deg)' : 'rotate(-90deg)'};"></span>
+                                            <div>
+                                                <strong style="font-size: 14px; color: #333;">${siteName}</strong>
+                                                ${siteUrl ? `<div style="font-size: 12px; color: #666; margin-top: 2px;">${siteUrl}</div>` : ''}
+                                            </div>
+                                        </div>
+                                        <span class="ad-count-badge" data-site="${siteKey}" style="background: #e0e0e0; color: #666; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">0 ads</span>
+                                    </div>
+                                    <div class="ad-site-content" style="display: ${isFirst ? 'block' : 'none'}; padding: 15px; border-top: 1px solid #eee;">
+                                        <div id="ad-container-${siteKey}" class="ad-site-container"></div>
+                                        <button type="button" class="button add-ad-btn" data-site="${siteKey}" style="margin-top: 10px; width: 100%;">
+                                            <span class="dashicons dashicons-plus-alt"></span>
+                                            Add Ad Code for ${siteName}
+                                        </button>
+                                    </div>
+                                </div>
+                            `);
+                        });
+                        
+                        // Set up accordion click handlers
+                        $('.ad-site-header').on('click', function() {
+                            const $section = $(this).closest('.ad-site-section');
+                            const $content = $section.find('.ad-site-content');
+                            const $icon = $(this).find('.ad-toggle-icon');
+                            const isOpen = $content.is(':visible');
+                            
+                            if (isOpen) {
+                                $content.slideUp(200);
+                                $icon.css('transform', 'rotate(-90deg)');
+                                $(this).css('background', '#fafafa');
+                            } else {
+                                $content.slideDown(200);
+                                $icon.css('transform', 'rotate(0deg)');
+                                $(this).css('background', '#f0f7ff');
+                            }
+                        });
+                        
+                        // Set up add button handlers
+                        $('.add-ad-btn').on('click', function() {
+                            const siteKey = $(this).data('site');
+                            addAdCodeField(siteKey);
+                        });
+                    },
+                    error: function() {
+                        console.warn('Failed to load sites for ad accordion, using default only');
+                        const $accordion = $('#ad-codes-accordion');
+                        $accordion.html(`
+                            <div class="ad-site-section" data-site="default" style="margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; background: white;">
+                                <div class="ad-site-header" style="padding: 15px; background: #f0f7ff; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+                                    <strong style="font-size: 14px; color: #333;">Default Site</strong>
+                                    <span class="ad-count-badge" data-site="default" style="background: #e0e0e0; color: #666; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">0 ads</span>
+                                </div>
+                                <div class="ad-site-content" style="display: block; padding: 15px; border-top: 1px solid #eee;">
+                                    <div id="ad-container-default" class="ad-site-container"></div>
+                                    <button type="button" class="button add-ad-btn" data-site="default" style="margin-top: 10px; width: 100%;">
+                                        <span class="dashicons dashicons-plus-alt"></span>
+                                        Add Ad Code
+                                    </button>
+                                </div>
+                            </div>
+                        `);
+                        
+                        $('.add-ad-btn').on('click', function() {
+                            addAdCodeField('default');
+                        });
+                    }
+                });
+            }
+            
+            function addAdCodeField(siteKey, adCode = null) {
                 const adCodeId = 'ad-code-' + Date.now();
+                const adNumber = $(`#ad-container-${siteKey} .ad-code-row`).length + 1;
+                
                 const newField = $(`
-                    <div class="ad-code-row" data-id="${adCodeId}" style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white;">
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px;">
-                                Position (Insert After):
+                    <div class="ad-code-row" data-id="${adCodeId}" data-site="${siteKey}" style="border: 2px solid #e8f0fe; border-radius: 8px; padding: 18px; margin-bottom: 12px; background: #f8fbff; position: relative;">
+                        <div style="position: absolute; top: 10px; right: 10px;">
+                            <button type="button" class="button remove-ad-code-btn" style="background: #dc3545; color: white; border: none; padding: 6px 12px; font-size: 12px;">
+                                <span class="dashicons dashicons-trash" style="font-size: 14px; line-height: 1;"></span>
+                                Remove
+                            </button>
+                        </div>
+                        
+                        <div style="margin-bottom: 3px;">
+                            <span class="ad-number-badge" style="display: inline-block; background: #667eea; color: white; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase;">Ad #${adNumber}</span>
+                        </div>
+                        
+                        <div style="margin-bottom: 15px; margin-top: 12px;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; font-size: 13px; color: #333;">
+                                <span class="dashicons dashicons-location" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                Display Position
                             </label>
-                            <select class="ad-position-select" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
-                                <option value="after_today">After Today's Section</option>
-                                <option value="after_1_day">After 1 Day Ago</option>
-                                <option value="after_2_days">After 2 Days Ago</option>
-                                <option value="after_3_days">After 3 Days Ago</option>
-                                <option value="after_4_days">After 4 Days Ago</option>
-                                <option value="after_5_days">After 5 Days Ago</option>
-                                <option value="after_6_days">After 6 Days Ago</option>
+                            <select class="ad-position-select" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; background: white;">
+                                <option value="1">📍 After Button Row 1 (First 3 buttons)</option>
+                                <option value="2">📍 After Button Row 2</option>
+                                <option value="3">📍 After Button Row 3</option>
+                                <option value="4">📍 After Button Row 4</option>
+                                <option value="5">📍 After Button Row 5</option>
+                                <option value="6">📍 After Button Row 6</option>
+                                <option value="7">📍 After Button Row 7</option>
+                                <option value="8">📍 After Button Row 8</option>
+                                <option value="9">📍 After Button Row 9</option>
+                                <option value="10">📍 After Button Row 10</option>
                             </select>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #666;">
+                                <span class="dashicons dashicons-info" style="font-size: 14px; vertical-align: middle;"></span>
+                                Ad appears after the specified button row in today's section only
+                            </p>
                         </div>
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 13px;">
-                                Ad Code (HTML/JavaScript):
+                        
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-weight: 600; font-size: 13px; color: #333;">
+                                <span class="dashicons dashicons-editor-code" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                Ad Code
                             </label>
-                            <textarea class="ad-code-textarea" rows="4" placeholder="Paste your Google AdSense or ad code here..."
-                                      style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
+                            <textarea class="ad-code-textarea" rows="5" placeholder="Paste your ad code here (HTML, JavaScript, Google AdSense, etc.)" style="width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; background: white;"></textarea>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #666;">
+                                <span class="dashicons dashicons-info" style="font-size: 14px; vertical-align: middle;"></span>
+                                Supports HTML, JavaScript, and ad network codes
+                            </p>
                         </div>
-                        <button type="button" class="button remove-ad-code-btn" style="background: #dc3545; color: white; border: none;">
-                            <span class="dashicons dashicons-trash"></span>
-                            Remove
-                        </button>
                     </div>
                 `);
                 
@@ -3303,55 +3421,98 @@ class SmartLinkUpdater {
                     newField.find('.ad-code-textarea').val(adCode.code);
                 }
                 
-                $('#ad-codes-container').append(newField);
+                $(`#ad-container-${siteKey}`).append(newField);
+                updateAdCount(siteKey);
             }
             
             function removeAdCodeField(e) {
-                $(e.currentTarget).closest('.ad-code-row').remove();
+                const $row = $(e.currentTarget).closest('.ad-code-row');
+                const siteKey = $row.data('site');
+                $row.fadeOut(200, function() {
+                    $(this).remove();
+                    updateAdCount(siteKey);
+                    renumberAds(siteKey);
+                });
             }
             
-            function getAdCodes() {
-                const adCodes = [];
-                $('.ad-code-row').each(function() {
-                    const position = $(this).find('.ad-position-select').val();
-                    const code = $(this).find('.ad-code-textarea').val().trim();
-                    if (code) {  // Only include if code is not empty
-                        adCodes.push({
-                            position: position,
-                            code: code
+            function updateAdCount(siteKey) {
+                const count = $(`#ad-container-${siteKey} .ad-code-row`).length;
+                const $section = $(`.ad-site-section[data-site="${siteKey}"]`);
+                const $badge = $section.find('.ad-count-badge');
+                
+                $badge.text(count + (count === 1 ? ' ad' : ' ads'));
+                
+                if (count > 0) {
+                    $badge.css({
+                        'background': '#667eea',
+                        'color': 'white'
+                    });
+                } else {
+                    $badge.css({
+                        'background': '#e0e0e0',
+                        'color': '#666'
+                    });
+                }
+            }
+            
+            function renumberAds(siteKey) {
+                $(`#ad-container-${siteKey} .ad-code-row`).each(function(index) {
+                    $(this).find('span').first().text('Ad #' + (index + 1));
+                });
+            }
+            
+            function getSiteAdCodes() {
+                const siteAdCodes = {};
+                
+                $('.ad-site-container').each(function() {
+                    const containerId = $(this).attr('id');
+                    const siteKey = containerId.replace('ad-container-', '');
+                    const adCodes = [];
+                    
+                    $(this).find('.ad-code-row').each(function() {
+                        const position = $(this).find('.ad-position-select').val();
+                        const code = $(this).find('.ad-code-textarea').val().trim();
+                        if (code) {
+                            adCodes.push({
+                                position: position,
+                                code: code
+                            });
+                        }
+                    });
+                    
+                    if (adCodes.length > 0) {
+                        siteAdCodes[siteKey] = adCodes;
+                    }
+                });
+                
+                return siteAdCodes;
+            }
+            
+            function loadSiteAdCodes(siteAdCodes) {
+                // Clear all containers first
+                $('.ad-site-container').empty();
+                
+                if (!siteAdCodes || Object.keys(siteAdCodes).length === 0) {
+                    console.log('No site-specific ad codes to load');
+                    return;
+                }
+                
+                // Load ad codes for each site
+                Object.keys(siteAdCodes).forEach(function(siteKey) {
+                    const adCodes = siteAdCodes[siteKey];
+                    if (adCodes && adCodes.length > 0) {
+                        console.log(`Loading ${adCodes.length} ad codes for site ${siteKey}`);
+                        adCodes.forEach(function(adCode) {
+                            addAdCodeField(siteKey, adCode);
                         });
                     }
                 });
-                return adCodes;  // Always return array, even if empty
             }
             
             // ============ End Ad Code Management ============
             
-            function updateExtractorMapping() {
-                const container = $('#extractor-mapping-container');
-                container.empty();
-                
-                $('.source-url-input').each(function(index) {
-                    const url = $(this).val().trim();
-                    if (!url) return;
-                    
-                    container.append(`
-                        <div style="margin-bottom: 12px; padding: 12px; background: #f9f9f9; border-radius: 8px;">
-                            <label style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; color: #555;">
-                                URL ${index + 1}: ${url.length > 50 ? url.substring(0, 50) + '...' : url}
-                            </label>
-                            <select class="extractor-url-mapping smartlink-select" data-url="${url}" style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;">
-                                <option value="">-- Select Extractor --</option>
-                                <option value="simplegameguide">Simple Game Guide</option>
-                                <option value="mosttechs">Most Techs</option>
-                                <option value="crazyashwin">Crazy Ashwin</option>
-                                <option value="techyhigher">Techy Higher</option>
-                                <option value="default">Default Extractor (Gemini AI)</option>
-                            </select>
-                        </div>
-                    `);
-                });
-            }
+            // Extractor mapping is now handled inline with each URL row
+            // No separate updateExtractorMapping needed
             
             // ========== TOAST NOTIFICATIONS ==========
             
@@ -3960,22 +4121,6 @@ class SmartLinkUpdater {
                                 </p>
                             </div>
                             
-                            <!-- Extractor Configuration -->
-                            <div style="margin-bottom: 20px;">
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
-                                    <span class="dashicons dashicons-admin-tools" style="font-size: 16px; vertical-align: middle;"></span>
-                                    Extractor Configuration (Required)
-                                </label>
-                                
-                                <div style="margin-bottom: 12px;">
-                                    <p style="color: #666; font-size: 13px; margin-bottom: 12px;">
-                                        <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
-                                        Specify the extractor for each source URL. This determines how links are extracted from the page.
-                                    </p>
-                                    <div id="extractor-mapping-container"></div>
-                                </div>
-                            </div>
-                            
                             <!-- Ad Codes Configuration -->
                             <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
                                 <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
@@ -3983,15 +4128,14 @@ class SmartLinkUpdater {
                                     Ad Code Placements (Optional)
                                 </label>
                                 <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
-                                    Add Google AdSense or other ad codes to display between date sections
+                                    <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                    Configure unique ad codes for each WordPress site. Each site displays only its own ads between date sections.
                                 </p>
-                                <div id="ad-codes-container">
-                                    <!-- Ad code rows will be inserted here -->
+                                
+                                <!-- Accordion-style containers per site -->
+                                <div id="ad-codes-accordion" style="margin-top: 15px;">
+                                    <!-- Site-specific accordion sections will be generated here -->
                                 </div>
-                                <button type="button" id="add-ad-code-btn" class="button" style="margin-top: 10px;">
-                                    <span class="dashicons dashicons-plus-alt"></span>
-                                    Add Ad Code
-                                </button>
                             </div>
                             
                             <!-- Timezone -->
@@ -4495,7 +4639,7 @@ class SmartLinkUpdater {
         $api_url = $this->api_base_url . '/api/posts/list';
         
         $response = wp_remote_get($api_url, array(
-            'timeout' => 10
+            'timeout' => 100
         ));
         
         if (is_wp_error($response)) {
@@ -4927,7 +5071,7 @@ class SmartLinkUpdater {
         
         // Count total posts
         $api_url = $this->api_base_url . '/api/posts/list';
-        $response = wp_remote_get($api_url, array('timeout' => 10));
+        $response = wp_remote_get($api_url, array('timeout' => 100));
         $total_posts = 0;
         
         if (!is_wp_error($response)) {
@@ -5051,7 +5195,7 @@ class SmartLinkUpdater {
         
         // Get all configured posts from API
         $api_url = $this->api_base_url . '/api/posts/list';
-        $response = wp_remote_get($api_url, array('timeout' => 10));
+        $response = wp_remote_get($api_url, array('timeout' => 100));
         
         if (is_wp_error($response)) {
             error_log('SmartLink: Failed to fetch posts - ' . $response->get_error_message());
