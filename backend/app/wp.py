@@ -42,12 +42,22 @@ def get_link_target(url: str) -> str:
 
 
 def _load_wp_sites() -> Dict[str, Dict[str, Any]]:
-    """Load WP sites mapping from config file or env var `WP_SITES` (JSON).
+    """Load WP sites mapping from MongoDB, with fallback to config file or env var.
 
     Returns a dict of site_key -> site_config. Example:
     {"site_b": {"base_url": "https://siteb.com", "username": "a", "app_password": "p"}}
     """
-    # Priority 1: Check for config file (dynamic updates)
+    # Priority 1: Check MongoDB (persistent storage)
+    try:
+        from . import mongo_storage
+        sites = mongo_storage.get_all_wp_sites()
+        if sites:
+            logging.debug(f"[WP] Loaded {len(sites)} sites from MongoDB")
+            return sites
+    except Exception as e:
+        logging.warning(f"[WP] Failed to load sites from MongoDB: {e}")
+    
+    # Priority 2: Check for config file (backward compatibility)
     config_file = "/tmp/wp_sites_config.json"
     if os.path.exists(config_file):
         try:
@@ -59,7 +69,7 @@ def _load_wp_sites() -> Dict[str, Dict[str, Any]]:
         except Exception as e:
             logging.error(f"[WP] Failed to load sites from {config_file}: {e}")
     
-    # Priority 2: Fallback to environment variable
+    # Priority 3: Fallback to environment variable
     if not WP_SITES_JSON:
         return {}
     try:
@@ -144,7 +154,8 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     - Backward compatible with old div-based format (will upgrade to block format)
     
     **Automatic Cleanup:**
-    - Automatically prunes sections older than 5 days to prevent content from piling up
+    - Automatically prunes sections older than configured days (default 5) to prevent content from piling up
+    - Configurable per post via post_config['days_to_keep']
     - Preserves existing links from today's section when adding new links
     
     **Insertion Logic:**
@@ -158,7 +169,7 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
         wp_site: Optional dict with WordPress site config:
                  {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
                  If not provided, uses default from environment variables
-        post_config: Optional post configuration dict containing ad_codes and other settings
+        post_config: Optional post configuration dict containing ad_codes, days_to_keep, and other settings
     """
     base_url = _get_wp_base_url(wp_site)
     auth_headers = _auth_header(wp_site)
@@ -167,6 +178,7 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     # Use longer timeouts and add retry logic for unstable connections
     timeout = httpx.Timeout(30.0, connect=20.0)  # 30s read, 20s connect (increased from 10s)
     max_retries = 3
+    is_page = False  # Track whether this is a page or post
     
     for attempt in range(max_retries):
         try:
@@ -175,6 +187,8 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
                 r.raise_for_status()
                 post = r.json()
                 content = post.get("content", {}).get("raw") or post.get("content", {}).get("rendered", "")
+                is_page = False
+                logging.info(f"[WP] Successfully fetched post {post_id}")
                 break  # Success, exit retry loop
         except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
             if attempt < max_retries - 1:
@@ -185,8 +199,23 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
                 logging.error(f"[WP] Failed to GET post {post_id} after {max_retries} attempts: {e}")
                 raise HTTPException(status_code=504, detail=f"WordPress connection timeout after {max_retries} attempts")
         except httpx.HTTPStatusError as e:
-            logging.error(f"[WP] HTTP error getting post {post_id}: {e}")
-            raise
+            if e.response.status_code == 404:
+                logging.warning(f"[WP] Post {post_id} not found (404), attempting to fetch as page...")
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        r = await client.get(f"{base_url}/wp-json/wp/v2/pages/{post_id}", headers=auth_headers)
+                        r.raise_for_status()
+                        post = r.json()
+                        content = post.get("content", {}).get("raw") or post.get("content", {}).get("rendered", "")
+                        is_page = True
+                        logging.info(f"[WP] Successfully fetched page {post_id}")
+                        break  # Success, exit retry loop
+                except Exception as page_error:
+                    logging.error(f"[WP] Failed to GET page {post_id}: {page_error}")
+                    raise HTTPException(status_code=404, detail=f"Neither post nor page with ID {post_id} found")
+            else:
+                logging.error(f"[WP] HTTP error getting post {post_id}: {e}")
+                raise
         except Exception as e:
             logging.error(f"[WP] Unexpected error getting post {post_id}: {e}")
             raise
@@ -207,8 +236,11 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
         }
     
     # Parse existing content to remove old "links-for-today" sections
-    # Keep only sections from the last 5 days (including today = days 0-4)
-    cutoff_date = now - timedelta(days=4)  # Changed from 5 to 4 to get exactly 5 days
+    # Keep only sections from the last N days (configurable per post, default 5)
+    days_to_keep = post_config.get('days_to_keep', 5) if post_config else 5
+    logging.info(f"[WP] Post {post_id} config: days_to_keep = {days_to_keep} (from config: {post_config.get('days_to_keep') if post_config else 'not set'})")
+    cutoff_date = now - timedelta(days=days_to_keep - 1)  # -1 to include today
+    logging.info(f"[WP] Keeping sections from last {days_to_keep} days (cutoff: {cutoff_date.date()})")
     
     # Format today's date nicely
     try:
@@ -253,7 +285,7 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
             if should_keep:
                 logging.info(f"[WP PRUNING] KEEPING section '{section_date_str}' ({days_old} days old)")
             else:
-                logging.info(f"[WP PRUNING] REMOVING section '{section_date_str}' ({days_old} days old - older than 5 days)")
+                logging.info(f"[WP PRUNING] REMOVING section '{section_date_str}' ({days_old} days old - older than {days_to_keep} days)")
             
             return should_keep
         except Exception as e:
@@ -315,7 +347,7 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     
     # Remove old sections and today's section (we'll recreate it with all links)
     if sections_to_remove:
-        logging.info(f"[WP] Removing {len(sections_to_remove)} old sections (keeping last 5 days)")
+        logging.info(f"[WP] Removing {len(sections_to_remove)} old sections (keeping last {days_to_keep} days)")
     
     # Sort by position (reverse order to maintain correct positions during removal)
     sections_to_remove.sort(key=lambda x: x[0], reverse=True)
@@ -585,41 +617,46 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
         else:
             logging.warning(f"[WP] No sections found, cannot insert ad codes")
     
-    # Update the post
+    # Update the post or page
     payload = {"content": new_content}
 
-    # Update the post with increased timeout and retry logic for WordPress
+    # Update the post/page with increased timeout and retry logic for WordPress
     import json
     timeout = httpx.Timeout(60.0, connect=20.0)  # 60s read for POST (can be slow), 20s connect (increased from 10s)
     max_retries = 3
     
-    logging.info(f"[WP] Updating post {post_id}: {len(merged_links)} links")
+    # Use the correct endpoint based on whether this is a post or page
+    content_type = "page" if is_page else "post"
+    endpoint = f"{base_url}/wp-json/wp/v2/{'pages' if is_page else 'posts'}/{post_id}"
+    
+    logging.info(f"[WP] Updating {content_type} {post_id}: {len(merged_links)} links")
     
     for attempt in range(max_retries):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
-                    f"{base_url}/wp-json/wp/v2/posts/{post_id}",
+                    endpoint,
                     headers={"Content-Type": "application/json", **auth_headers},
                     json=payload,
                 )
                 logging.debug(f"[WP] Response status: {r.status_code}")
                 logging.debug(f"[WP] Response body: {r.text[:500]} ...")
                 r.raise_for_status()
+                logging.info(f"[WP] Successfully updated {content_type} {post_id}")
                 break  # Success, exit retry loop
         except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 3  # 3s, 6s, 9s (longer waits for POST)
-                logging.warning(f"[WP] Timeout on attempt {attempt + 1}/{max_retries} for POST post {post_id}: {e}. Retrying in {wait_time}s...")
+                logging.warning(f"[WP] Timeout on attempt {attempt + 1}/{max_retries} for POST {content_type} {post_id}: {e}. Retrying in {wait_time}s...")
                 await asyncio.sleep(wait_time)
             else:
-                logging.error(f"[WP] Failed to POST post {post_id} after {max_retries} attempts: {e}")
+                logging.error(f"[WP] Failed to POST {content_type} {post_id} after {max_retries} attempts: {e}")
                 raise HTTPException(status_code=504, detail=f"WordPress connection timeout after {max_retries} attempts")
         except httpx.HTTPStatusError as e:
-            logging.error(f"[WP] HTTP error posting to {post_id}: {e}")
+            logging.error(f"[WP] HTTP error posting to {content_type} {post_id}: {e}")
             raise
         except Exception as e:
-            logging.error(f"[WP] Unexpected error posting to {post_id}: {e}")
+            logging.error(f"[WP] Unexpected error posting to {content_type} {post_id}: {e}")
             raise
     
     # Return info about what happened

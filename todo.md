@@ -1,0 +1,3 @@
+- Multi-select site for manual links
+- Different buttons for each site
+- auto prune days for each post (done)

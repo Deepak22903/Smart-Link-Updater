@@ -9,6 +9,7 @@ from datetime import datetime
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import DuplicateKeyError
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -119,6 +120,13 @@ class MongoDBStorage:
             self._db.update_history.create_index("date_iso")
             self._db.update_history.create_index("timestamp")
             
+            # WordPress sites collection
+            self._db.wp_sites.create_index("site_key", unique=True)
+            self._db.wp_sites.create_index("created_at")
+            
+            # Settings collection
+            self._db.settings.create_index("setting_key", unique=True)
+            
             print("Database indexes created successfully")
         except Exception as e:
             print(f"Warning: Failed to create indexes: {e}")
@@ -201,10 +209,13 @@ def set_post_config(post_config: Dict[str, Any]) -> bool:
         else:
             # No content_slug, use post_id (backward compatibility)
             query = {"post_id": post_config["post_id"]}
+        
+        # Remove _id from post_config to avoid modifying immutable field
+        update_data = {k: v for k, v in post_config.items() if k != '_id'}
             
         _get_storage().db.posts.update_one(
             query,
-            {"$set": post_config},
+            {"$set": update_data},
             upsert=True
         )
         return True
@@ -231,6 +242,79 @@ def delete_post_config(post_id: int) -> bool:
     """Delete post configuration"""
     result = _get_storage().db.posts.delete_one({"post_id": post_id})
     return result.deleted_count > 0
+
+
+# ==================== WordPress Sites Operations ====================
+
+def get_all_wp_sites() -> Dict[str, Dict[str, Any]]:
+    """Get all configured WordPress sites from MongoDB"""
+    try:
+        sites = {}
+        for site_doc in _get_storage().db.wp_sites.find({}):
+            site_key = site_doc.get("site_key")
+            if site_key:
+                sites[site_key] = {
+                    "base_url": site_doc.get("base_url"),
+                    "username": site_doc.get("username"),
+                    "app_password": site_doc.get("app_password"),
+                    "display_name": site_doc.get("display_name"),
+                    "created_at": site_doc.get("created_at"),
+                    "updated_at": site_doc.get("updated_at")
+                }
+        return sites
+    except Exception as e:
+        print(f"Database error in get_all_wp_sites: {e}")
+        return {}
+
+
+def get_wp_site(site_key: str) -> Optional[Dict[str, Any]]:
+    """Get a specific WordPress site configuration"""
+    try:
+        result = _get_storage().db.wp_sites.find_one({"site_key": site_key})
+        if result:
+            result.pop("_id", None)  # Remove MongoDB ID
+        return result
+    except Exception as e:
+        print(f"Database error in get_wp_site: {e}")
+        return None
+
+
+def set_wp_site(site_key: str, site_config: Dict[str, Any]) -> bool:
+    """Save or update WordPress site configuration"""
+    try:
+        site_data = {
+            "site_key": site_key,
+            "base_url": site_config.get("base_url"),
+            "username": site_config.get("username"),
+            "app_password": site_config.get("app_password"),
+            "display_name": site_config.get("display_name", site_key),
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        
+        # Add created_at only for new documents
+        existing = _get_storage().db.wp_sites.find_one({"site_key": site_key})
+        if not existing:
+            site_data["created_at"] = datetime.utcnow().isoformat()
+        
+        _get_storage().db.wp_sites.update_one(
+            {"site_key": site_key},
+            {"$set": site_data},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"Database error in set_wp_site: {e}")
+        return False
+
+
+def delete_wp_site(site_key: str) -> bool:
+    """Delete WordPress site configuration"""
+    try:
+        result = _get_storage().db.wp_sites.delete_one({"site_key": site_key})
+        return result.deleted_count > 0
+    except Exception as e:
+        print(f"Database error in delete_wp_site: {e}")
+        return False
 
 
 # ==================== Fingerprint Operations ====================
@@ -467,6 +551,61 @@ def get_update_history(
     for result in results:
         result.pop("_id", None)
     return results
+
+
+# ==================== Cron Settings Functions ====================
+
+def get_cron_settings() -> Optional[Dict[str, Any]]:
+    """
+    Get cron/scheduled update settings from MongoDB.
+    
+    Returns:
+        Dict with cron settings or None if not found
+    """
+    try:
+        storage = _get_storage()
+        result = storage.db.settings.find_one({"setting_key": "cron_config"})
+        
+        if result:
+            result.pop("_id", None)
+            result.pop("setting_key", None)
+            return result
+        
+        return None
+    except Exception as e:
+        logging.error(f"Failed to get cron settings: {e}")
+        return None
+
+
+def set_cron_settings(settings: Dict[str, Any]) -> bool:
+    """
+    Save cron/scheduled update settings to MongoDB.
+    
+    Args:
+        settings: Dict with enabled, schedule, target_sites, etc.
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        storage = _get_storage()
+        
+        # Add metadata
+        settings["setting_key"] = "cron_config"
+        settings["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Upsert the settings
+        storage.db.settings.update_one(
+            {"setting_key": "cron_config"},
+            {"$set": settings},
+            upsert=True
+        )
+        
+        logging.info(f"[CRON] Saved cron settings: enabled={settings.get('enabled')}, sites={settings.get('target_sites')}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to save cron settings: {e}")
+        return False
 
 
 # ==================== Utility Functions ====================

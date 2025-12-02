@@ -124,6 +124,7 @@ class PostConfig(BaseModel):
         None  # NEW: Per-site ad codes. Maps site_key -> List[AdCode]
         # Format: {"default": [{"position": 1, "code": "..."}], "site1": [...]}
     )
+    days_to_keep: Optional[int] = 5  # NEW: Days to keep link sections (default: 5)
 
 
 class UpdateJob(BaseModel):
@@ -164,6 +165,7 @@ class PostConfigUpdate(BaseModel):
     site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = (
         None  # Per-site ad codes
     )
+    days_to_keep: Optional[int] = None  # Days to keep link sections
 
 
 @app.get("/health")
@@ -245,6 +247,10 @@ async def configure_post(config: PostConfig = Body(...)):
         "wp_site": config.wp_site,
         "updated_at": datetime.utcnow().isoformat(),
     }
+    
+    # Add days_to_keep (default to 5 if not specified)
+    post_config["days_to_keep"] = config.days_to_keep if config.days_to_keep is not None else 5
+    logging.info(f"[SAVE CONFIG] Post {config.post_id}: Saving days_to_keep={post_config['days_to_keep']}")
 
     # Add optional multi-site fields
     if config.content_slug:
@@ -328,6 +334,9 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     logging.info(
         f"[UPDATE CONFIG] Received update_data keys: {list(update_data.keys())}"
     )
+    
+    if "days_to_keep" in update_data:
+        logging.info(f"[UPDATE CONFIG] days_to_keep in update: {update_data['days_to_keep']}")
     
     if "site_ad_codes" in update_data:
         logging.info(f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites")
@@ -739,125 +748,145 @@ async def list_posts_detailed():
 @app.get("/api/sites/list")
 async def list_wordpress_sites():
     """Get list of configured WordPress sites (without credentials)."""
+    # Load sites from MongoDB (via get_configured_wp_sites which calls _load_wp_sites)
     sites = get_configured_wp_sites()
 
     # Return sites with all info including credentials for management UI
     return {"sites": sites}
 
 
+@app.get("/api/cron/settings")
+async def get_cron_settings():
+    """Get cron/scheduled update settings from MongoDB."""
+    settings = mongo_storage.get_cron_settings()
+    
+    if not settings:
+        # Return default settings
+        return {
+            "enabled": False,
+            "schedule": "hourly",
+            "target_sites": ["this"]
+        }
+    
+    return settings
+
+
+@app.post("/api/cron/settings")
+async def save_cron_settings(settings: dict):
+    """Save cron/scheduled update settings to MongoDB."""
+    
+    # Validate required fields
+    if "enabled" not in settings:
+        raise HTTPException(status_code=400, detail="Missing 'enabled' field")
+    
+    if "schedule" not in settings:
+        raise HTTPException(status_code=400, detail="Missing 'schedule' field")
+    
+    # Default target_sites if not provided
+    if "target_sites" not in settings:
+        settings["target_sites"] = ["this"]
+    
+    if mongo_storage.set_cron_settings(settings):
+        logging.info(f"[CRON] Saved settings: enabled={settings['enabled']}, sites={settings['target_sites']}")
+        return {
+            "success": True,
+            "message": "Cron settings saved successfully"
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save cron settings to database")
+
+
 @app.post("/api/sites/add")
 async def add_wordpress_site(site_data: dict):
     """Add a new WordPress site to configuration."""
-    import os
-    import json
     
     site_key = site_data.get("site_key", "").strip()
     base_url = site_data.get("base_url", "").strip()
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
+    display_name = site_data.get("display_name", site_key).strip()
     
     if not all([site_key, base_url, username, app_password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
     
-    # Load current sites
-    sites = get_configured_wp_sites()
-    
     # Check if site_key already exists
-    if site_key in sites:
+    existing = mongo_storage.get_wp_site(site_key)
+    if existing:
         raise HTTPException(status_code=400, detail=f"Site key '{site_key}' already exists")
     
-    # Add new site
-    sites[site_key] = {
+    # Save to MongoDB
+    site_config = {
         "base_url": base_url,
         "username": username,
-        "app_password": app_password
+        "app_password": app_password,
+        "display_name": display_name
     }
     
-    # Save to environment variable (this requires restart or update deployment)
-    # For now, we'll save to a file and user needs to update env
-    try:
-        # Save to a config file that can be used to update env
-        config_file = "/tmp/wp_sites_config.json"
-        with open(config_file, "w") as f:
-            json.dump(sites, f, indent=2)
-        
-        # Update the in-memory environment variable
-        os.environ["WP_SITES"] = json.dumps(sites)
-        
-        return {"message": "Site added successfully", "site_key": site_key, "sites": sites}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save site: {str(e)}")
+    if mongo_storage.set_wp_site(site_key, site_config):
+        logging.info(f"[SITES] Added new site: {site_key} ({display_name})")
+        return {
+            "message": "Site added successfully",
+            "site_key": site_key,
+            "display_name": display_name
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save site to database")
 
 
 @app.put("/api/sites/{site_key}")
 async def update_wordpress_site(site_key: str, site_data: dict):
     """Update an existing WordPress site configuration."""
-    import os
-    import json
     
     base_url = site_data.get("base_url", "").strip()
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
+    display_name = site_data.get("display_name", site_key).strip()
     
     if not all([base_url, username, app_password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
     
-    # Load current sites
-    sites = get_configured_wp_sites()
-    
     # Check if site exists
-    if site_key not in sites:
+    existing = mongo_storage.get_wp_site(site_key)
+    if not existing:
         raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
     
-    # Update site
-    sites[site_key] = {
+    # Update site in MongoDB
+    site_config = {
         "base_url": base_url,
         "username": username,
-        "app_password": app_password
+        "app_password": app_password,
+        "display_name": display_name
     }
     
-    try:
-        # Save to config file
-        config_file = "/tmp/wp_sites_config.json"
-        with open(config_file, "w") as f:
-            json.dump(sites, f, indent=2)
-        
-        # Update the in-memory environment variable
-        os.environ["WP_SITES"] = json.dumps(sites)
-        
-        return {"message": "Site updated successfully", "site_key": site_key, "sites": sites}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update site: {str(e)}")
+    if mongo_storage.set_wp_site(site_key, site_config):
+        logging.info(f"[SITES] Updated site: {site_key} ({display_name})")
+        return {
+            "message": "Site updated successfully",
+            "site_key": site_key,
+            "display_name": display_name
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update site in database")
 
 
 @app.delete("/api/sites/{site_key}")
 async def delete_wordpress_site(site_key: str):
     """Delete a WordPress site from configuration."""
-    import os
-    import json
-    
-    # Load current sites
-    sites = get_configured_wp_sites()
     
     # Check if site exists
-    if site_key not in sites:
+    existing = mongo_storage.get_wp_site(site_key)
+    if not existing:
         raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
     
-    # Remove site
-    del sites[site_key]
-    
-    try:
-        # Save to config file
-        config_file = "/tmp/wp_sites_config.json"
-        with open(config_file, "w") as f:
-            json.dump(sites, f, indent=2)
-        
-        # Update the in-memory environment variable
-        os.environ["WP_SITES"] = json.dumps(sites)
-        
-        return {"message": "Site deleted successfully", "site_key": site_key, "sites": sites}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete site: {str(e)}")
+    # Delete from MongoDB
+    if mongo_storage.delete_wp_site(site_key):
+        logging.info(f"[SITES] Deleted site: {site_key}")
+        return {
+            "message": "Site deleted successfully",
+            "site_key": site_key
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to delete site from database")
 
 
 @app.put("/api/posts/{post_id}/config")
@@ -1605,6 +1634,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         config = mongo_storage.get_post_config(post_id)
         if not config:
             raise Exception(f"Post {post_id} not configured")
+        
+        logging.info(f"[BATCH] Post {post_id} config loaded: days_to_keep={config.get('days_to_keep', 'not set')}, full_config_keys={list(config.keys())}")
 
         source_urls = config.get("source_urls", [])
         timezone = config.get("timezone", "Asia/Kolkata")
@@ -1750,55 +1781,81 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
         total_links_added = 0
         total_sections_pruned = 0
         sites_updated_count = 0
+        sites_failed = []
         
         for target_info in targets_to_process:
             target_site_key = target_info["site_key"]
             target_post_id = target_info["post_id"]
             
-            # Deduplicate against known links for this specific site
-            known_fps = mongo_storage.get_known_fingerprints(
-                target_post_id, today_iso, target_site_key
-            )
-            new_links = dedupe_by_fingerprint(all_links, known_fps)
+            try:
+                # Deduplicate against known links for this specific site
+                known_fps = mongo_storage.get_known_fingerprints(
+                    target_post_id, today_iso, target_site_key
+                )
+                new_links = dedupe_by_fingerprint(all_links, known_fps)
 
-            await manager.update_post_state(
-                request_id,
-                post_id,
-                progress=80,
-                message=f"Updating {target_site_key or 'default'} ({len(new_links)} new)",
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {len(new_links)} new links",
-            )
-
-            # Update WordPress
-            wp_result = await update_post_links_section(
-                target_post_id, new_links, target_site_key, config, target_site_key
-            )
-            
-            if not wp_result.get("error"):
-                total_links_added += wp_result.get("links_added", 0)
-                total_sections_pruned += wp_result.get("sections_pruned", 0)
-                sites_updated_count += 1
-                
-                # Save fingerprints for this specific site
-                if new_links:
-                    new_fps = {fingerprint(link) for link in new_links}
-                    mongo_storage.save_new_links(
-                        target_post_id, today_iso, new_fps, target_site_key
-                    )
-                    await manager.update_post_state(
-                        request_id,
-                        post_id,
-                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for site {target_site_key or 'default'}",
-                    )
-            else:
                 await manager.update_post_state(
                     request_id,
                     post_id,
-                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Error updating site {target_site_key or 'default'}: {wp_result.get('error')}",
+                    progress=80,
+                    message=f"Updating {target_site_key or 'default'} ({len(new_links)} new)",
+                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {len(new_links)} new links",
+                )
+
+                # Update WordPress
+                wp_result = await update_post_links_section(
+                    target_post_id, new_links, target_site_key, config, target_site_key
+                )
+                
+                if not wp_result.get("error"):
+                    total_links_added += wp_result.get("links_added", 0)
+                    total_sections_pruned += wp_result.get("sections_pruned", 0)
+                    sites_updated_count += 1
+                    
+                    await manager.update_post_state(
+                        request_id,
+                        post_id,
+                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Site '{target_site_key or 'default'}' updated successfully: {wp_result.get('links_added', 0)} links added",
+                    )
+                    
+                    # Save fingerprints for this specific site
+                    if new_links:
+                        new_fps = {fingerprint(link) for link in new_links}
+                        mongo_storage.save_new_links(
+                            target_post_id, today_iso, new_fps, target_site_key
+                        )
+                        await manager.update_post_state(
+                            request_id,
+                            post_id,
+                            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for site {target_site_key or 'default'}",
+                        )
+                else:
+                    sites_failed.append(target_site_key or 'default')
+                    await manager.update_post_state(
+                        request_id,
+                        post_id,
+                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Site '{target_site_key or 'default'}' update failed: {wp_result.get('error')}",
+                    )
+            except Exception as site_error:
+                # Log the error but continue processing other sites
+                sites_failed.append(target_site_key or 'default')
+                await manager.update_post_state(
+                    request_id,
+                    post_id,
+                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Site '{target_site_key or 'default'}' update failed: {repr(site_error)}",
                 )
 
         # Determine status based on results
-        if total_links_added > 0:
+        if sites_failed and sites_updated_count == 0:
+            # All sites failed
+            status = UpdateStatus.FAILED
+            message = f"Failed to update all {len(sites_failed)} sites"
+        elif sites_failed and sites_updated_count > 0:
+            # Some sites succeeded, some failed
+            status = UpdateStatus.SUCCESS
+            message = f"Updated {sites_updated_count} sites ({len(sites_failed)} failed: {', '.join(sites_failed)})"
+        elif total_links_added > 0:
+            # All sites succeeded with new links
             status = UpdateStatus.SUCCESS
             if target == "all":
                 message = f"Added {total_links_added} links across {sites_updated_count} sites"
@@ -1822,7 +1879,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
             message=message,
             links_found=len(all_links),
             links_added=total_links_added,
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {total_links_added} links added, {total_sections_pruned} old sections pruned",
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Update completed: {total_links_added} links added across {sites_updated_count} sites, {len(sites_failed)} failed",
         )
 
     except Exception as e:

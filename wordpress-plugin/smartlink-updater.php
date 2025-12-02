@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://audit-magazines-themes-receiving.trycloudflare.com';
+    private $api_base_url = 'https://smartlink-api-601738079869.us-central1.run.app';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -969,15 +969,64 @@ class SmartLinkUpdater {
             
             // ========== INITIALIZATION ==========
             
+            let extractorList = [];
+            const extractorDisplayNames = {
+                'simplegameguide': 'Simple Game Guide',
+                'mosttechs': 'Most Techs',
+                'crazyashwin': 'Crazy Ashwin',
+                'techyhigher': 'Techy Higher',
+                'default': 'Default (Gemini AI)',
+                'wsop': 'WSOP'
+            };
+
             function init() {
                 loadPosts();
                 loadWordPressSites();
                 attachEventListeners();
                 loadCronStatus();
+                loadExtractors();
                 
                 // Update current time immediately and every second
                 updateCurrentTime();
                 setInterval(updateCurrentTime, 1000);
+            }
+
+            function loadExtractors() {
+                $.ajax({
+                    url: config.apiUrl + '/api/extractors/list',
+                    method: 'GET',
+                    success: function(response) {
+                        console.log('Loaded extractors response:', response);
+                        const extractors = response.extractors || [];
+                        extractorList = extractors.map(e => e.name);
+                        // Populate existing extractor selects
+                        $('.extractor-select').each(function() {
+                            const currentVal = $(this).val() || '';
+                            $(this).empty();
+                            $(this).append(`<option value="">-- Select Extractor --</option>`);
+                            extractorList.forEach(name => {
+                                const display = extractorDisplayNames[name] || name.charAt(0).toUpperCase() + name.slice(1);
+                                $(this).append(`<option value="${name}">${display}</option>`);
+                            });
+                            if (currentVal) $(this).val(currentVal);
+                        });
+                        // Also populate filter dropdown
+                        const $filter = $('#filter-extractor');
+                        if ($filter.length) {
+                            const currentFilterVal = $filter.val() || '';
+                            $filter.empty();
+                            $filter.append(`<option value="">All Extractors</option>`);
+                            extractorList.forEach(name => {
+                                const display = extractorDisplayNames[name] || (name.charAt(0).toUpperCase() + name.slice(1));
+                                $filter.append(`<option value="${name}">${display}</option>`);
+                            });
+                            if (currentFilterVal) $filter.val(currentFilterVal);
+                        }
+                    },
+                    error: function(xhr) {
+                        console.error('Failed to load extractors:', xhr);
+                    }
+                });
             }
             
             // ========== UTILITY FUNCTIONS ==========
@@ -1252,45 +1301,36 @@ class SmartLinkUpdater {
             }
             
             function loadAvailableSites(callback) {
-                // Get all unique sites from posts
+                // Get all configured sites from the /sites API endpoint
                 $.ajax({
-                    url: config.restUrl + '/posts',
+                    url: config.restUrl + '/sites',
                     method: 'GET',
                     beforeSend: function(xhr) {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
                     },
                     success: function(data) {
-                        const sites = new Set();
-                        data.posts.forEach(function(post) {
-                            if (post.wp_site) {
-                                sites.add(post.wp_site);
-                            }
-                            // Also check site_post_ids
-                            if (post.site_post_ids) {
-                                Object.keys(post.site_post_ids).forEach(function(siteKey) {
-                                    if (siteKey !== 'this') {
-                                        sites.add(siteKey);
-                                    }
-                                });
-                            }
-                        });
-                        
-                        console.log('Available sites loaded:', Array.from(sites));
+                        console.log('Available sites loaded from API:', data);
                         
                         // Populate other sites
                         const container = $('#cron-other-sites-container');
                         container.empty();
                         
-                        if (sites.size > 0) {
-                            sites.forEach(function(site) {
-                                const siteId = site.replace(/[^a-zA-Z0-9]/g, '_');
+                        if (data.sites && Object.keys(data.sites).length > 0) {
+                            Object.keys(data.sites).forEach(function(siteKey) {
+                                const siteConfig = data.sites[siteKey];
+                                const siteId = siteKey.replace(/[^a-zA-Z0-9]/g, '_');
+                                const displayName = siteConfig.display_name || siteKey;
+                                const baseUrl = siteConfig.base_url || '';
+                                
                                 container.append(
                                     '<label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'transparent\'">' +
-                                    '<input type="checkbox" value="' + site + '" id="cron-site-' + siteId + '" class="cron-site-checkbox" style="width: 16px; height: 16px;">' +
-                                    '<span>' + site + '</span>' +
+                                    '<input type="checkbox" value="' + siteKey + '" id="cron-site-' + siteId + '" class="cron-site-checkbox" style="width: 16px; height: 16px;">' +
+                                    '<span><strong>' + displayName + '</strong><br><small style="color: #666;">' + baseUrl + '</small></span>' +
                                     '</label>'
                                 );
                             });
+                        } else {
+                            container.append('<p style="color: #999; font-size: 13px; padding: 8px;">No additional sites configured. Add sites in the Sites tab.</p>');
                         }
                         
                         // Add checkbox logic
@@ -1303,6 +1343,8 @@ class SmartLinkUpdater {
                     },
                     error: function(xhr) {
                         console.error('Failed to load sites:', xhr);
+                        const container = $('#cron-other-sites-container');
+                        container.html('<p style="color: #d63031; font-size: 13px; padding: 8px;">Failed to load sites. Please check your configuration.</p>');
                         if (callback && typeof callback === 'function') {
                             callback();
                         }
@@ -2760,6 +2802,9 @@ class SmartLinkUpdater {
                         // Set timezone
                         $('#config-timezone').val(postConfig.timezone || 'Asia/Kolkata');
                         
+                        // Set days_to_keep (default to 5 if not specified)
+                        $('#config-days-to-keep').val(postConfig.days_to_keep || 5);
+                        
                         // Load site post IDs
                         loadSitePostIdFields(postConfig.site_post_ids);
                         
@@ -2836,6 +2881,12 @@ class SmartLinkUpdater {
                 }
                 if (hasSiteIds) {
                     configData.site_post_ids = sitePostIds;
+                }
+                
+                // Add days_to_keep (default to 5 if not specified)
+                const daysToKeep = parseInt($('#config-days-to-keep').val()) || 5;
+                if (daysToKeep > 0 && daysToKeep <= 30) {
+                    configData.days_to_keep = daysToKeep;
                 }
                 
                 // Add site-specific ad codes
@@ -3217,6 +3268,23 @@ class SmartLinkUpdater {
             
             function addSourceUrlField(url = '', extractor = '') {
                 const showRemove = $('.source-url-row').length >= 1;
+                // Build extractor options dynamically from loaded extractorList
+                let extractorOptionsHtml = '<option value="">-- Select Extractor --</option>';
+                if (extractorList.length === 0) {
+                    // Fallback to hard-coded list if not yet loaded
+                    extractorOptionsHtml += '<option value="simplegameguide">Simple Game Guide</option>';
+                    extractorOptionsHtml += '<option value="mosttechs">Most Techs</option>';
+                    extractorOptionsHtml += '<option value="crazyashwin">Crazy Ashwin</option>';
+                    extractorOptionsHtml += '<option value="techyhigher">Techy Higher</option>';
+                    extractorOptionsHtml += '<option value="default">Default (Gemini AI)</option>';
+                    extractorOptionsHtml += '<option value="wsop">WSOP</option>';
+                } else {
+                    extractorList.forEach(function(name) {
+                        const display = extractorDisplayNames[name] || (name.charAt(0).toUpperCase() + name.slice(1));
+                        extractorOptionsHtml += `<option value="${name}">${display}</option>`;
+                    });
+                }
+
                 const newField = $(`
                     <div class="source-url-row" style="display: grid; grid-template-columns: 2fr 1.5fr auto; gap: 8px; margin-bottom: 12px; padding: 12px; background: #f9f9f9; border-radius: 8px; align-items: center;">
                         <div>
@@ -3227,12 +3295,7 @@ class SmartLinkUpdater {
                         <div>
                             <label style="display: block; margin-bottom: 4px; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase;">Extractor</label>
                             <select class="extractor-select smartlink-select" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px;">
-                                <option value="">-- Select Extractor --</option>
-                                <option value="simplegameguide">Simple Game Guide</option>
-                                <option value="mosttechs">Most Techs</option>
-                                <option value="crazyashwin">Crazy Ashwin</option>
-                                <option value="techyhigher">Techy Higher</option>
-                                <option value="default">Default (Gemini AI)</option>
+                                ${extractorOptionsHtml}
                             </select>
                         </div>
                         <button type="button" class="button remove-url-btn" style="${showRemove ? '' : 'display: none;'}; margin-top: 20px; height: 42px;">
@@ -4152,6 +4215,19 @@ class SmartLinkUpdater {
                                     <option value="UTC">UTC</option>
                                 </select>
                             </div>
+                            
+                            <!-- Days to Keep -->
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                    <span class="dashicons dashicons-trash" style="font-size: 16px; vertical-align: middle;"></span>
+                                    Days to Keep Sections
+                                </label>
+                                <input type="number" id="config-days-to-keep" class="smartlink-input" placeholder="5" min="1" max="30" value="5"
+                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                    Automatically remove link sections older than this many days (default: 5). For high-volume posts, use 2-3 days. For low-volume, use 7-10 days.
+                                </p>
+                            </div>
                         </form>
                     </div>
                     <div class="smartlink-modal-footer">
@@ -5001,13 +5077,32 @@ class SmartLinkUpdater {
     }
     
     /**
-     * Get cron settings REST endpoint
+     * Get cron settings REST endpoint (proxy to MongoDB API)
      */
     public function handle_get_cron_settings_rest($request) {
-        $settings = get_option('smartlink_cron_settings', array(
-            'enabled' => false,
-            'schedule' => 'hourly'
-        ));
+        // Fetch from MongoDB API
+        $api_url = $this->api_base_url . '/api/cron/settings';
+        $response = wp_remote_get($api_url, array('timeout' => 10));
+        
+        if (is_wp_error($response)) {
+            // Fallback to WordPress options if API fails
+            $settings = get_option('smartlink_cron_settings', array(
+                'enabled' => false,
+                'schedule' => 'hourly',
+                'target_sites' => array('this')
+            ));
+        } else {
+            $body = wp_remote_retrieve_body($response);
+            $settings = json_decode($body, true);
+            
+            if (!$settings) {
+                $settings = array(
+                    'enabled' => false,
+                    'schedule' => 'hourly',
+                    'target_sites' => array('this')
+                );
+            }
+        }
         
         $last_run = get_option('smartlink_last_cron_batch');
         $next_run = wp_next_scheduled('slu_scheduled_update');
@@ -5015,13 +5110,14 @@ class SmartLinkUpdater {
         return rest_ensure_response(array(
             'enabled' => $settings['enabled'],
             'schedule' => $settings['schedule'],
+            'target_sites' => isset($settings['target_sites']) ? $settings['target_sites'] : array('this'),
             'last_run' => $last_run,
             'next_run_timestamp' => $next_run
         ));
     }
     
     /**
-     * Save cron settings REST endpoint
+     * Save cron settings REST endpoint (proxy to MongoDB API)
      */
     public function handle_save_cron_settings_rest($request) {
         $body = $request->get_json_params();
@@ -5032,9 +5128,19 @@ class SmartLinkUpdater {
         
         $settings = array(
             'enabled' => isset($body['enabled']) ? (bool)$body['enabled'] : false,
-            'schedule' => isset($body['schedule']) ? sanitize_text_field($body['schedule']) : 'hourly'
+            'schedule' => isset($body['schedule']) ? sanitize_text_field($body['schedule']) : 'hourly',
+            'target_sites' => isset($body['target_sites']) ? $body['target_sites'] : array('this')
         );
         
+        // Save to MongoDB API
+        $api_url = $this->api_base_url . '/api/cron/settings';
+        $api_response = wp_remote_post($api_url, array(
+            'timeout' => 10,
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode($settings)
+        ));
+        
+        // Also save to WordPress options as backup/fallback
         update_option('smartlink_cron_settings', $settings);
         
         // Reschedule the cron based on new settings
@@ -5045,6 +5151,11 @@ class SmartLinkUpdater {
         
         if ($settings['enabled']) {
             wp_schedule_event(time(), $settings['schedule'], 'slu_scheduled_update');
+        }
+        
+        if (is_wp_error($api_response)) {
+            error_log('SmartLink: Failed to save cron settings to MongoDB: ' . $api_response->get_error_message());
+            // Still return success since we saved to WP options
         }
         
         return rest_ensure_response(array(
@@ -5179,19 +5290,57 @@ class SmartLinkUpdater {
     public function run_scheduled_update() {
         error_log('SmartLink: Scheduled update starting...');
         
-        $settings = get_option('smartlink_cron_settings', array(
-            'enabled' => false,
-            'schedule' => 'hourly',
-            'target_sites' => array('this')
-        ));
+        // Try to load settings from MongoDB API first
+        $api_url = $this->api_base_url . '/api/cron/settings';
+        $api_response = wp_remote_get($api_url, array('timeout' => 10));
         
-        if (!$settings['enabled']) {
+        if (!is_wp_error($api_response)) {
+            $body = wp_remote_retrieve_body($api_response);
+            $settings = json_decode($body, true);
+            error_log('SmartLink: Loaded cron settings from MongoDB API');
+        } else {
+            // Fallback to WordPress options
+            error_log('SmartLink: Failed to load from API, using WordPress options fallback');
+            $settings = get_option('smartlink_cron_settings', array(
+                'enabled' => false,
+                'schedule' => 'hourly',
+                'target_sites' => array('this')
+            ));
+        }
+        
+        if (!$settings || !isset($settings['enabled']) || !$settings['enabled']) {
             error_log('SmartLink: Cron is disabled, skipping');
             return;
         }
         
         // Get target sites (default to 'this' if not set)
         $target_sites = isset($settings['target_sites']) ? $settings['target_sites'] : array('this');
+        
+        error_log('SmartLink: Cron configured for sites: ' . implode(', ', $target_sites));
+        
+        // If 'all' is selected, fetch all configured sites from API
+        if (in_array('all', $target_sites)) {
+            error_log('SmartLink: Fetching all configured sites from API...');
+            $sites_api_url = $this->api_base_url . '/api/sites/list';
+            $sites_response = wp_remote_get($sites_api_url, array('timeout' => 10));
+            
+            if (!is_wp_error($sites_response)) {
+                $sites_body = wp_remote_retrieve_body($sites_response);
+                $sites_data = json_decode($sites_body, true);
+                
+                if (isset($sites_data['sites']) && !empty($sites_data['sites'])) {
+                    // Replace 'all' with actual site keys
+                    $target_sites = array_merge(array('this'), array_keys($sites_data['sites']));
+                    error_log('SmartLink: Expanded "all" to sites: ' . implode(', ', $target_sites));
+                } else {
+                    error_log('SmartLink: No sites configured in database, defaulting to "this"');
+                    $target_sites = array('this');
+                }
+            } else {
+                error_log('SmartLink: Failed to fetch sites, defaulting to "this"');
+                $target_sites = array('this');
+            }
+        }
         
         // Get all configured posts from API
         $api_url = $this->api_base_url . '/api/posts/list';
@@ -5243,20 +5392,13 @@ class SmartLinkUpdater {
             return;
         }
         
-        // Determine target parameter based on selected sites
-        $sites_to_update = $target_sites;
-        
-        if (in_array('all', $target_sites)) {
-            // Update all sites in one batch
-            $sites_to_update = array('all');
-        }
-        
-        error_log('SmartLink: Triggering batch update for ' . count($posts_to_update) . ' posts across ' . count($sites_to_update) . ' site(s)');
+        error_log('SmartLink: Triggering batch update for ' . count($posts_to_update) . ' posts across ' . count($target_sites) . ' site(s)');
+        error_log('SmartLink: Sites to update: ' . implode(', ', $target_sites));
         
         $all_request_ids = array();
         
-        // Trigger batch update for each site
-        foreach ($sites_to_update as $site_key) {
+        // Trigger batch update for each site individually
+        foreach ($target_sites as $site_key) {
             error_log('SmartLink: Starting batch update for site: ' . $site_key);
             
             // Trigger batch update via API
@@ -5267,7 +5409,7 @@ class SmartLinkUpdater {
                 'body' => json_encode(array(
                     'post_ids' => $posts_to_update,
                     'sync' => false,
-                    'target' => $site_key,
+                    'target' => $site_key,  // Use the specific site key, not 'all'
                     'initiator' => 'wp_cron'
                 ))
             ));
@@ -5296,13 +5438,13 @@ class SmartLinkUpdater {
                 'requests' => $all_request_ids,
                 'post_count' => count($posts_to_update),
                 'post_ids' => $posts_to_update,
-                'sites' => $sites_to_update
+                'sites' => $target_sites  // Use the actual sites list
             ));
             
             // Log success to history
             $this->add_cron_history_entry(array(
                 'status' => 'success',
-                'message' => 'Batch updates initiated successfully for ' . count($sites_to_update) . ' site(s)',
+                'message' => 'Batch updates initiated successfully for ' . count($target_sites) . ' site(s): ' . implode(', ', $target_sites),
                 'post_count' => count($posts_to_update),
                 'request_id' => $all_request_ids[0]['request_id'], // Use first for compatibility
                 'post_ids' => $posts_to_update,
