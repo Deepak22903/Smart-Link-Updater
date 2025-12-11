@@ -73,15 +73,19 @@ class PostConfig(MongoBaseModel):
     - Links are automatically inserted after the first <h2> tag
     - Falls back to prepending if no <h2> found
     """
-    post_id: int  # DEPRECATED: Kept for backward compatibility, use site_post_ids instead
-    content_slug: Optional[str] = None  # NEW: Universal identifier (e.g., "coin-master-free-spins")
-    site_post_ids: Optional[Dict[str, int]] = None  # NEW: Maps site_key -> post_id
+    post_id: int  # Primary post_id (typically first site's post ID)
+    content_slug: Optional[str] = None  # Universal identifier (e.g., "coin-master-free-spins")
+    site_post_ids: Optional[Dict[str, int]] = None  # Maps site_key -> post_id for multi-site support
     source_urls: List[str]
     timezone: str = "Asia/Kolkata"
-    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
     extractor_map: Optional[Dict[str, str]] = None  # Per-source extractor mapping (manual or smart match)
     wp_site: Optional[Dict[str, str]] = None  # {"base_url": "...", "username": "...", "app_password": "..."}
-    insertion_point: Optional[Dict[str, str]] = None  # Deprecated: kept for backward compatibility
+    ad_codes: Optional[List[Dict[str, Any]]] = None  # Ad codes to insert between sections
+    site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = None  # Per-site ad codes
+    days_to_keep: Optional[int] = 5  # Days to keep link sections (default: 5)
+    custom_button_title: Optional[str] = None  # Custom button title to use for all links (when use_custom_button_title=True)
+    use_custom_button_title: bool = False  # Toggle to use custom_button_title instead of scraped titles
+    auto_update_sites: Optional[List[str]] = None  # List of site_keys that should auto-update this post via cron
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 

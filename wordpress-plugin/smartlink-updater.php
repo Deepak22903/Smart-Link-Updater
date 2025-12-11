@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://smartlink-api-601738079869.us-central1.run.app';
+    private $api_base_url = 'https://designers-promoted-medication-rochester.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -103,12 +103,19 @@ class SmartLinkUpdater {
         wp_nonce_field('smartlink_update_action', 'smartlink_update_nonce');
         ?>
         <div id="smartlink-updater-box">
-            <p>Click the button below to fetch and update links from the configured source.</p>
+            <p style="font-size: 13px; line-height: 1.5; color: #555;">
+                <span class="dashicons dashicons-info" style="color: #667eea; font-size: 16px; vertical-align: middle;"></span>
+                Fetch fresh links from configured sources and automatically insert them into this post.
+            </p>
             
-            <button type="button" id="smartlink-update-btn" class="button button-primary button-large" style="width: 100%; margin-bottom: 10px;">
-                <span class="dashicons dashicons-update" style="margin-top: 3px;"></span>
-                Update Links Now
+            <button type="button" id="smartlink-update-btn" class="button button-primary button-large" style="width: 100%; margin-bottom: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3); font-weight: 600;">
+                <span class="dashicons dashicons-download" style="margin-top: 3px;"></span>
+                Scrape & Update Links
             </button>
+            
+            <p style="font-size: 11px; color: #999; margin: 8px 0 0 0; line-height: 1.4;">
+                💡 <strong>Tip:</strong> This will scrape today's links and add them to your post while keeping recent sections.
+            </p>
             
             <div id="smartlink-status" style="margin-top: 10px;"></div>
             
@@ -865,6 +872,104 @@ class SmartLinkUpdater {
         #manual-links-container::-webkit-scrollbar-thumb:hover {
             background: #a0aec0;
         }
+        
+        /* Manual site selection checkboxes */
+        #manual-links-sites-container label:hover {
+            background: #f7fafc !important;
+            border-color: #667eea !important;
+        }
+        
+        #manual-links-sites-container input[type="checkbox"]:checked + span {
+            color: #667eea !important;
+            font-weight: 600;
+        }
+        
+        #manual-links-sites-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        #manual-links-sites-container::-webkit-scrollbar-track {
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+        
+        #manual-links-sites-container::-webkit-scrollbar-thumb {
+            background: #cbd5e0;
+            border-radius: 10px;
+        }
+        
+        #manual-links-sites-container::-webkit-scrollbar-thumb:hover {
+            background: #a0aec0;
+        }
+        
+        /* Toggle Switch Styles */
+        .switch input:checked + .slider {
+            background-color: #2271b1;
+        }
+        
+        .switch input:focus + .slider {
+            box-shadow: 0 0 1px #2271b1;
+        }
+        
+        .switch input:checked + .slider:before {
+            transform: translateX(32px);
+        }
+        
+        .switch .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        /* Auto-Update Toggle Styles */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        .site-auto-update-toggle:checked + .toggle-slider {
+            background-color: #00b894;
+        }
+        
+        .site-auto-update-toggle:focus + .toggle-slider {
+            box-shadow: 0 0 1px #00b894;
+        }
+        
+        .site-auto-update-toggle:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
         </style>
         <?php
     }
@@ -888,7 +993,7 @@ class SmartLinkUpdater {
                 var $details = $('#smartlink-details');
                 
                 // Disable button and show loading
-                $btn.prop('disabled', true).html('<span class="spinner is-active"></span> Updating...');
+                $btn.prop('disabled', true).html('<span class="spinner is-active"></span> Scraping links...');
                 $status.removeClass('success error').text('');
                 $result.hide();
                 
@@ -902,11 +1007,11 @@ class SmartLinkUpdater {
                         post_id: <?php echo $post_id; ?>
                     },
                     success: function(response) {
-                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-update"></span> Update Links Now');
+                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-download"></span> Scrape & Update Links');
                         
                         if (response.success) {
                             var data = response.data;
-                            var message = data.message || 'Update completed successfully';
+                            var message = data.message || 'Links scraped and updated successfully!';
                             
                             $status.addClass('success').html('✅ ' + message);
                             
@@ -941,10 +1046,10 @@ class SmartLinkUpdater {
                         }
                     },
                     error: function(xhr, status, error) {
-                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-update"></span> Update Links Now');
+                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-download"></span> Scrape & Update Links');
                         
                         $status.addClass('error').html('❌ Request failed: ' + error);
-                        $details.html('<p>Could not connect to the API server. Please try again.</p>');
+                        $details.html('<p>Could not connect to the scraping service. Please check your API configuration.</p>');
                         $result.removeClass('success').addClass('error').fadeIn();
                     }
                 });
@@ -993,8 +1098,11 @@ class SmartLinkUpdater {
 
             function loadExtractors() {
                 $.ajax({
-                    url: config.apiUrl + '/api/extractors/list',
+                    url: config.restUrl + '/extractors',
                     method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
                     success: function(response) {
                         console.log('Loaded extractors response:', response);
                         const extractors = response.extractors || [];
@@ -1025,6 +1133,9 @@ class SmartLinkUpdater {
                     },
                     error: function(xhr) {
                         console.error('Failed to load extractors:', xhr);
+                        const errorMsg = xhr.responseJSON?.message || xhr.statusText || 'API unavailable';
+                        console.warn('Extractors API error: ' + errorMsg + ' - Extractor selection will be limited');
+                        // Don't show toast, just log - this is not critical for basic functionality
                     }
                 });
             }
@@ -1109,6 +1220,10 @@ class SmartLinkUpdater {
                 $('#add-new-config-btn').on('click', openAddConfigModal);
                 $('#save-config-btn').on('click', savePostConfig);
                 $('#add-url-btn').on('click', addSourceUrlField);
+                // Custom button title toggle
+                $('#use-custom-button-title').on('change', function() {
+                    $('#custom-button-title-container').toggle($(this).is(':checked'));
+                });
                 // Ad code buttons are now handled per-site in initializeAdCodeAccordion()
                 // Removed: extractor-mode toggle - now always manual configuration
                 
@@ -1252,12 +1367,7 @@ class SmartLinkUpdater {
             
             function openCronModal() {
                 console.log('openCronModal called');
-                
-                // Load available sites first, then load settings
-                loadAvailableSites(function() {
-                    // After sites are loaded, load the settings
-                    loadCronSettings();
-                });
+                loadCronSettings();
             }
             
             function loadCronSettings() {
@@ -1272,98 +1382,11 @@ class SmartLinkUpdater {
                         $('#cron-enabled').prop('checked', settings.enabled);
                         $('#cron-schedule').val(settings.schedule);
                         
-                        // Load site selections AFTER sites are loaded
-                        const selectedSites = settings.target_sites || ['this'];
-                        console.log('Selected sites from settings:', selectedSites);
-                        
-                        // Clear all checkboxes first
-                        $('.cron-site-checkbox').prop('checked', false);
-                        
-                        // Check the selected sites
-                        selectedSites.forEach(function(site) {
-                            const siteId = site.replace(/[^a-zA-Z0-9]/g, '_');
-                            const checkbox = $('#cron-site-' + siteId);
-                            if (checkbox.length > 0) {
-                                checkbox.prop('checked', true);
-                                console.log('Checked site:', site, 'with id:', siteId);
-                            } else {
-                                console.warn('Checkbox not found for site:', site, 'with id:', siteId);
-                            }
-                        });
-                        
                         $('#cron-modal').fadeIn();
                     },
                     error: function(xhr) {
                         console.error('Failed to load cron settings:', xhr);
                         alert('Failed to load cron settings: ' + xhr.responseText);
-                    }
-                });
-            }
-            
-            function loadAvailableSites(callback) {
-                // Get all configured sites from the /sites API endpoint
-                $.ajax({
-                    url: config.restUrl + '/sites',
-                    method: 'GET',
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(data) {
-                        console.log('Available sites loaded from API:', data);
-                        
-                        // Populate other sites
-                        const container = $('#cron-other-sites-container');
-                        container.empty();
-                        
-                        if (data.sites && Object.keys(data.sites).length > 0) {
-                            Object.keys(data.sites).forEach(function(siteKey) {
-                                const siteConfig = data.sites[siteKey];
-                                const siteId = siteKey.replace(/[^a-zA-Z0-9]/g, '_');
-                                const displayName = siteConfig.display_name || siteKey;
-                                const baseUrl = siteConfig.base_url || '';
-                                
-                                container.append(
-                                    '<label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background=\'#f0f0f0\'" onmouseout="this.style.background=\'transparent\'">' +
-                                    '<input type="checkbox" value="' + siteKey + '" id="cron-site-' + siteId + '" class="cron-site-checkbox" style="width: 16px; height: 16px;">' +
-                                    '<span><strong>' + displayName + '</strong><br><small style="color: #666;">' + baseUrl + '</small></span>' +
-                                    '</label>'
-                                );
-                            });
-                        } else {
-                            container.append('<p style="color: #999; font-size: 13px; padding: 8px;">No additional sites configured. Add sites in the Sites tab.</p>');
-                        }
-                        
-                        // Add checkbox logic
-                        setupSiteCheckboxes();
-                        
-                        // Call callback when done
-                        if (callback && typeof callback === 'function') {
-                            callback();
-                        }
-                    },
-                    error: function(xhr) {
-                        console.error('Failed to load sites:', xhr);
-                        const container = $('#cron-other-sites-container');
-                        container.html('<p style="color: #d63031; font-size: 13px; padding: 8px;">Failed to load sites. Please check your configuration.</p>');
-                        if (callback && typeof callback === 'function') {
-                            callback();
-                        }
-                    }
-                });
-            }
-            
-            function setupSiteCheckboxes() {
-                // When "All Sites" is checked, uncheck others
-                $('#cron-site-all').off('change').on('change', function() {
-                    if ($(this).is(':checked')) {
-                        $('.cron-site-checkbox').not('#cron-site-all').prop('checked', false);
-                    }
-                });
-                
-                // When any other site is checked, uncheck "All Sites"
-                $('.cron-site-checkbox').not('#cron-site-all').off('change').on('change', function() {
-                    if ($(this).is(':checked')) {
-                        $('#cron-site-all').prop('checked', false);
                     }
                 });
             }
@@ -1387,23 +1410,9 @@ class SmartLinkUpdater {
             }
             
             function saveCronSettings() {
-                // Collect selected sites
-                const selectedSites = [];
-                $('.cron-site-checkbox:checked').each(function() {
-                    selectedSites.push($(this).val());
-                });
-                
-                console.log('Saving cron settings with sites:', selectedSites);
-                
-                if (selectedSites.length === 0) {
-                    showToast('Please select at least one site to update', 'error');
-                    return;
-                }
-                
                 const settings = {
                     enabled: $('#cron-enabled').is(':checked'),
-                    schedule: $('#cron-schedule').val(),
-                    target_sites: selectedSites
+                    schedule: $('#cron-schedule').val()
                 };
                 
                 console.log('Settings to save:', settings);
@@ -1421,10 +1430,9 @@ class SmartLinkUpdater {
                     data: JSON.stringify(settings),
                     success: function(response) {
                         console.log('Save response:', response);
-                        console.log('Saved target_sites:', settings.target_sites);
                         $('#cron-modal').fadeOut();
                         loadCronStatus();
-                        showToast('Scheduled update settings saved successfully! Sites: ' + settings.target_sites.join(', '), 'success');
+                        showToast('Scheduled update settings saved successfully!', 'success');
                     },
                     error: function(xhr) {
                         showToast('Failed to save cron settings: ' + xhr.responseText, 'error');
@@ -2111,7 +2119,7 @@ class SmartLinkUpdater {
                 });
             }
             
-            function loadWordPressSites() {
+            function loadWordPressSites(callback) {
                 $.ajax({
                     url: config.restUrl + '/sites',
                     method: 'GET',
@@ -2121,56 +2129,99 @@ class SmartLinkUpdater {
                     success: function(response) {
                         const sites = response.sites || {};
                         
+                        console.log('[loadWordPressSites] Loaded sites:', sites);
+                        
                         // Store sites globally for use in other functions
                         window.availableSites = Object.keys(sites).map(function(key) {
                             return {
                                 site_key: key,
-                                display_name: sites[key].base_url || key
+                                display_name: sites[key].display_name || sites[key].base_url || key,
+                                base_url: sites[key].base_url
                             };
                         });
                         
+                        console.log('[loadWordPressSites] availableSites:', window.availableSites);
+                        
                         const select = $('#target-site-select');
                         
-                        // Remove old dynamic options (keep This Site and All Sites)
-                        select.find('option').not('[value="this"], [value="all"]').remove();
+                        // Remove old dynamic options (keep All Sites)
+                        select.find('option').not('[value="all"]').remove();
                         
                         // Add individual site options
                         Object.keys(sites).forEach(function(siteKey) {
                             const site = sites[siteKey];
                             const option = $('<option>')
                                 .val(siteKey)
-                                .text(site.base_url || siteKey);
+                                .text(site.display_name || site.base_url || siteKey);
                             select.append(option);
                         });
+                        
+                        // Call callback if provided
+                        if (callback && typeof callback === 'function') {
+                            callback();
+                        }
                     },
                     error: function(xhr) {
-                        console.warn('Failed to load WordPress sites:', xhr.responseJSON?.message || 'Unknown error');
+                        const errorMsg = xhr.responseJSON?.message || xhr.statusText || 'API unavailable';
+                        console.warn('WordPress sites API error: ' + errorMsg + ' - Multi-site features may be limited');
+                        // Set empty sites array to prevent errors
+                        window.availableSites = [];
+                        if (callback && typeof callback === 'function') {
+                            callback();
+                        }
                     }
                 });
             }
             
-            function loadSitePostIdFields(existingSitePostIds) {
+            function loadSitePostIdFields(existingSitePostIds, existingAutoUpdateSites) {
                 const $container = $('#site-post-ids-fields');
                 $container.empty();
                 
+                console.log('[loadSitePostIdFields] availableSites:', window.availableSites);
+                console.log('[loadSitePostIdFields] existingSitePostIds:', existingSitePostIds);
+                console.log('[loadSitePostIdFields] existingAutoUpdateSites:', existingAutoUpdateSites);
+                
                 if (!window.availableSites || window.availableSites.length === 0) {
                     $container.html('<p style="color: #999; font-style: italic; margin: 0;">Loading sites...</p>');
+                    
+                    // Force reload sites if not available
+                    console.log('[loadSitePostIdFields] Sites not available, force loading...');
+                    loadWordPressSites(function() {
+                        console.log('[loadSitePostIdFields] Sites loaded, retrying field rendering');
+                        loadSitePostIdFields(existingSitePostIds, existingAutoUpdateSites);
+                    });
                     return;
                 }
                 
                 existingSitePostIds = existingSitePostIds || {};
+                existingAutoUpdateSites = existingAutoUpdateSites || [];
+                
+                console.log('[loadSitePostIdFields] Rendering fields for', window.availableSites.length, 'sites');
                 
                 window.availableSites.forEach(function(site) {
                     const value = existingSitePostIds[site.site_key] || '';
+                    const autoUpdateEnabled = existingAutoUpdateSites.includes(site.site_key);
+                    console.log(`[loadSitePostIdFields] Rendering field for ${site.site_key}: ${site.display_name}`);
                     $container.append(`
-                        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                            <label style="flex: 0 0 200px; font-weight: 600; color: #555;">${escapeHtml(site.display_name)}:</label>
+                        <div style="display: flex; align-items: center; margin-bottom: 10px; gap: 12px;">
+                            <label style="flex: 0 0 180px; font-weight: 600; color: #555;">${escapeHtml(site.display_name)}:</label>
                             <input type="number" 
                                    class="site-post-id-input" 
                                    data-site-key="${escapeHtml(site.site_key)}" 
                                    value="${value}" 
-                                   placeholder="Post ID on ${escapeHtml(site.display_name)}" 
+                                   placeholder="Post ID" 
                                    style="flex: 1; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 13px;">
+                            <label style="display: flex; align-items: center; gap: 8px; flex: 0 0 auto; cursor: pointer;" title="Enable auto-update for this site via scheduled cron">
+                                <div class="toggle-switch">
+                                    <input type="checkbox" 
+                                           class="site-auto-update-toggle" 
+                                           data-site-key="${escapeHtml(site.site_key)}" 
+                                           ${autoUpdateEnabled ? 'checked' : ''}
+                                           style="display: none;">
+                                    <span class="toggle-slider"></span>
+                                </div>
+                                <span style="font-size: 12px; color: #666; white-space: nowrap;">Auto-Update</span>
+                            </label>
                         </div>
                     `);
                 });
@@ -2270,12 +2321,18 @@ class SmartLinkUpdater {
                     const actionsCell = $('<td>').addClass('actions-cell').css({'text-align': 'center', 'position': 'relative'});
                     
                     // Update button (standalone)
-                    const updateBtn = $('<button>').addClass('button button-primary button-small single-update-btn').attr('data-post-id', post.post_id).html(
-                        '<span class="dashicons dashicons-update" style="font-size: 13px; line-height: 1.4;"></span> Update'
+                    const updateBtn = $('<button>').addClass('button button-primary button-small single-update-btn').attr({
+                        'data-post-id': post.post_id,
+                        'title': 'Scrape fresh links from sources and update this post'
+                    }).html(
+                        '<span class="dashicons dashicons-download" style="font-size: 13px; line-height: 1.4;"></span> Scrape Links'
                     ).css({
                         'margin-right': '8px',
                         'padding': '6px 12px',
-                        'font-size': '12px'
+                        'font-size': '12px',
+                        'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                        'border': 'none',
+                        'box-shadow': '0 2px 4px rgba(102, 126, 234, 0.3)'
                     });
                     
                     // Three-dot menu button
@@ -2642,7 +2699,7 @@ class SmartLinkUpdater {
             function singleUpdate(e) {
                 const postId = parseInt($(e.currentTarget).data('post-id'));
                 
-                if (!confirm('Update post ' + postId + '?')) {
+                if (!confirm('Scrape fresh links from configured sources and update post ' + postId + '?')) {
                     return;
                 }
                 
@@ -2663,11 +2720,11 @@ class SmartLinkUpdater {
                     },
                     success: function(response) {
                         currentBatchRequestId = response.request_id;
-                        showToast('Update started for post ' + postId, 'success');
+                        showToast('Scraping started for post ' + postId + ' - check progress below', 'success');
                         startPolling();
                     },
                     error: function(xhr) {
-                        showToast('Failed to start update: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
+                        showToast('Failed to start scraping: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
                         btn.prop('disabled', false);
                     }
                 });
@@ -2739,8 +2796,12 @@ class SmartLinkUpdater {
                 $('#config-modal-title').text('Add Post Configuration');
                 $('#save-config-text').text('Save Configuration');
                 $('#post-config-form')[0].reset();
-                $('#config-post-id').prop('disabled', false);
                 $('#config-content-slug').val('');
+                
+                // Reset custom button title fields
+                $('#use-custom-button-title').prop('checked', false);
+                $('#custom-button-title').val('');
+                $('#custom-button-title-container').hide();
                 
                 // Reset to single URL
                 $('#source-urls-container').html(`
@@ -2753,7 +2814,16 @@ class SmartLinkUpdater {
                     </div>
                 `);
                 
-                loadSitePostIdFields();
+                // Ensure sites are loaded before rendering fields
+                if (!window.availableSites || window.availableSites.length === 0) {
+                    console.log('[openAddConfigModal] Sites not loaded, loading now...');
+                    loadWordPressSites(function() {
+                        loadSitePostIdFields({}, []);
+                    });
+                } else {
+                    console.log('[openAddConfigModal] Sites already loaded:', window.availableSites);
+                    loadSitePostIdFields({}, []);
+                }
                 
                 // Initialize ad code accordion
                 initializeAdCodeAccordion();
@@ -2767,7 +2837,6 @@ class SmartLinkUpdater {
                 $('#config-mode').val('edit');
                 $('#config-modal-title').text('Edit Post Configuration');
                 $('#save-config-text').text('Update Configuration');
-                $('#config-post-id').val(postId).prop('disabled', true);
                 
                 // Load existing configuration
                 showToast('Loading configuration...', 'info');
@@ -2805,22 +2874,40 @@ class SmartLinkUpdater {
                         // Set days_to_keep (default to 5 if not specified)
                         $('#config-days-to-keep').val(postConfig.days_to_keep || 5);
                         
-                        // Load site post IDs
-                        loadSitePostIdFields(postConfig.site_post_ids);
+                        // Load custom button title configuration
+                        const useCustomButtonTitle = postConfig.use_custom_button_title || false;
+                        const customButtonTitle = postConfig.custom_button_title || '';
+                        $('#use-custom-button-title').prop('checked', useCustomButtonTitle);
+                        $('#custom-button-title').val(customButtonTitle);
+                        // Show/hide custom title input based on toggle
+                        $('#custom-button-title-container').toggle(useCustomButtonTitle);
                         
-                        // Initialize ad code accordion
-                        initializeAdCodeAccordion();
+                        // Load site post IDs - ensure sites are loaded first
+                        if (!window.availableSites || window.availableSites.length === 0) {
+                            console.log('[openEditConfigModal] Sites not loaded, loading now...');
+                            loadWordPressSites(function() {
+                                loadSitePostIdFields(postConfig.site_post_ids, postConfig.auto_update_sites);
+                            });
+                        } else {
+                            console.log('[openEditConfigModal] Sites already loaded:', window.availableSites);
+                            loadSitePostIdFields(postConfig.site_post_ids, postConfig.auto_update_sites);
+                        }
                         
-                        // Load site-specific ad codes
-                        setTimeout(function() {
-                            const siteAdCodes = postConfig.site_ad_codes || {};
-                            
-                            console.log('site_ad_codes:', siteAdCodes);
+                        // Initialize ad code accordion, then load saved ad codes
+                        const siteAdCodes = postConfig.site_ad_codes || {};
+                        console.log('[Edit Post] site_ad_codes from API:', siteAdCodes);
+                        
+                        initializeAdCodeAccordion(function() {
+                            // This callback is called when accordion is fully initialized
+                            console.log('[Edit Post] Accordion ready, now loading ad codes');
+                            console.log('[Edit Post] Available accordion containers:', $('.ad-site-container').map(function() { return this.id; }).get());
                             
                             if (Object.keys(siteAdCodes).length > 0) {
                                 loadSiteAdCodes(siteAdCodes);
+                            } else {
+                                console.log('[Edit Post] No site_ad_codes to load');
                             }
-                        }, 300);  // Wait for accordion to initialize
+                        });
                         
                         $('#post-config-modal').fadeIn();
                     },
@@ -2832,12 +2919,12 @@ class SmartLinkUpdater {
             
             function savePostConfig() {
                 const mode = $('#config-mode').val();
-                const postId = parseInt($('#config-post-id').val());
                 const contentSlug = $('#config-content-slug').val().trim();
                 const $btn = $('#save-config-btn');
                 
-                // Collect site_post_ids
+                // Collect site_post_ids and auto_update_sites
                 const sitePostIds = {};
+                const autoUpdateSites = [];
                 let hasSiteIds = false;
                 $('.site-post-id-input').each(function() {
                     const siteKey = $(this).data('site-key');
@@ -2845,12 +2932,18 @@ class SmartLinkUpdater {
                     if (sitePostId && sitePostId > 0) {
                         sitePostIds[siteKey] = sitePostId;
                         hasSiteIds = true;
+                        
+                        // Check if auto-update is enabled for this site
+                        const autoUpdateEnabled = $(`.site-auto-update-toggle[data-site-key="${siteKey}"]`).is(':checked');
+                        if (autoUpdateEnabled) {
+                            autoUpdateSites.push(siteKey);
+                        }
                     }
                 });
                 
-                // Validation: Need either legacy post_id or at least one site-specific post ID
-                if (!postId && !hasSiteIds) {
-                    showToast('Please enter either a legacy post ID or at least one site-specific post ID', 'error');
+                // Validation: Need at least one site-specific post ID
+                if (!hasSiteIds) {
+                    showToast('Please enter at least one site-specific post ID', 'error');
                     return;
                 }
                 
@@ -2870,7 +2963,7 @@ class SmartLinkUpdater {
                 
                 // Build configuration object
                 const configData = {
-                    post_id: postId || (hasSiteIds ? Object.values(sitePostIds)[0] : 0), // Use first site ID as fallback
+                    post_id: Object.values(sitePostIds)[0], // Use first site ID as post_id (required by backend)
                     source_urls: sourceUrls,
                     timezone: $('#config-timezone').val()
                 };
@@ -2879,14 +2972,23 @@ class SmartLinkUpdater {
                 if (contentSlug) {
                     configData.content_slug = contentSlug;
                 }
-                if (hasSiteIds) {
-                    configData.site_post_ids = sitePostIds;
+                configData.site_post_ids = sitePostIds;
+                if (autoUpdateSites.length > 0) {
+                    configData.auto_update_sites = autoUpdateSites;
                 }
                 
                 // Add days_to_keep (default to 5 if not specified)
                 const daysToKeep = parseInt($('#config-days-to-keep').val()) || 5;
                 if (daysToKeep > 0 && daysToKeep <= 30) {
                     configData.days_to_keep = daysToKeep;
+                }
+                
+                // Add custom button title configuration
+                const useCustomButtonTitle = $('#use-custom-button-title').is(':checked');
+                const customButtonTitle = $('#custom-button-title').val().trim();
+                configData.use_custom_button_title = useCustomButtonTitle;
+                if (useCustomButtonTitle && customButtonTitle) {
+                    configData.custom_button_title = customButtonTitle;
                 }
                 
                 // Add site-specific ad codes
@@ -3039,16 +3141,45 @@ class SmartLinkUpdater {
                                     <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Links will be organized under this date</div>
                                 </div>
                                 
+                                <div style="margin-bottom: 20px;">
+                                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 14px;">
+                                        <span class="dashicons dashicons-button" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
+                                        Button Title Option
+                                    </label>
+                                    <div style="background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                                            <label class="switch" style="position: relative; display: inline-block; width: 60px; height: 28px;">
+                                                <input type="checkbox" id="manual-use-custom-title" style="opacity: 0; width: 0; height: 0;">
+                                                <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px;"></span>
+                                            </label>
+                                            <label for="manual-use-custom-title" style="cursor: pointer; font-weight: 500; color: #2d3748; font-size: 14px;">
+                                                Use Custom Button Title
+                                            </label>
+                                        </div>
+                                        <div id="manual-custom-title-input" style="display: none;">
+                                            <input type="text" id="manual-custom-title" class="smartlink-input" placeholder="e.g., Claim Now, Get Bonus"
+                                                   style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s;">
+                                            <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">All buttons will use this title instead of individual titles below</div>
+                                        </div>
+                                        <div id="manual-default-title-info" style="font-size: 12px; color: #a0aec0; padding-left: 2px;">Each button will use its individual title from below</div>
+                                    </div>
+                                </div>
+                                
                                 <div>
                                     <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #2d3748; font-size: 14px;">
                                         <span class="dashicons dashicons-admin-site" style="font-size: 16px; vertical-align: middle; color: #667eea;"></span>
-                                        Target WordPress Site
+                                        Target WordPress Sites
                                     </label>
-                                    <select id="manual-links-site" style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: white;">
-                                        <option value="this">This Site (Current WordPress Installation)</option>
-                                        <option value="all">All Sites</option>
-                                    </select>
-                                    <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Choose which site to update with these links</div>
+                                    <div id="manual-links-sites-container" style="background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 8px; padding: 16px; max-height: 200px; overflow-y: auto;">
+                                        <div style="margin-bottom: 12px;">
+                                            <label style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 6px; cursor: pointer; transition: all 0.2s; border: 2px solid #e2e8f0;">
+                                                <input type="checkbox" class="manual-site-checkbox" id="manual-site-all" value="all" style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer; accent-color: #667eea;">
+                                                <span style="font-weight: 500; color: #2d3748; font-size: 14px;">All Sites</span>
+                                            </label>
+                                        </div>
+                                        <div id="manual-other-sites-container"></div>
+                                    </div>
+                                    <div style="font-size: 12px; color: #a0aec0; margin-top: 6px; padding-left: 2px;">Select one or more sites to update with these links</div>
                                 </div>
                             </div>
                             
@@ -3098,10 +3229,35 @@ class SmartLinkUpdater {
                     }
                 });
                 
+                // Custom button title toggle
+                $('#manual-use-custom-title').on('change', function() {
+                    const isCustomTitleEnabled = $(this).is(':checked');
+                    
+                    if (isCustomTitleEnabled) {
+                        $('#manual-custom-title-input').slideDown(200);
+                        $('#manual-default-title-info').hide();
+                        // Hide title fields and make them optional
+                        $('.manual-link-title-container').slideUp(200);
+                        $('.manual-link-title').removeAttr('required');
+                    } else {
+                        $('#manual-custom-title-input').slideUp(200);
+                        $('#manual-default-title-info').show();
+                        // Show title fields and make them required
+                        $('.manual-link-title-container').slideDown(200);
+                        $('.manual-link-title').attr('required', 'required');
+                    }
+                });
+                
                 $('#add-another-link').on('click', function() {
                     const index = $('#manual-links-container .manual-link-field').length;
                     $('#manual-links-container').append(createManualLinkField(index));
                     updateRemoveButtons();
+                    
+                    // Apply current custom title state to new field
+                    if ($('#manual-use-custom-title').is(':checked')) {
+                        $('.manual-link-title-container').hide();
+                        $('.manual-link-title').removeAttr('required');
+                    }
                 });
                 
                 $(document).on('click', '.remove-manual-link-btn', function() {
@@ -3120,7 +3276,7 @@ class SmartLinkUpdater {
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
                             <div style="display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 6px 14px; border-radius: 6px;">
                                 <span class="dashicons dashicons-admin-links" style="font-size: 14px; color: #667eea;"></span>
-                                <span style="font-weight: 700; color: #4a5568; font-size: 12px; letter-spacing: 0.5px;">LINK ${index + 1}</span>
+                                <span class="link-number" style="font-weight: 700; color: #4a5568; font-size: 12px; letter-spacing: 0.5px;">LINK ${index + 1}</span>
                             </div>
                             <button type="button" class="remove-manual-link-btn" style="background: #fff5f5; border: 2px solid #feb2b2; color: #c53030; cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: all 0.2s; display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600;">
                                 <span class="dashicons dashicons-trash" style="font-size: 16px;"></span>
@@ -3128,12 +3284,12 @@ class SmartLinkUpdater {
                             </button>
                         </div>
                         
-                        <div style="margin-bottom: 14px;">
+                        <div class="manual-link-title-container" style="margin-bottom: 14px;">
                             <label style="display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4a5568;">
                                 <span class="dashicons dashicons-edit" style="font-size: 14px; vertical-align: middle; color: #667eea;"></span>
-                                Title <span style="color: #e53e3e; font-weight: 700;">*</span>
+                                Title <span class="title-required-indicator" style="color: #e53e3e; font-weight: 700;">*</span>
                             </label>
-                            <input type="text" class="manual-link-title smartlink-input" placeholder="e.g., Free Spins Link 1" required
+                            <input type="text" class="manual-link-title smartlink-input" placeholder="e.g., Free Spins Link 1"
                                    style="width: 100%; padding: 12px 14px; font-size: 14px; border: 2px solid #e2e8f0; border-radius: 8px; transition: border-color 0.2s; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
                         </div>
                         
@@ -3168,14 +3324,30 @@ class SmartLinkUpdater {
                     method: 'GET',
                     success: function(response) {
                         const sites = response.sites || {};
-                        const $select = $('#manual-links-site');
+                        const $container = $('#manual-other-sites-container');
                         
-                        // Add configured sites to dropdown
+                        // Add configured sites as checkboxes
                         Object.keys(sites).forEach(function(siteKey) {
                             const site = sites[siteKey];
-                            const displayName = site.base_url || siteKey;
-                            $select.append($('<option>').val(siteKey).text(displayName));
+                            const displayName = site.display_name || site.base_url || siteKey;
+                            const safeId = 'manual-site-' + siteKey.replace(/[^a-zA-Z0-9]/g, '_');
+                            
+                            const checkbox = $('<div>').css({
+                                'margin-bottom': '12px'
+                            }).html(
+                                `<label style="display: flex; align-items: center; padding: 10px; background: white; border-radius: 6px; cursor: pointer; transition: all 0.2s; border: 2px solid #e2e8f0;">
+                                    <input type="checkbox" class="manual-site-checkbox" id="${safeId}" value="${siteKey}" style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer; accent-color: #667eea;">
+                                    <div>
+                                        <div style="font-weight: 500; color: #2d3748; font-size: 14px;">${displayName}</div>
+                                        <div style="font-size: 12px; color: #718096; margin-top: 2px;">${site.base_url}</div>
+                                    </div>
+                                </label>`
+                            );
+                            $container.append(checkbox);
                         });
+                        
+                        // Setup checkbox interaction logic
+                        setupManualSiteCheckboxes();
                         
                         console.log('Loaded sites for manual links:', Object.keys(sites));
                     },
@@ -3186,36 +3358,95 @@ class SmartLinkUpdater {
                 });
             }
             
+            function setupManualSiteCheckboxes() {
+                // When "All Sites" is checked, uncheck others
+                $('#manual-site-all').off('change').on('change', function() {
+                    if ($(this).is(':checked')) {
+                        $('.manual-site-checkbox').not('#manual-site-all').prop('checked', false);
+                    }
+                });
+                
+                // When any other site is checked, uncheck "All Sites"
+                $('.manual-site-checkbox').not('#manual-site-all').off('change').on('change', function() {
+                    if ($(this).is(':checked')) {
+                        $('#manual-site-all').prop('checked', false);
+                    }
+                });
+            }
+            
             function submitManualLinks(postId, modal) {
                 const date = $('#manual-links-date').val();
-                const targetSite = $('#manual-links-site').val();
+                
+                // Collect selected sites
+                const selectedSites = [];
+                $('.manual-site-checkbox:checked').each(function() {
+                    selectedSites.push($(this).val());
+                });
+                
+                // Validate site selection
+                if (selectedSites.length === 0) {
+                    showToast('Please select at least one site', 'error');
+                    return;
+                }
+                
                 const linkFields = $('#manual-links-container .manual-link-field');
                 const links = [];
                 let hasError = false;
                 
+                // Check if custom title is enabled
+                const useCustomTitle = $('#manual-use-custom-title').is(':checked');
+                const customTitle = $('#manual-custom-title').val().trim();
+                
+                // Validate custom title if enabled
+                if (useCustomTitle && !customTitle) {
+                    showToast('Please enter a custom button title or disable the toggle', 'error');
+                    $('#manual-custom-title').css('border-color', '#dc2626');
+                    return;
+                } else {
+                    $('#manual-custom-title').css('border-color', '#e2e8f0');
+                }
+                
                 // Validate and collect links
                 linkFields.each(function() {
-                    const title = $(this).find('.manual-link-title').val().trim();
-                    const url = $(this).find('.manual-link-url').val().trim();
+                    const $field = $(this);
+                    const title = $field.find('.manual-link-title').val().trim();
+                    const url = $field.find('.manual-link-url').val().trim();
                     
-                    if (!title || !url) {
+                    // Remove old error messages
+                    $field.find('.error-msg').remove();
+                    
+                    // URL is always required
+                    if (!url) {
                         hasError = true;
-                        $(this).css('border-color', '#dc2626');
+                        $field.css('border-color', '#dc2626');
+                        $field.find('.manual-link-url').after('<div class="error-msg" style="color: #dc2626; font-size: 12px; margin-top: 4px;">URL is required</div>');
+                        return;
+                    }
+                    
+                    // Title is only required if custom title is disabled
+                    if (!useCustomTitle && !title) {
+                        hasError = true;
+                        $field.css('border-color', '#dc2626');
+                        $field.find('.manual-link-title').after('<div class="error-msg" style="color: #dc2626; font-size: 12px; margin-top: 4px;">Title is required</div>');
                         return;
                     }
                     
                     // Basic URL validation
                     try {
                         new URL(url);
-                        $(this).css('border-color', '#e5e7eb');
+                        $field.css('border-color', '#e2e8f0');
                     } catch (e) {
                         hasError = true;
-                        $(this).css('border-color', '#dc2626');
-                        $(this).find('.manual-link-url').after('<div class="error-msg" style="color: #dc2626; font-size: 12px; margin-top: 4px;">Invalid URL format</div>');
+                        $field.css('border-color', '#dc2626');
+                        $field.find('.manual-link-url').after('<div class="error-msg" style="color: #dc2626; font-size: 12px; margin-top: 4px;">Invalid URL format</div>');
                         return;
                     }
                     
-                    links.push({ title, url });
+                    // Use title or placeholder for custom mode
+                    links.push({ 
+                        title: useCustomTitle ? 'placeholder' : title, 
+                        url 
+                    });
                 });
                 
                 if (hasError) {
@@ -3232,23 +3463,39 @@ class SmartLinkUpdater {
                 const $submitBtn = $('#submit-manual-links');
                 $submitBtn.prop('disabled', true).html('<span class="spinner is-active" style="float: none; margin: 0;"></span> Adding...');
                 
-                // Send to backend
+                console.log('Submitting manual links:', { postId, links, date, selectedSites, useCustomTitle, customTitle });
+                
+                // Build request payload
+                const requestData = {
+                    post_id: postId,
+                    links: links,
+                    date: date,
+                    target_sites: selectedSites,
+                    use_custom_button_title: useCustomTitle
+                };
+                
+                // Add custom title if enabled and provided
+                if (useCustomTitle && customTitle) {
+                    requestData.custom_button_title = customTitle;
+                }
+                
+                // Send to backend with multiple target sites
                 $.ajax({
                     url: config.apiUrl + '/api/manual-links',
                     method: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({
-                        post_id: postId,
-                        links: links,
-                        date: date,
-                        target: targetSite
-                    }),
+                    data: JSON.stringify(requestData),
                     success: function(response) {
                         console.log('Manual links response:', response);
                         
                         let message = response.message || 'Links added successfully';
                         if (response.duplicates > 0) {
                             message += ` (${response.duplicates} duplicate${response.duplicates > 1 ? 's' : ''} skipped)`;
+                        }
+                        
+                        // Add site info to message
+                        if (selectedSites.length > 1 || selectedSites.includes('all')) {
+                            message += ` to ${selectedSites.join(', ')}`;
                         }
                         
                         showToast(message, 'success');
@@ -3332,23 +3579,30 @@ class SmartLinkUpdater {
             
             // New accordion-based UI (no need for currentAdSite tracking)
             
-            function initializeAdCodeAccordion() {
+            function initializeAdCodeAccordion(onComplete) {
                 // Get all available sites
                 $.ajax({
                     url: config.apiUrl + '/api/sites/list',
                     method: 'GET',
                     success: function(response) {
                         const sites = response.sites || {};
-                        const siteKeys = ['default', ...Object.keys(sites)];
+                        const siteKeys = Object.keys(sites);
                         
-                        // Generate accordion sections
+                        console.log('[initializeAdCodeAccordion] Loaded sites:', siteKeys);
+                        
+                        if (siteKeys.length === 0) {
+                            $('#ad-codes-accordion').html('<p style="color: #999; padding: 15px; text-align: center;">No sites configured. Please add sites in the Sites tab first.</p>');
+                            if (onComplete) onComplete();
+                            return;
+                        }
+                        
+                        // Generate accordion sections for configured sites only
                         const $accordion = $('#ad-codes-accordion');
                         $accordion.empty();
                         
                         siteKeys.forEach(function(siteKey, index) {
-                            const isDefault = siteKey === 'default';
-                            const siteName = isDefault ? 'Default Site' : (sites[siteKey]?.base_url || siteKey);
-                            const siteUrl = isDefault ? '' : (sites[siteKey]?.base_url || '');
+                            const siteName = sites[siteKey]?.display_name || sites[siteKey]?.base_url || siteKey;
+                            const siteUrl = sites[siteKey]?.base_url || '';
                             const isFirst = index === 0;
                             
                             $accordion.append(`
@@ -3397,29 +3651,17 @@ class SmartLinkUpdater {
                             const siteKey = $(this).data('site');
                             addAdCodeField(siteKey);
                         });
-                    },
-                    error: function() {
-                        console.warn('Failed to load sites for ad accordion, using default only');
-                        const $accordion = $('#ad-codes-accordion');
-                        $accordion.html(`
-                            <div class="ad-site-section" data-site="default" style="margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; background: white;">
-                                <div class="ad-site-header" style="padding: 15px; background: #f0f7ff; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
-                                    <strong style="font-size: 14px; color: #333;">Default Site</strong>
-                                    <span class="ad-count-badge" data-site="default" style="background: #e0e0e0; color: #666; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">0 ads</span>
-                                </div>
-                                <div class="ad-site-content" style="display: block; padding: 15px; border-top: 1px solid #eee;">
-                                    <div id="ad-container-default" class="ad-site-container"></div>
-                                    <button type="button" class="button add-ad-btn" data-site="default" style="margin-top: 10px; width: 100%;">
-                                        <span class="dashicons dashicons-plus-alt"></span>
-                                        Add Ad Code
-                                    </button>
-                                </div>
-                            </div>
-                        `);
                         
-                        $('.add-ad-btn').on('click', function() {
-                            addAdCodeField('default');
-                        });
+                        console.log('[initializeAdCodeAccordion] Created containers:', $('.ad-site-container').map(function() { return this.id; }).get());
+                        console.log('[initializeAdCodeAccordion] Accordion fully initialized, calling onComplete');
+                        
+                        // Call the completion callback
+                        if (onComplete) onComplete();
+                    },
+                    error: function(err) {
+                        console.error('[initializeAdCodeAccordion] Failed to load sites:', err);
+                        $('#ad-codes-accordion').html('<p style="color: #d63031; padding: 15px; text-align: center;">Failed to load sites. Please check your configuration.</p>');
+                        if (onComplete) onComplete();
                     }
                 });
             }
@@ -3552,24 +3794,40 @@ class SmartLinkUpdater {
             }
             
             function loadSiteAdCodes(siteAdCodes) {
+                console.log('[loadSiteAdCodes] Called with data:', siteAdCodes);
+                
                 // Clear all containers first
                 $('.ad-site-container').empty();
                 
                 if (!siteAdCodes || Object.keys(siteAdCodes).length === 0) {
-                    console.log('No site-specific ad codes to load');
+                    console.log('[loadSiteAdCodes] No site-specific ad codes to load');
                     return;
                 }
                 
                 // Load ad codes for each site
                 Object.keys(siteAdCodes).forEach(function(siteKey) {
                     const adCodes = siteAdCodes[siteKey];
+                    const container = $(`#ad-container-${siteKey}`);
+                    
+                    console.log(`[loadSiteAdCodes] Site: ${siteKey}, Ad codes count: ${adCodes ? adCodes.length : 0}, Container exists: ${container.length > 0}`);
+                    
+                    if (!container.length) {
+                        console.warn(`[loadSiteAdCodes] Container #ad-container-${siteKey} not found! Available containers:`, $('.ad-site-container').map(function() { return this.id; }).get());
+                    }
+                    
                     if (adCodes && adCodes.length > 0) {
-                        console.log(`Loading ${adCodes.length} ad codes for site ${siteKey}`);
-                        adCodes.forEach(function(adCode) {
+                        console.log(`[loadSiteAdCodes] Loading ${adCodes.length} ad codes for site ${siteKey}`);
+                        adCodes.forEach(function(adCode, index) {
+                            console.log(`[loadSiteAdCodes] Adding ad code ${index + 1}/${adCodes.length} for ${siteKey}:`, adCode);
                             addAdCodeField(siteKey, adCode);
                         });
+                        
+                        // Update badge count
+                        $(`.ad-count-badge[data-site="${siteKey}"]`).text(`${adCodes.length} ad${adCodes.length !== 1 ? 's' : ''}`);
                     }
                 });
+                
+                console.log('[loadSiteAdCodes] Finished loading ad codes');
             }
             
             // ============ End Ad Code Management ============
@@ -3637,7 +3895,13 @@ class SmartLinkUpdater {
             
             // Populate target selects with configured sites from API
             function populateSiteSelects() {
-                $.get('<?php echo $api_url; ?>/config/sites', function(resp) {
+                $.ajax({
+                    url: config.restUrl + '/sites',
+                    method: 'GET',
+                    beforeSend: function(xhr) {
+                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
+                    },
+                    success: function(resp) {
                     if (!resp || !resp.sites) return;
                     $('.smartlink-target-select').each(function() {
                         var $sel = $(this);
@@ -3651,8 +3915,10 @@ class SmartLinkUpdater {
                             $sel.append(opt);
                         });
                     });
-                }).fail(function() {
+                },
+                error: function() {
                     // ignore
+                }
                 });
             }
             populateSiteSelects();
@@ -3847,39 +4113,16 @@ class SmartLinkUpdater {
                             </p>
                         </div>
                         
-                        <div style="margin-bottom: 20px;">
-                            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
-                                <span class="dashicons dashicons-admin-multisite" style="font-size: 16px; vertical-align: middle;"></span>
-                                Sites to Update
-                            </label>
-                            <div id="cron-sites-selector" style="border: 2px solid #ddd; border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto; background: #fafafa;">
-                                <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
-                                    <input type="checkbox" value="all" id="cron-site-all" class="cron-site-checkbox" style="width: 16px; height: 16px;">
-                                    <strong style="color: #667eea;">All Sites (Multi-site Update)</strong>
-                                </label>
-                                <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
-                                    <input type="checkbox" value="this" id="cron-site-this" class="cron-site-checkbox" checked style="width: 16px; height: 16px;">
-                                    <span>This Site (Current WordPress Installation)</span>
-                                </label>
-                                <div id="cron-other-sites-container" style="margin-top: 8px;">
-                                    <!-- Other sites will be loaded here dynamically -->
-                                </div>
-                            </div>
-                            <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
-                                Select which sites to update during scheduled runs. You can select multiple sites.
-                            </p>
-                        </div>
-                        
                         <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); padding: 18px; border-radius: 10px; border-left: 4px solid #667eea;">
                             <div style="display: flex; align-items: start; gap: 10px;">
                                 <span style="font-size: 24px;">💡</span>
                                 <div>
                                     <strong style="color: #667eea; font-size: 14px;">How it works:</strong>
                                     <p style="margin: 8px 0 0 0; font-size: 13px; color: #555; line-height: 1.6;">
-                                        Every time the schedule triggers, WordPress will automatically update <strong>all</strong> your configured posts for the selected sites. Choose a frequency that balances keeping content fresh with server load.
+                                        Every time the schedule triggers, WordPress will automatically update posts that have <strong>Auto-Update enabled</strong> for each site. Enable auto-update for specific posts in the Posts tab by toggling the switch next to each site's post ID.
                                     </p>
                                     <p style="margin: 8px 0 0 0; font-size: 12px; color: #888;">
-                                        💡 <em>Tip: Start with "This Site" and "Every Hour" and adjust based on your needs.</em>
+                                        💡 <em>Tip: Start with "Every Hour" and enable auto-update only for posts you want updated automatically.</em>
                                     </p>
                                 </div>
                             </div>
@@ -4016,7 +4259,6 @@ class SmartLinkUpdater {
                         <strong>Update Target:</strong>
                     </label>
                     <select id="target-site-select" class="smartlink-select" style="margin-left: 5px;">
-                        <option value="this">This Site</option>
                         <option value="all">All Sites</option>
                         <!-- Dynamic options populated via API -->
                     </select>
@@ -4147,19 +4389,6 @@ class SmartLinkUpdater {
                                 </div>
                             </div>
                             
-                            <!-- Post ID (Legacy) -->
-                            <div style="margin-bottom: 20px;">
-                                <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
-                                    <span class="dashicons dashicons-admin-post" style="font-size: 16px; vertical-align: middle;"></span>
-                                    Legacy Post ID
-                                </label>
-                                <input type="number" id="config-post-id" class="smartlink-input" placeholder="e.g., 12345"
-                                       style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
-                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
-                                    For backward compatibility. Use "Post IDs by Site" above for multi-site support.
-                                </p>
-                            </div>
-                            
                             <!-- Source URLs -->
                             <div style="margin-bottom: 20px;">
                                 <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
@@ -4227,6 +4456,38 @@ class SmartLinkUpdater {
                                 <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
                                     Automatically remove link sections older than this many days (default: 5). For high-volume posts, use 2-3 days. For low-volume, use 7-10 days.
                                 </p>
+                            </div>
+                            
+                            <!-- Custom Button Title -->
+                            <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
+                                <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
+                                    <span class="dashicons dashicons-button" style="font-size: 18px; vertical-align: middle; color: #2271b1;"></span>
+                                    Custom Button Title (Optional)
+                                </label>
+                                <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                                    <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                    Override the button title for all links. When disabled, uses the title from the target site.
+                                </p>
+                                
+                                <!-- Toggle Switch -->
+                                <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 12px;">
+                                    <label class="switch" style="position: relative; display: inline-block; width: 60px; height: 28px;">
+                                        <input type="checkbox" id="use-custom-button-title" style="opacity: 0; width: 0; height: 0;">
+                                        <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px;"></span>
+                                    </label>
+                                    <label for="use-custom-button-title" style="cursor: pointer; font-weight: 500; color: #333;">
+                                        Use Custom Button Title
+                                    </label>
+                                </div>
+                                
+                                <!-- Custom Title Input -->
+                                <div id="custom-button-title-container" style="display: none;">
+                                    <input type="text" id="custom-button-title" class="smartlink-input" placeholder="e.g., Claim Now, Get Bonus, Visit Site"
+                                           style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                        This title will be used for all buttons instead of the scraped titles from target sites.
+                                    </p>
+                                </div>
                             </div>
                         </form>
                     </div>
@@ -4755,11 +5016,23 @@ class SmartLinkUpdater {
         ));
         
         if (is_wp_error($response)) {
+            error_log('SmartLink extractors API error: ' . $response->get_error_message());
             return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            error_log("SmartLink extractors API returned status $status_code");
+            return new WP_Error('api_error', "API returned status $status_code", array('status' => $status_code));
         }
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
+        if (!$data) {
+            error_log('SmartLink extractors API returned invalid JSON');
+            return new WP_Error('api_error', 'Invalid API response', array('status' => 500));
+        }
         
         return rest_ensure_response($data);
     }
@@ -4775,11 +5048,23 @@ class SmartLinkUpdater {
         ));
         
         if (is_wp_error($response)) {
+            error_log('SmartLink sites API error: ' . $response->get_error_message());
             return new WP_Error('api_error', $response->get_error_message(), array('status' => 500));
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code !== 200) {
+            error_log("SmartLink sites API returned status $status_code");
+            return new WP_Error('api_error', "API returned status $status_code", array('status' => $status_code));
         }
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        
+        if (!$data) {
+            error_log('SmartLink sites API returned invalid JSON');
+            return new WP_Error('api_error', 'Invalid API response', array('status' => 500));
+        }
         
         return rest_ensure_response($data);
     }
@@ -5099,7 +5384,7 @@ class SmartLinkUpdater {
                 $settings = array(
                     'enabled' => false,
                     'schedule' => 'hourly',
-                    'target_sites' => array('this')
+                    'target_sites' => array()
                 );
             }
         }
@@ -5110,7 +5395,7 @@ class SmartLinkUpdater {
         return rest_ensure_response(array(
             'enabled' => $settings['enabled'],
             'schedule' => $settings['schedule'],
-            'target_sites' => isset($settings['target_sites']) ? $settings['target_sites'] : array('this'),
+            'target_sites' => isset($settings['target_sites']) ? $settings['target_sites'] : array(),
             'last_run' => $last_run,
             'next_run_timestamp' => $next_run
         ));
@@ -5129,7 +5414,7 @@ class SmartLinkUpdater {
         $settings = array(
             'enabled' => isset($body['enabled']) ? (bool)$body['enabled'] : false,
             'schedule' => isset($body['schedule']) ? sanitize_text_field($body['schedule']) : 'hourly',
-            'target_sites' => isset($body['target_sites']) ? $body['target_sites'] : array('this')
+            'target_sites' => isset($body['target_sites']) ? $body['target_sites'] : array()
         );
         
         // Save to MongoDB API
@@ -5304,7 +5589,7 @@ class SmartLinkUpdater {
             $settings = get_option('smartlink_cron_settings', array(
                 'enabled' => false,
                 'schedule' => 'hourly',
-                'target_sites' => array('this')
+                'target_sites' => array()
             ));
         }
         
@@ -5313,33 +5598,26 @@ class SmartLinkUpdater {
             return;
         }
         
-        // Get target sites (default to 'this' if not set)
-        $target_sites = isset($settings['target_sites']) ? $settings['target_sites'] : array('this');
+        // Get all configured sites from API
+        error_log('SmartLink: Fetching all configured sites from API...');
+        $sites_api_url = $this->api_base_url . '/api/sites/list';
+        $sites_response = wp_remote_get($sites_api_url, array('timeout' => 10));
         
-        error_log('SmartLink: Cron configured for sites: ' . implode(', ', $target_sites));
-        
-        // If 'all' is selected, fetch all configured sites from API
-        if (in_array('all', $target_sites)) {
-            error_log('SmartLink: Fetching all configured sites from API...');
-            $sites_api_url = $this->api_base_url . '/api/sites/list';
-            $sites_response = wp_remote_get($sites_api_url, array('timeout' => 10));
+        $available_sites = array();
+        if (!is_wp_error($sites_response)) {
+            $sites_body = wp_remote_retrieve_body($sites_response);
+            $sites_data = json_decode($sites_body, true);
             
-            if (!is_wp_error($sites_response)) {
-                $sites_body = wp_remote_retrieve_body($sites_response);
-                $sites_data = json_decode($sites_body, true);
-                
-                if (isset($sites_data['sites']) && !empty($sites_data['sites'])) {
-                    // Replace 'all' with actual site keys
-                    $target_sites = array_merge(array('this'), array_keys($sites_data['sites']));
-                    error_log('SmartLink: Expanded "all" to sites: ' . implode(', ', $target_sites));
-                } else {
-                    error_log('SmartLink: No sites configured in database, defaulting to "this"');
-                    $target_sites = array('this');
-                }
+            if (isset($sites_data['sites']) && !empty($sites_data['sites'])) {
+                $available_sites = array_keys($sites_data['sites']);
+                error_log('SmartLink: Available sites: ' . implode(', ', $available_sites));
             } else {
-                error_log('SmartLink: Failed to fetch sites, defaulting to "this"');
-                $target_sites = array('this');
+                error_log('SmartLink: No sites configured in database, skipping cron');
+                return;
             }
+        } else {
+            error_log('SmartLink: Failed to fetch sites, skipping cron');
+            return;
         }
         
         // Get all configured posts from API
@@ -5380,26 +5658,51 @@ class SmartLinkUpdater {
         $posts = $data['posts'];
         $current_time = time();
         
-        $posts_to_update = array();
+        // Build a map of site_key -> array of post_ids that should auto-update for that site
+        $site_to_posts = array();
         
-        // Update ALL configured posts
         foreach ($posts as $post) {
-            $posts_to_update[] = $post['post_id'];
+            $post_id = $post['post_id'];
+            $auto_update_sites = isset($post['auto_update_sites']) ? $post['auto_update_sites'] : array();
+            
+            // For each site this post is enabled for, add the post_id to that site's list
+            foreach ($auto_update_sites as $site_key) {
+                if (!isset($site_to_posts[$site_key])) {
+                    $site_to_posts[$site_key] = array();
+                }
+                $site_to_posts[$site_key][] = $post_id;
+            }
         }
         
-        if (empty($posts_to_update)) {
-            error_log('SmartLink: No posts to update');
+        if (empty($site_to_posts)) {
+            error_log('SmartLink: No posts have auto-update enabled for any sites');
+            
+            // Log warning to history
+            $this->add_cron_history_entry(array(
+                'status' => 'warning',
+                'message' => 'No posts have auto-update enabled. Enable auto-update in the Posts tab.',
+                'post_count' => 0,
+                'request_id' => null
+            ));
+            
             return;
         }
         
-        error_log('SmartLink: Triggering batch update for ' . count($posts_to_update) . ' posts across ' . count($target_sites) . ' site(s)');
-        error_log('SmartLink: Sites to update: ' . implode(', ', $target_sites));
+        error_log('SmartLink: Auto-update map: ' . print_r($site_to_posts, true));
         
         $all_request_ids = array();
+        $total_posts_updated = 0;
+        $sites_processed = array();
         
-        // Trigger batch update for each site individually
-        foreach ($target_sites as $site_key) {
-            error_log('SmartLink: Starting batch update for site: ' . $site_key);
+        // Trigger batch update for each site that has posts to update
+        foreach ($site_to_posts as $site_key => $posts_to_update) {
+            if (empty($posts_to_update)) {
+                continue;
+            }
+            
+            error_log('SmartLink: Starting batch update for site: ' . $site_key . ' with ' . count($posts_to_update) . ' posts');
+            $total_posts_updated += count($posts_to_update);
+            $sites_processed[] = $site_key;
             
             // Trigger batch update via API
             $batch_api_url = $this->api_base_url . '/api/batch-update';
@@ -5409,7 +5712,7 @@ class SmartLinkUpdater {
                 'body' => json_encode(array(
                     'post_ids' => $posts_to_update,
                     'sync' => false,
-                    'target' => $site_key,  // Use the specific site key, not 'all'
+                    'target' => $site_key,
                     'initiator' => 'wp_cron'
                 ))
             ));
@@ -5426,7 +5729,8 @@ class SmartLinkUpdater {
                 error_log('SmartLink: Batch update started for site ' . $site_key . ' - Request ID: ' . $batch_data['request_id']);
                 $all_request_ids[] = array(
                     'site' => $site_key,
-                    'request_id' => $batch_data['request_id']
+                    'request_id' => $batch_data['request_id'],
+                    'post_count' => count($posts_to_update)
                 );
             }
         }
@@ -5436,19 +5740,16 @@ class SmartLinkUpdater {
             update_option('smartlink_last_cron_batch', array(
                 'timestamp' => $current_time,
                 'requests' => $all_request_ids,
-                'post_count' => count($posts_to_update),
-                'post_ids' => $posts_to_update,
-                'sites' => $target_sites  // Use the actual sites list
+                'total_posts' => $total_posts_updated,
+                'sites' => $sites_processed
             ));
             
             // Log success to history
             $this->add_cron_history_entry(array(
                 'status' => 'success',
-                'message' => 'Batch updates initiated successfully for ' . count($target_sites) . ' site(s): ' . implode(', ', $target_sites),
-                'post_count' => count($posts_to_update),
-                'request_id' => $all_request_ids[0]['request_id'], // Use first for compatibility
-                'post_ids' => $posts_to_update,
-                'sites' => $sites_to_update,
+                'message' => 'Batch updates initiated for ' . count($sites_processed) . ' site(s): ' . implode(', ', $sites_processed) . ' (' . $total_posts_updated . ' total post updates)',
+                'post_count' => $total_posts_updated,
+                'request_id' => $all_request_ids[0]['request_id'],
                 'all_requests' => $all_request_ids
             ));
         } else {
@@ -5458,7 +5759,7 @@ class SmartLinkUpdater {
             $this->add_cron_history_entry(array(
                 'status' => 'error',
                 'message' => 'All batch update requests failed',
-                'post_count' => count($posts_to_update),
+                'post_count' => 0,
                 'request_id' => null
             ));
         }
@@ -6132,6 +6433,12 @@ class SmartLinkUpdater {
                     </div>
                     
                     <div class="form-row">
+                        <label for="site-display-name">Display Name</label>
+                        <input type="text" id="site-display-name" class="smartlink-input" placeholder="e.g., My WordPress Site">
+                        <small>Friendly name for this site (optional, defaults to site key)</small>
+                    </div>
+                    
+                    <div class="form-row">
                         <label for="site-base-url">Site URL <span style="color: red;">*</span></label>
                         <input type="url" id="site-base-url" class="smartlink-input" placeholder="https://example.com" required>
                         <small>WordPress site URL (without trailing slash)</small>
@@ -6147,6 +6454,25 @@ class SmartLinkUpdater {
                         <label for="site-app-password">Application Password <span style="color: red;">*</span></label>
                         <input type="text" id="site-app-password" class="smartlink-input" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" required>
                         <small>Generate in WordPress: Users → Profile → Application Passwords</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <label for="site-button-style">Button Design Style</label>
+                        <select id="site-button-style" class="smartlink-input" style="width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 8px;">
+                            <option value="default">Default Pink Border</option>
+                            <option value="gradient_blue">Gradient Blue</option>
+                            <option value="solid_green">Solid Green</option>
+                            <option value="outline_orange">Orange Outline</option>
+                            <option value="gradient_sunset">Sunset Gradient</option>
+                            <option value="modern_dark">Modern Dark</option>
+                            <option value="neon_purple">Neon Purple</option>
+                            <option value="minimal_blue">Minimal Blue</option>
+                        </select>
+                        <small>Choose the button design for this WordPress site</small>
+                        <div id="button-preview" style="margin-top: 10px; padding: 15px; background: #f5f5f5; border-radius: 8px; display: none;">
+                            <div style="font-size: 12px; color: #666; margin-bottom: 8px;">Preview:</div>
+                            <div id="button-preview-content"></div>
+                        </div>
                     </div>
                     
                     <div style="margin-top: 25px; text-align: right;">
@@ -6257,20 +6583,35 @@ class SmartLinkUpdater {
             }
             
             function renderSitesTable() {
+                console.log('[renderSitesTable] Rendering with sites data:', sitesData);
+                
                 if (Object.keys(sitesData).length === 0) {
                     $('#sites-table-container').html('<p style="text-align: center; color: #999;">No sites configured yet. Click "Add New Site" to get started.</p>');
                     return;
                 }
                 
                 let html = '<table class="sites-table">';
-                html += '<thead><tr><th>Site Key</th><th>URL</th><th>Username</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+                html += '<thead><tr><th>Site Key</th><th>URL</th><th>Username</th><th>Button Style</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
                 
                 Object.keys(sitesData).forEach(siteKey => {
                     const site = sitesData[siteKey];
+                    const buttonStyle = site.button_style || 'default';
+                    console.log(`[renderSitesTable] Site ${siteKey}: button_style=${buttonStyle}`);
+                    const styleNames = {
+                        'default': 'Default Pink',
+                        'gradient_blue': 'Gradient Blue',
+                        'solid_green': 'Solid Green',
+                        'outline_orange': 'Orange Outline',
+                        'gradient_sunset': 'Sunset Gradient',
+                        'modern_dark': 'Modern Dark',
+                        'neon_purple': 'Neon Purple',
+                        'minimal_blue': 'Minimal Blue'
+                    };
                     html += `<tr>
                         <td><strong>${siteKey}</strong></td>
                         <td><a href="${site.base_url}" target="_blank">${site.base_url}</a></td>
                         <td>${site.username}</td>
+                        <td><span class="style-badge" style="background: #e8f0fe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${styleNames[buttonStyle] || buttonStyle}</span></td>
                         <td><span class="site-badge active">Active</span></td>
                         <td class="site-actions">
                             <button class="button button-small edit-site-btn" data-site-key="${siteKey}">
@@ -6294,7 +6635,35 @@ class SmartLinkUpdater {
                 $('#save-site-text').text('Add Site');
                 $('#site-form')[0].reset();
                 $('#site-key').prop('readonly', false);
+                $('#site-button-style').val('default');
+                $('#button-preview').hide();
                 $('#site-modal').fadeIn();
+            });
+            
+            // Button style preview
+            $('#site-button-style').on('change', function() {
+                const styleName = $(this).val();
+                const $preview = $('#button-preview');
+                const $previewContent = $('#button-preview-content');
+                
+                // Show loading
+                $preview.show();
+                $previewContent.html('<p style="text-align: center; color: #999;">Loading preview...</p>');
+                
+                // Fetch preview from API
+                $.get(config.apiUrl + '/api/button-styles/preview/' + styleName, function(response) {
+                    // Extract just the button part from the WordPress column block
+                    const html = response.html;
+                    const buttonMatch = html.match(/<a href[^>]*>.*?<\/a>/s);
+                    if (buttonMatch) {
+                        const buttonHtml = buttonMatch[0].replace('href="#"', 'href="javascript:void(0)"');
+                        $previewContent.html(buttonHtml);
+                    } else {
+                        $previewContent.html('<p style="color: #999;">Preview not available</p>');
+                    }
+                }).fail(function() {
+                    $previewContent.html('<p style="color: #d63031;">Failed to load preview</p>');
+                });
             });
             
             // Edit site
@@ -6307,9 +6676,12 @@ class SmartLinkUpdater {
                 $('#save-site-text').text('Update Site');
                 $('#original-site-key').val(siteKey);
                 $('#site-key').val(siteKey).prop('readonly', true);
+                $('#site-display-name').val(site.display_name || siteKey);
                 $('#site-base-url').val(site.base_url);
                 $('#site-username').val(site.username);
                 $('#site-app-password').val(site.app_password);
+                $('#site-button-style').val(site.button_style || 'default');
+                $('#button-preview').hide();
                 $('#site-modal').fadeIn();
             });
             
@@ -6344,9 +6716,11 @@ class SmartLinkUpdater {
                 
                 const mode = $('#site-mode').val();
                 const siteKey = $('#site-key').val().trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                const displayName = $('#site-display-name').val().trim() || siteKey;
                 const baseUrl = $('#site-base-url').val().trim().replace(/\/$/, '');
                 const username = $('#site-username').val().trim();
                 const appPassword = $('#site-app-password').val().trim().replace(/\s/g, '');
+                const buttonStyle = $('#site-button-style').val() || 'default';
                 
                 if (!siteKey || !baseUrl || !username || !appPassword) {
                     showToast('Please fill in all required fields', 'error');
@@ -6355,10 +6729,14 @@ class SmartLinkUpdater {
                 
                 const data = {
                     site_key: siteKey,
+                    display_name: displayName,
                     base_url: baseUrl,
                     username: username,
-                    app_password: appPassword
+                    app_password: appPassword,
+                    button_style: buttonStyle
                 };
+                
+                console.log('[Save Site] Sending data:', data);
                 
                 const $btn = $('#save-site-btn');
                 const originalHtml = $btn.html();

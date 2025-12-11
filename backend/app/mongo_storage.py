@@ -258,6 +258,7 @@ def get_all_wp_sites() -> Dict[str, Dict[str, Any]]:
                     "username": site_doc.get("username"),
                     "app_password": site_doc.get("app_password"),
                     "display_name": site_doc.get("display_name"),
+                    "button_style": site_doc.get("button_style", "default"),
                     "created_at": site_doc.get("created_at"),
                     "updated_at": site_doc.get("updated_at")
                 }
@@ -288,6 +289,7 @@ def set_wp_site(site_key: str, site_config: Dict[str, Any]) -> bool:
             "username": site_config.get("username"),
             "app_password": site_config.get("app_password"),
             "display_name": site_config.get("display_name", site_key),
+            "button_style": site_config.get("button_style", "default"),
             "updated_at": datetime.utcnow().isoformat()
         }
         

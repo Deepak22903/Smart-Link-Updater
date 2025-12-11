@@ -28,6 +28,8 @@ from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
 from .analytics import get_analytics_engine
+from tenacity import RetryError
+import httpx
 from datetime import datetime
 import pytz
 
@@ -88,7 +90,7 @@ def resolve_post_id_for_site(config: Dict, site_key: str) -> int:
     if site_post_ids and site_key in site_post_ids:
         return site_post_ids[site_key]
 
-    # Fallback to legacy post_id field
+    # Fallback to primary post_id field
     return config.get("post_id")
 
 
@@ -99,21 +101,17 @@ class PostConfig(BaseModel):
     post_id: int
     source_urls: List[HttpUrl]
     timezone: Optional[str] = os.getenv("TIMEZONE", "Asia/Kolkata")
-    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
     extractor_map: Optional[Dict[str, str]] = (
         None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     )
     wp_site: Optional[Dict[str, str]] = (
         None  # {"base_url": "https://site.com", "username": "user", "app_password": "pass"}
     )
-    insertion_point: Optional[Dict[str, str]] = (
-        None  # Deprecated: links auto-insert after first <h2>
-    )
     content_slug: Optional[str] = (
-        None  # NEW: Universal identifier across sites (e.g., "coin-master-free-spins")
+        None  # Universal identifier across sites (e.g., "coin-master-free-spins")
     )
     site_post_ids: Optional[Dict[str, int]] = (
-        None  # NEW: Maps site_key -> post_id for multi-site support
+        None  # Maps site_key -> post_id for multi-site support
     )
     ad_codes: Optional[List[Dict[str, Any]]] = (
         None  # NEW: Ad codes to insert between sections
@@ -125,6 +123,15 @@ class PostConfig(BaseModel):
         # Format: {"default": [{"position": 1, "code": "..."}], "site1": [...]}
     )
     days_to_keep: Optional[int] = 5  # NEW: Days to keep link sections (default: 5)
+    custom_button_title: Optional[str] = (
+        None  # NEW: Custom button title to use for all links (when use_custom_button_title=True)
+    )
+    use_custom_button_title: Optional[bool] = (
+        False  # NEW: Toggle to use custom_button_title instead of scraped titles
+    )
+    auto_update_sites: Optional[List[str]] = (
+        None  # NEW: List of site_keys that should auto-update this post via cron
+    )
 
 
 class UpdateJob(BaseModel):
@@ -142,7 +149,7 @@ class BatchUpdateRequest(BaseModel):
     post_ids: List[int]
     sync: Optional[bool] = False
     initiator: Optional[str] = "wp-plugin"
-    target: Optional[str] = "this"  # this, site_key, or all
+    target: Optional[str] = None  # site_key or 'all' (sites must be configured in Sites tab)
 
 
 class PostConfigUpdate(BaseModel):
@@ -150,14 +157,10 @@ class PostConfigUpdate(BaseModel):
 
     source_urls: Optional[List[HttpUrl]] = None
     timezone: Optional[str] = None
-    extractor: Optional[str] = None  # Deprecated: kept for backward compatibility
     extractor_map: Optional[Dict[str, str]] = (
         None  # Per-source extractor mapping. URLs not mapped default to Gemini.
     )
     wp_site: Optional[Dict[str, str]] = None
-    insertion_point: Optional[Dict[str, str]] = (
-        None  # Deprecated: links auto-insert after first <h2>
-    )
     content_slug: Optional[str] = None  # Universal identifier for content across sites
     site_post_ids: Optional[Dict[str, int]] = (
         None  # Maps site_key -> post_id for each WordPress site
@@ -166,6 +169,9 @@ class PostConfigUpdate(BaseModel):
         None  # Per-site ad codes
     )
     days_to_keep: Optional[int] = None  # Days to keep link sections
+    custom_button_title: Optional[str] = None  # Custom button title for all links
+    use_custom_button_title: Optional[bool] = None  # Toggle for custom button title
+    auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
 
 
 @app.get("/health")
@@ -266,10 +272,20 @@ async def configure_post(config: PostConfig = Body(...)):
     if config.site_ad_codes:
         post_config["site_ad_codes"] = config.site_ad_codes
         logging.info(
-            f"[SAVE CONFIG] Saving site_ad_codes for post {config.post_id}: {len(config.site_ad_codes)} sites"
+            f"[SAVE CONFIG] Saving site_ad_codes for post {config.post_id}: {len(config.site_ad_codes)} sites, keys: {list(config.site_ad_codes.keys())}"
         )
-
-    mongo_storage.set_post_config(post_config)
+    
+    # Save to MongoDB
+    save_result = mongo_storage.set_post_config(post_config)
+    if not save_result:
+        raise HTTPException(status_code=500, detail="Failed to save post configuration to MongoDB")
+    
+    # Verify the save by reading back
+    saved_config = mongo_storage.get_post_config(config.post_id)
+    if saved_config and "site_ad_codes" in saved_config:
+        logging.info(f"[SAVE CONFIG] Verified site_ad_codes saved: {list(saved_config['site_ad_codes'].keys())}")
+    else:
+        logging.warning(f"[SAVE CONFIG] Warning: site_ad_codes not found in saved config!")
 
     response = {
         "success": True,
@@ -286,8 +302,8 @@ async def configure_post(config: PostConfig = Body(...)):
         response["site_post_ids"] = config.site_post_ids
     if config.extractor_map:
         response["extractor_map"] = config.extractor_map
-    if config.ad_codes:
-        response["ad_codes"] = config.ad_codes
+    if config.site_ad_codes:
+        response["site_ad_codes"] = config.site_ad_codes
 
     if config.wp_site:
         response["wp_site"] = {
@@ -339,7 +355,7 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
         logging.info(f"[UPDATE CONFIG] days_to_keep in update: {update_data['days_to_keep']}")
     
     if "site_ad_codes" in update_data:
-        logging.info(f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites")
+        logging.info(f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites, keys: {list(update_data['site_ad_codes'].keys())}")
 
     # Convert HttpUrl objects to strings if present
     if "source_urls" in update_data and update_data["source_urls"] is not None:
@@ -362,8 +378,16 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     final_config.pop("_id", None)
 
     if mongo_storage.set_post_config(final_config):
+        # Verify save
+        updated = mongo_storage.get_post_config(post_id)
+        if "site_ad_codes" in update_data and updated:
+            if "site_ad_codes" in updated:
+                logging.info(f"[UPDATE CONFIG] Verified site_ad_codes saved: {list(updated['site_ad_codes'].keys())}")
+            else:
+                logging.warning(f"[UPDATE CONFIG] Warning: site_ad_codes not in saved config!")
+        
         # Return the complete, updated configuration
-        return mongo_storage.get_post_config(post_id)
+        return updated
     else:
         raise HTTPException(
             status_code=500, detail="Failed to update post configuration"
@@ -399,11 +423,11 @@ async def get_post_config_endpoint(post_id: int):
     # Debug logging
     import logging
 
-    logging.info(
-        f"[GET CONFIG] Returning config for post {post_id}: ad_codes present = {('ad_codes' in config)}"
-    )
-    if "ad_codes" in config:
-        logging.info(f"[GET CONFIG] ad_codes value: {config['ad_codes']}")
+    logging.info(f"[GET CONFIG] Returning config for post {post_id}")
+    if "site_ad_codes" in config:
+        logging.info(f"[GET CONFIG] site_ad_codes present with {len(config['site_ad_codes'])} sites: {list(config['site_ad_codes'].keys())}")
+    else:
+        logging.info(f"[GET CONFIG] No site_ad_codes in config")
 
     return config
 
@@ -543,7 +567,10 @@ class ManualLinkRequest(BaseModel):
     post_id: int
     links: List[ManualLink]
     date: str  # YYYY-MM-DD format
-    target: Optional[str] = "this"  # Which site to update
+    target: Optional[str] = None  # Deprecated: use target_sites instead
+    target_sites: Optional[List[str]] = None  # NEW: Multiple sites to update
+    use_custom_button_title: Optional[bool] = False  # NEW: Toggle for custom button title
+    custom_button_title: Optional[str] = None  # NEW: Custom title for all buttons
 
 
 @app.post("/api/manual-links")
@@ -567,55 +594,87 @@ async def add_manual_links(request: ManualLinkRequest):
     wp_site = config.get("wp_site")
 
     # Convert manual links to Link objects
-    manual_links = [
-        Link(title=link.title, url=str(link.url), published_date_iso=request.date)
-        for link in request.links
-    ]
+    # Apply custom button title if enabled
+    if request.use_custom_button_title and request.custom_button_title:
+        logging.info(f"[MANUAL LINKS] Using custom button title: '{request.custom_button_title}'")
+        manual_links = [
+            Link(title=request.custom_button_title, url=str(link.url), published_date_iso=request.date)
+            for link in request.links
+        ]
+    else:
+        logging.info(f"[MANUAL LINKS] Using individual titles from each link")
+        manual_links = [
+            Link(title=link.title, url=str(link.url), published_date_iso=request.date)
+            for link in request.links
+        ]
 
     if not manual_links:
         return {"success": False, "message": "No links provided", "links_added": 0}
 
+    # Determine target sites (must use target_sites, no default)
+    target_sites_list = request.target_sites if request.target_sites else []
+    
+    if not target_sites_list:
+        raise HTTPException(
+            status_code=400,
+            detail="No target sites specified. Please select sites from the Sites tab."
+        )
+    
+    logging.info(f"[MANUAL LINKS] Target sites: {target_sites_list}")
+
     # Determine targets to process
     targets_to_process = []
     
-    if request.target == "all":
-        # Fetch all configured sites
-        sites = get_configured_wp_sites()
-        logging.info(f"[MANUAL LINKS] Target=all, found {len(sites)} configured sites")
-        
-        # Always include default site if it has a post ID
-        default_post_id = config.get("post_id")
-        if default_post_id:
-            targets_to_process.append({"site_key": None, "post_id": default_post_id})
-            logging.info(f"[MANUAL LINKS] Added default site with post_id={default_post_id}")
-        
-        # Add all configured sites from WP_SITES
-        if sites:
-            for site_key in sites:
-                site_post_id = resolve_post_id_for_site(config, site_key)
-                if site_post_id:
-                    targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
-                    logging.info(f"[MANUAL LINKS] Added target: site={site_key}, post_id={site_post_id}")
-                else:
-                    logging.warning(f"[MANUAL LINKS] No post ID for site {site_key} on post {request.post_id}")
-        
-        if not targets_to_process:
-            logging.warning(f"[MANUAL LINKS] No targets found for 'all', falling back to request.post_id")
-            targets_to_process.append({"site_key": None, "post_id": request.post_id})
+    # Expand target sites
+    for target_site in target_sites_list:
+        if target_site == "all":
+            # Fetch all configured sites from MongoDB
+            sites = mongo_storage.get_all_wp_sites()
+            logging.info(f"[MANUAL LINKS] Expanding 'all' - found {len(sites)} configured sites")
             
-    elif request.target and request.target != "this":
-        # User selected a specific site
-        target_site_key = request.target
-        resolved_id = resolve_post_id_for_site(config, request.target)
-        target_post_id = resolved_id if resolved_id else request.post_id
-        targets_to_process.append({"site_key": target_site_key, "post_id": target_post_id})
-        logging.info(f"[MANUAL LINKS] Single target: site={target_site_key}, post_id={target_post_id}")
-    else:
-        # Default to "this" site
-        targets_to_process.append({"site_key": None, "post_id": request.post_id})
-        logging.info(f"[MANUAL LINKS] Default 'this' site with post_id={request.post_id}")
+            # Add all configured sites
+            if sites:
+                for site_key in sites:
+                    site_post_id = resolve_post_id_for_site(config, site_key)
+                    if site_post_id:
+                        targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
+                        logging.info(f"[MANUAL LINKS] Added target: site={site_key}, post_id={site_post_id}")
+                    else:
+                        logging.warning(f"[MANUAL LINKS] No post ID for site {site_key} on post {request.post_id}")
+            
+            if not targets_to_process:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No sites configured. Please add sites in the Sites tab first."
+                )
+            break  # 'all' means all sites, don't process other selections
+                
+        else:
+            # User selected a specific site
+            resolved_id = resolve_post_id_for_site(config, target_site)
+            if not resolved_id:
+                logging.warning(f"[MANUAL LINKS] No post ID mapping for site {target_site}, skipping")
+                continue
+            targets_to_process.append({"site_key": target_site, "post_id": resolved_id})
+            logging.info(f"[MANUAL LINKS] Added target: site={target_site}, post_id={resolved_id}")
     
-    logging.info(f"[MANUAL LINKS] Total targets to process: {len(targets_to_process)}")
+    if not targets_to_process:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid targets found. Check your site configuration and post ID mappings."
+        )
+    
+    # Remove duplicates based on site_key+post_id combination
+    seen = set()
+    unique_targets = []
+    for target in targets_to_process:
+        key = (target["site_key"], target["post_id"])
+        if key not in seen:
+            seen.add(key)
+            unique_targets.append(target)
+    targets_to_process = unique_targets
+    
+    logging.info(f"[MANUAL LINKS] Total unique targets to process: {len(targets_to_process)}")
 
     total_links_added = 0
     total_sections_pruned = 0
@@ -642,10 +701,18 @@ async def add_manual_links(request: ManualLinkRequest):
             logging.info(f"[MANUAL LINKS] All links were duplicates for site {target_site_key}")
             continue
 
+        # Load site configuration from MongoDB
+        site_config = mongo_storage.get_wp_site(target_site_key)
+        if not site_config:
+            logging.warning(f"[MANUAL LINKS] Site config not found for {target_site_key}, using default")
+            site_config = None
+        else:
+            logging.info(f"[MANUAL LINKS] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+
         # Update WordPress
         try:
             wp_result = await update_post_links_section(
-                target_post_id, new_links, target_site_key, config, target_site_key
+                target_post_id, new_links, target_site_key, config, site_config
             )
             
             if not wp_result.get("error"):
@@ -661,12 +728,37 @@ async def add_manual_links(request: ManualLinkRequest):
                     target_post_id, request.date, new_fps, target_site_key
                 )
             else:
-                logging.error(f"[MANUAL LINKS] Error result from WordPress for site {target_site_key}: {wp_result.get('error')}")
+                error_msg = wp_result.get('error', 'Unknown error')
+                logging.error(f"[MANUAL LINKS] Error result from WordPress for site {target_site_key}: {error_msg}")
+                # Raise error for authentication issues so user knows to fix credentials
+                if target_site_key and len(targets_to_process) == 1:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to update site '{target_site_key}': {error_msg}. Check site credentials in Sites tab."
+                    )
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions
         except Exception as e:
-            logging.error(f"[MANUAL LINKS] Exception updating site {target_site_key}: {e}")
+            error_str = str(e)
+            logging.error(f"[MANUAL LINKS] Exception updating site {target_site_key}: {error_str}")
             import traceback
             logging.error(traceback.format_exc())
-            # Continue to next site
+            
+            # For authentication errors, provide clear message
+            if "401" in error_str or "Unauthorized" in error_str:
+                site_name = target_site_key or "default"
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"WordPress authentication failed for site '{site_name}'. Please check the username and Application Password in the Sites tab."
+                )
+            
+            # For single site operations, raise the error
+            if len(targets_to_process) == 1:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to update site '{target_site_key}': {error_str}"
+                )
+            # For multi-site, continue to next site
 
     if sites_updated_count == 0 and len(targets_to_process) > 0:
         # If we tried to update but everything was a duplicate or failed
@@ -676,15 +768,23 @@ async def add_manual_links(request: ManualLinkRequest):
             "links_provided": len(manual_links),
             "links_added": 0,
             "duplicates": len(manual_links),
+            "sites_updated": 0,
         }
+
+    # Build success message
+    if sites_updated_count > 1:
+        message = f"Successfully added {total_links_added} manual links across {sites_updated_count} sites"
+    else:
+        message = f"Successfully added {total_links_added} manual links"
 
     return {
         "success": True,
-        "message": f"Successfully added {total_links_added} manual links across {sites_updated_count} sites" if request.target == "all" else f"Successfully added {total_links_added} manual links",
+        "message": message,
         "links_provided": len(manual_links),
         "links_added": total_links_added,
-        "duplicates": len(manual_links) * len(targets_to_process) - total_links_added if request.target == "all" else len(manual_links) - total_links_added, # Approx metric for all sites
+        "duplicates": len(manual_links) * len(targets_to_process) - total_links_added,
         "sections_pruned": total_sections_pruned,
+        "sites_updated": sites_updated_count,
     }
 
 
@@ -747,9 +847,13 @@ async def list_posts_detailed():
 
 @app.get("/api/sites/list")
 async def list_wordpress_sites():
-    """Get list of configured WordPress sites (without credentials)."""
-    # Load sites from MongoDB (via get_configured_wp_sites which calls _load_wp_sites)
-    sites = get_configured_wp_sites()
+    """Get list of configured WordPress sites from MongoDB only."""
+    # Load sites directly from MongoDB (no fallback to files or env vars)
+    sites = mongo_storage.get_all_wp_sites()
+    
+    # Log what we're returning
+    for site_key, site_data in sites.items():
+        logging.info(f"[SITES LIST] {site_key}: button_style={site_data.get('button_style', 'NOT SET')}")
 
     # Return sites with all info including credentials for management UI
     return {"sites": sites}
@@ -765,7 +869,7 @@ async def get_cron_settings():
         return {
             "enabled": False,
             "schedule": "hourly",
-            "target_sites": ["this"]
+            "target_sites": []
         }
     
     return settings
@@ -783,8 +887,8 @@ async def save_cron_settings(settings: dict):
         raise HTTPException(status_code=400, detail="Missing 'schedule' field")
     
     # Default target_sites if not provided
-    if "target_sites" not in settings:
-        settings["target_sites"] = ["this"]
+    if "target_sites" not in settings or not settings["target_sites"]:
+        settings["target_sites"] = []
     
     if mongo_storage.set_cron_settings(settings):
         logging.info(f"[CRON] Saved settings: enabled={settings['enabled']}, sites={settings['target_sites']}")
@@ -805,6 +909,7 @@ async def add_wordpress_site(site_data: dict):
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
     display_name = site_data.get("display_name", site_key).strip()
+    button_style = site_data.get("button_style", "default").strip()
     
     if not all([site_key, base_url, username, app_password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
@@ -819,15 +924,17 @@ async def add_wordpress_site(site_data: dict):
         "base_url": base_url,
         "username": username,
         "app_password": app_password,
-        "display_name": display_name
+        "display_name": display_name,
+        "button_style": button_style
     }
     
     if mongo_storage.set_wp_site(site_key, site_config):
-        logging.info(f"[SITES] Added new site: {site_key} ({display_name})")
+        logging.info(f"[SITES] Added new site: {site_key} ({display_name}) with button_style: {button_style}")
         return {
             "message": "Site added successfully",
             "site_key": site_key,
-            "display_name": display_name
+            "display_name": display_name,
+            "button_style": button_style
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to save site to database")
@@ -841,6 +948,7 @@ async def update_wordpress_site(site_key: str, site_data: dict):
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
     display_name = site_data.get("display_name", site_key).strip()
+    button_style = site_data.get("button_style", "default").strip()
     
     if not all([base_url, username, app_password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
@@ -855,15 +963,17 @@ async def update_wordpress_site(site_key: str, site_data: dict):
         "base_url": base_url,
         "username": username,
         "app_password": app_password,
-        "display_name": display_name
+        "display_name": display_name,
+        "button_style": button_style
     }
     
     if mongo_storage.set_wp_site(site_key, site_config):
-        logging.info(f"[SITES] Updated site: {site_key} ({display_name})")
+        logging.info(f"[SITES] Updated site: {site_key} ({display_name}) with button_style: {button_style}")
         return {
             "message": "Site updated successfully",
             "site_key": site_key,
-            "display_name": display_name
+            "display_name": display_name,
+            "button_style": button_style
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update site in database")
@@ -954,7 +1064,7 @@ async def update_post_now(
     post_id: int,
     background_tasks: BackgroundTasks,
     sync: bool = False,
-    target: Optional[str] = "this",
+    target: Optional[str] = None,
 ):
     """
     Trigger link update for a post.
@@ -963,6 +1073,7 @@ async def update_post_now(
     With sync=True: Waits for completion and returns full results (for WordPress plugin)
 
     Multiple posts can be updated in parallel using background mode.
+    Target must be a configured site key from the Sites tab, or 'all' for all sites.
     """
     # Get post configuration
     config = mongo_storage.get_post_config(post_id)
@@ -1017,8 +1128,22 @@ async def update_post_now(
         today = datetime.now(tz)
         today_iso = today.strftime("%Y-%m-%d")
 
-        # target: 'this' (default), site_key (string), or 'all'
-        if target == "this":
+        # target: site_key (string) or 'all'
+        if not target:
+            raise HTTPException(
+                status_code=400,
+                detail="Target site must be specified. Use a site key from Sites tab or 'all'."
+            )
+        
+        if target == "all":
+            # Get all configured sites
+            sites = mongo_storage.get_all_wp_sites()
+            if not sites:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No sites configured. Please add sites in the Sites tab."
+                )
+            
             all_links = []
             errors = []
 
@@ -1035,8 +1160,24 @@ async def update_post_now(
                         f"Extracted {len(extracted_links)} links from {url}: {extracted_links}"
                     )
                     all_links.extend(extracted_links)
+                except RetryError as e:
+                    # RetryError wraps the last exception
+                    last_exception = e.last_attempt.exception() if e.last_attempt else None
+                    error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"RetryError for {url}: {error_msg}")
+                except httpx.TimeoutException as e:
+                    error_msg = f"Request timeout: {str(e)}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"Timeout error for {url}: {error_msg}")
+                except httpx.HTTPStatusError as e:
+                    error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"HTTP error for {url}: {error_msg}")
                 except Exception as e:
-                    errors.append({"url": url, "error": str(e)})
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"Unexpected error for {url}: {error_msg}")
 
             # Step 2: Check if we have any links
             if not all_links:
@@ -1093,9 +1234,16 @@ async def update_post_now(
                                 "error": f"No post ID configured for site '{wp_site}'"
                             }
                         else:
-                            # Pass wp_site as both target_site_key and wp_site for proper resolution
+                            # Load actual site configuration from MongoDB
+                            site_config = mongo_storage.get_wp_site(wp_site)
+                            if not site_config:
+                                logging.warning(f"[TRIGGER] Site config not found for {wp_site}, using default")
+                                site_config = None
+                            else:
+                                logging.info(f"[TRIGGER] Loaded site config for {wp_site}, button_style: {site_config.get('button_style', 'default')}")
+                            
                             wp_result = await update_post_links_section(
-                                site_post_id, new_links, wp_site, config, wp_site
+                                site_post_id, new_links, wp_site, config, site_config
                             )
                     elif isinstance(wp_site, dict) and "url" in wp_site:
                         # wp_site is the actual site config - use first configured site
@@ -1110,9 +1258,16 @@ async def update_post_now(
                                     "error": f"No post ID configured for site '{first_site_key}'"
                                 }
                             else:
-                                # Pass site_key for both target and wp_site
+                                # Load actual site configuration from MongoDB
+                                site_config = mongo_storage.get_wp_site(first_site_key)
+                                if not site_config:
+                                    logging.warning(f"[TRIGGER] Site config not found for {first_site_key}, using default")
+                                    site_config = None
+                                else:
+                                    logging.info(f"[TRIGGER] Loaded site config for {first_site_key}, button_style: {site_config.get('button_style', 'default')}")
+                                
                                 wp_result = await update_post_links_section(
-                                    site_post_id, new_links, first_site_key, config, first_site_key
+                                    site_post_id, new_links, first_site_key, config, site_config
                                 )
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
@@ -1181,6 +1336,7 @@ async def update_post_now(
 
             # Step 1: Scrape and extract
             all_links = []
+            errors = []
             for url in source_urls:
                 try:
                     html = await fetch_html(url)
@@ -1194,8 +1350,24 @@ async def update_post_now(
                     )
                     links = extracted_links
                     all_links.extend(links)
+                except RetryError as e:
+                    # RetryError wraps the last exception
+                    last_exception = e.last_attempt.exception() if e.last_attempt else None
+                    error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"RetryError for {url}: {error_msg}")
+                except httpx.TimeoutException as e:
+                    error_msg = f"Request timeout: {str(e)}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"Timeout error for {url}: {error_msg}")
+                except httpx.HTTPStatusError as e:
+                    error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"HTTP error for {url}: {error_msg}")
                 except Exception as e:
-                    print(f"Error processing URL {url}: {e}")
+                    error_msg = f"{type(e).__name__}: {str(e)}"
+                    errors.append({"url": url, "error": error_msg})
+                    print(f"Error processing URL {url}: {error_msg}")
 
             if not all_links:
                 return JSONResponse(
@@ -1206,6 +1378,7 @@ async def update_post_now(
                         "links_found": 0,
                         "links_added": 0,
                         "sections_pruned": 0,
+                        "errors": errors,
                     }
                 )
 
@@ -1239,9 +1412,17 @@ async def update_post_now(
                         }
                         continue
 
+                    # Load site configuration from MongoDB
+                    site_config = mongo_storage.get_wp_site(site_key)
+                    if not site_config:
+                        logging.warning(f"[BATCH] Site config not found for {site_key}, using default")
+                        site_config = None
+                    else:
+                        logging.info(f"[BATCH] Loaded site config for {site_key}, button_style: {site_config.get('button_style', 'default')}")
+
                     # Update this site with resolved post ID
                     wp_result = await update_post_links_section(
-                        site_post_id, new_links, site_key, config, site_key
+                        site_post_id, new_links, site_key, config, site_config
                     )
                     results[site_key] = wp_result
 
@@ -1256,20 +1437,25 @@ async def update_post_now(
                     results[site_key] = {"error": str(e)}
 
             return JSONResponse(
-                {"success": True, "post_id": post_id, "results": results}
+                {
+                    "success": True, 
+                    "post_id": post_id, 
+                    "results": results,
+                    "errors": errors if errors else []
+                }
             )
 
-        # If target is a site key
-        site_conf = None
-        if target and target != "this":
+        # If target is a specific site key, pass it through
+        if target and target != "all":
             # Pass the site key through with config - run_update_sync will resolve it
             return await run_update_sync(
                 post_id, source_urls, timezone, extractor_name, target, config
             )
 
-        # Fallback: default behavior
-        return await run_update_sync(
-            post_id, source_urls, timezone, extractor_name, wp_site, config
+        # Should not reach here - target validation should have caught this
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid target. Must be a site key or 'all'."
         )
 
     # Background mode (for Cloud Scheduler parallel updates)
@@ -1407,9 +1593,16 @@ async def run_update_sync(
         )
         new_links = dedupe_by_fingerprint(all_links, known_fps)
 
+        # Load site configuration if target_site_key is available
+        site_config = None
+        if target_site_key:
+            site_config = mongo_storage.get_wp_site(target_site_key)
+            if site_config:
+                logging.info(f"[SCRAPE ENDPOINT] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+
         # Step 3: Update WordPress using the resolved post ID
         wp_result = await update_post_links_section(
-            target_post_id, new_links, target_site_key, config, target_site_key
+            target_post_id, new_links, target_site_key, config, site_config
         )
 
         # Step 4: Save fingerprints for new links (site-specific with correct post ID)
@@ -1584,7 +1777,7 @@ async def run_update_task(
 # ============================================================================
 
 
-async def process_batch_updates(request_id: str, target: str = "this"):
+async def process_batch_updates(request_id: str, target: str = "all"):
     """
     Process all posts in a batch update request.
     Runs in background with progress tracking.
@@ -1612,7 +1805,7 @@ async def process_batch_updates(request_id: str, target: str = "this"):
     batch_request.complete()
 
 
-async def process_post_update(request_id: str, post_id: int, target: str = "this"):
+async def process_post_update(request_id: str, post_id: int, target: str = "all"):
     """
     Update a single post with progress tracking and logging.
     Calls the same extraction logic as /trigger but with state management.
@@ -1768,9 +1961,6 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
                         targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
                     else:
                         print(f"[BATCH] Warning: No post ID for site {site_key} on post {post_id}")
-        elif target == "this":
-            # For "this" site, use the post_id directly (legacy support)
-            targets_to_process.append({"site_key": None, "post_id": post_id})
         else:
             # For specific sites, resolve the site-specific post ID
             target_post_id = resolve_post_id_for_site(config, target)
@@ -1802,9 +1992,16 @@ async def process_post_update(request_id: str, post_id: int, target: str = "this
                     log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {len(new_links)} new links",
                 )
 
+                # Load site configuration if target_site_key is available
+                site_config = None
+                if target_site_key:
+                    site_config = mongo_storage.get_wp_site(target_site_key)
+                    if site_config:
+                        logging.info(f"[BATCH UPDATE] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+
                 # Update WordPress
                 wp_result = await update_post_links_section(
-                    target_post_id, new_links, target_site_key, config, target_site_key
+                    target_post_id, new_links, target_site_key, config, site_config
                 )
                 
                 if not wp_result.get("error"):
@@ -2041,3 +2238,62 @@ async def get_links_trend_analytics(days: int = 30):
     """
     analytics = get_analytics_engine()
     return {"trend": analytics.get_links_added_trend(days=days), "period_days": days}
+
+
+# ==================== Button Styles API ====================
+
+
+@app.get("/api/button-styles")
+async def get_all_button_styles():
+    """
+    Get all available button style templates.
+    
+    Returns:
+        Dict with all button styles, including name, description, and CSS properties
+    """
+    from . import button_styles
+    return {"styles": button_styles.get_all_button_styles()}
+
+
+@app.get("/api/button-styles/{style_name}")
+async def get_button_style(style_name: str):
+    """
+    Get a specific button style by name.
+    
+    Args:
+        style_name: Name of the style (e.g., 'default', 'gradient_blue')
+        
+    Returns:
+        Button style configuration with CSS and hover properties
+    """
+    from . import button_styles
+    style = button_styles.get_button_style(style_name)
+    if not style:
+        raise HTTPException(status_code=404, detail=f"Button style '{style_name}' not found")
+    return {"style_name": style_name, "style": style}
+
+
+@app.get("/api/button-styles/preview/{style_name}")
+async def preview_button_style(style_name: str):
+    """
+    Generate preview HTML for a button style.
+    
+    Args:
+        style_name: Name of the style to preview
+        
+    Returns:
+        HTML snippet showing the button in action
+    """
+    from . import button_styles
+    
+    # Sample link for preview
+    sample_link = {
+        "url": "#",
+        "title": "Sample Link",
+        "order": 1,
+        "target": "_blank"
+    }
+    
+    button_html = button_styles.generate_button_html(sample_link, style_name)
+    return {"style_name": style_name, "html": button_html}
+

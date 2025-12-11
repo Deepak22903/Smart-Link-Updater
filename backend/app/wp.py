@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException
 from .models import Link
+from . import button_styles
 
 WP_BASE_URL = os.getenv("WP_BASE_URL")
 WP_USERNAME = os.getenv("WP_USERNAME")
@@ -227,6 +228,12 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     now = datetime.now(pytz.timezone("UTC"))
     today_date = links[0].published_date_iso if links else now.strftime("%Y-%m-%d")
     
+    # Get button style from site configuration (default to "default" style)
+    button_style = "default"
+    if wp_site and isinstance(wp_site, dict):
+        button_style = wp_site.get("button_style", "default")
+    logging.info(f"[WP] Site button style: {button_style}")
+    
     # Only process if we have new links to add
     if not links:
         return {
@@ -358,15 +365,23 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     # New links are inserted BEFORE existing links
     all_links_map = {}  # Use dict to track by URL
     
+    # Get custom button title configuration
+    use_custom_title = post_config.get('use_custom_button_title', False) if post_config else False
+    custom_title = post_config.get('custom_button_title', None) if post_config else None
+    
+    logging.info(f"[WP] Custom button title config: enabled={use_custom_title}, title={custom_title}")
+    
     # Add new links FIRST (they'll have lower order numbers)
     for idx, link in enumerate(links, start=1):
         url = str(link.url)
         if url not in all_links_map:
             # Get target from link object or determine from URL
             target = getattr(link, 'target', None) or get_link_target(url)
+            # Use custom button title if enabled, otherwise use scraped title
+            title = custom_title if (use_custom_title and custom_title) else link.title
             all_links_map[url] = {
                 'url': url,
-                'title': link.title,
+                'title': title,
                 'target': target,
                 'order': idx
             }
@@ -399,26 +414,26 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     
     # Create styled buttons grouped in threes (3 buttons per column block)
     # Using proper WordPress block format with block comments
+    # Button style is determined by site configuration
     column_blocks = []
+    
+    logging.info(f"[WP] Using button style: {button_style}")
     
     for i in range(0, len(merged_links), 3):
         # Get 3 links at a time
         group = merged_links[i:i+3]
         
-        # Create button HTML for this group
+        # Create button HTML for this group using the button_styles module
         buttons_in_group = []
         for link in group:
             # Get target attribute (default to _blank for new tab)
             target = link.get('target', '_blank')
-            rel_attr = ' rel="noopener noreferrer"' if target == '_blank' else ''
             
-            button_html = f'''<!-- wp:column {{"width":"33.33%"}} -->
-<div class="wp-block-column" style="flex-basis:33.33%">
-    <div style="margin: 15px 0;">
-        <a href="{link['url']}" target="{target}"{rel_attr} style="display: inline-block; padding: 15px 30px; border: 3px solid #ff216d; border-radius: 15px; background-color: white; color: #ff216d; text-decoration: none; font-size: 18px; font-weight: bold; text-align: center; transition: all 0.3s; width: 100%; box-sizing: border-box;" onmouseover="this.style.borderColor='#42a2f6'; this.style.color='#42a2f6';" onmouseout="this.style.borderColor='#ff216d'; this.style.color='#ff216d';">{link['order']:02d}. {link['title']}</a>
-    </div>
-</div>
-<!-- /wp:column -->'''
+            # Generate button HTML with site-specific style
+            button_html = button_styles.generate_button_html(
+                link={'url': link['url'], 'title': link['title'], 'order': link['order'], 'target': target},
+                style_name=button_style
+            )
             buttons_in_group.append(button_html)
         
         # Create a column block for this group with proper block comments
