@@ -71,12 +71,13 @@ class WSOPExtractor(BaseExtractor):
             f"{day_y}{suffix_y} {month_y} {year_y}",         # "7th December 2025"
         ])
         
-        # Use today's date for all links
+        # Use appropriate dates: today's links get today's date, yesterday's links keep yesterday's date
         date_iso = date_obj.strftime("%Y-%m-%d")
         yesterday_iso = yesterday_obj.strftime("%Y-%m-%d")
         
         logging.info(f"[WSOPExtractor] Looking for links for TODAY ({date_obj.strftime('%d %B %Y')}) and YESTERDAY ({yesterday_obj.strftime('%d %B %Y')})")
-        logging.info(f"[WSOPExtractor] All new links will be marked with today's date: {date_iso}")
+        logging.info(f"[WSOPExtractor] Today's links will be marked with: {date_iso}")
+        logging.info(f"[WSOPExtractor] Yesterday's links will be marked with: {yesterday_iso}")
         logging.debug(f"[WSOPExtractor] Today patterns: {today_patterns}")
         logging.debug(f"[WSOPExtractor] Yesterday patterns: {yesterday_patterns}")
         
@@ -97,7 +98,8 @@ class WSOPExtractor(BaseExtractor):
         yesterday_links = OrderedDict()
         
         # Helper to extract anchors from a tag (p, li, div, etc.)
-        def _extract_anchors_from_tag(tag, target_dict):
+        # The target_date_iso parameter allows us to set different dates for today vs yesterday sections
+        def _extract_anchors_from_tag(tag, target_dict, target_date_iso):
             for a in tag.find_all('a', href=True):
                 href = a.get('href') or ''
                 if not href.startswith('http'):
@@ -110,7 +112,7 @@ class WSOPExtractor(BaseExtractor):
                             logging.debug(f"[WSOPExtractor] Extracted placeholder link (no title): {href}")
                         else:
                             logging.info(f"[WSOPExtractor] Extracted link: {href} | Title: {title}")
-                        target_dict[href] = Link(title=title, url=href, date=date, published_date_iso=date_iso)
+                        target_dict[href] = Link(title=title, url=href, date=date, published_date_iso=target_date_iso)
                     else:
                         # Decide if we should update existing title
                         existing = target_dict[href]
@@ -136,7 +138,7 @@ class WSOPExtractor(BaseExtractor):
                 logging.info(f"[WSOPExtractor] Found TODAY's heading: {strong_text}")
 
                 # Extract any anchors in the heading paragraph itself
-                _extract_anchors_from_tag(p, today_links)
+                _extract_anchors_from_tag(p, today_links, date_iso)
 
                 # Walk subsequent siblings until the next date heading
                 for sibling in p.find_next_siblings():
@@ -152,13 +154,13 @@ class WSOPExtractor(BaseExtractor):
                         items = sibling.find_all('li')
                         logging.info(f"[WSOPExtractor] Found {len(items)} list items in {sibling.name} after TODAY's heading")
                         for li in items:
-                            _extract_anchors_from_tag(li, today_links)
+                            _extract_anchors_from_tag(li, today_links, date_iso)
                         continue
                     if sibling.name == 'p':
-                        _extract_anchors_from_tag(sibling, today_links)
+                        _extract_anchors_from_tag(sibling, today_links, date_iso)
                         continue
                     # For other tags, still try to extract anchors
-                    _extract_anchors_from_tag(sibling, today_links)
+                    _extract_anchors_from_tag(sibling, today_links, date_iso)
             
             # Check if this is yesterday's heading
             elif strong and strong_text in yesterday_patterns:
@@ -166,7 +168,7 @@ class WSOPExtractor(BaseExtractor):
                 logging.info(f"[WSOPExtractor] Found YESTERDAY's heading: {strong_text}")
 
                 # Extract any anchors in the heading paragraph itself
-                _extract_anchors_from_tag(p, yesterday_links)
+                _extract_anchors_from_tag(p, yesterday_links, yesterday_iso)
 
                 # Walk subsequent siblings until the next date heading
                 for sibling in p.find_next_siblings():
@@ -182,31 +184,34 @@ class WSOPExtractor(BaseExtractor):
                         items = sibling.find_all('li')
                         logging.info(f"[WSOPExtractor] Found {len(items)} list items in {sibling.name} after YESTERDAY's heading")
                         for li in items:
-                            _extract_anchors_from_tag(li, yesterday_links)
+                            _extract_anchors_from_tag(li, yesterday_links, yesterday_iso)
                         continue
                     if sibling.name == 'p':
-                        _extract_anchors_from_tag(sibling, yesterday_links)
+                        _extract_anchors_from_tag(sibling, yesterday_links, yesterday_iso)
                         continue
                     # For other tags, still try to extract anchors
-                    _extract_anchors_from_tag(sibling, yesterday_links)
+                    _extract_anchors_from_tag(sibling, yesterday_links, yesterday_iso)
         
-        logging.info(f"[WSOPExtractor] Found {len(today_links)} links under TODAY's section")
-        logging.info(f"[WSOPExtractor] Found {len(yesterday_links)} links under YESTERDAY's section")
+        logging.info(f"[WSOPExtractor] Found {len(today_links)} links under TODAY's section (marked with {date_iso})")
+        logging.info(f"[WSOPExtractor] Found {len(yesterday_links)} links under YESTERDAY's section (marked with {yesterday_iso})")
         
-        # IMPORTANT: The deduplication against yesterday's already-processed links
-        # happens at the fingerprint level in main.py, NOT here.
-        # We just need to return today's links + yesterday's links (both marked with today's date).
-        # The fingerprint system will automatically filter out links that were already
-        # added yesterday because they'll have fingerprints like "url|||yesterday_iso".
+        # IMPORTANT: Deduplication strategy for yesterday's links
+        # - Today's links are marked with today's date (will be fingerprinted as "url|||today_iso")
+        # - Yesterday's links are marked with YESTERDAY'S date (will be fingerprinted as "url|||yesterday_iso")
+        # - In main.py, we check fingerprints against BOTH today and yesterday dates
+        # - This ensures:
+        #   1. Links already processed yesterday (fingerprint exists) are NOT added again
+        #   2. NEW links added to yesterday's section (no fingerprint) ARE added with yesterday's date
+        #   3. Today's new links are added with today's date
         
-        # Combine today's links with yesterday's links (yesterday's links get today's date)
+        # Combine today's links with yesterday's links (keeping their respective dates)
         url_map = OrderedDict()
         
-        # Add today's links first
+        # Add today's links first (marked with date_iso)
         for href, link in today_links.items():
             url_map[href] = link
         
-        # Add yesterday's links (these will be deduplicated by fingerprint system)
+        # Add yesterday's links (marked with yesterday_iso for proper fingerprinting)
         for href, link in yesterday_links.items():
             if href not in url_map:  # Don't duplicate if same link appears in both sections
                 url_map[href] = link

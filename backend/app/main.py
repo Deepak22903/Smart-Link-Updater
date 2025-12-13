@@ -1213,9 +1213,23 @@ async def update_post_now(
                             target_post_id = resolved_id
 
             # Step 3: Deduplicate against known links for this specific site using the correct post ID
+            # For WSOP extractor, also check yesterday's fingerprints to avoid re-adding old links
             known_fps = mongo_storage.get_known_fingerprints(
                 target_post_id, today_iso, target_site_key
             )
+            
+            # Check if this is a WSOP post (extractor returns links with both today and yesterday dates)
+            from datetime import timedelta
+            extractor_name = extractor.__class__.__name__.lower()
+            if 'wsop' in extractor_name:
+                yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
+                yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
+                yesterday_fps = mongo_storage.get_known_fingerprints(
+                    target_post_id, yesterday_iso, target_site_key
+                )
+                known_fps = known_fps.union(yesterday_fps)
+                print(f"[DEBUG] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
+            
             new_links = dedupe_by_fingerprint(all_links, known_fps)
 
             print(
@@ -1280,11 +1294,20 @@ async def update_post_now(
                         wp_result = {"error": "Invalid wp_site configuration"}
 
                     # Step 5: Save fingerprints for deduplication (site-specific with correct post ID)
+                    # Group links by their date to save fingerprints correctly
                     if new_links and not wp_result.get("error"):
-                        new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(
-                            target_post_id, today_iso, new_fps, target_site_key
-                        )
+                        from collections import defaultdict
+                        fps_by_date = defaultdict(set)
+                        for link in new_links:
+                            fp = fingerprint(link)
+                            fps_by_date[link.published_date_iso].add(fp)
+                        
+                        # Save fingerprints for each date
+                        for date_iso, fps in fps_by_date.items():
+                            mongo_storage.save_new_links(
+                                target_post_id, date_iso, fps, target_site_key
+                            )
+                            logging.info(f"[TRIGGER] Saved {len(fps)} fingerprints for date {date_iso}")
 
                         # Update last_updated timestamp
                         config["last_updated"] = datetime.utcnow().isoformat()
@@ -1396,9 +1419,23 @@ async def update_post_now(
                         continue
 
                     # Deduplicate against known links for THIS specific site using the correct post ID
+                    # For WSOP extractor, also check yesterday's fingerprints
                     known_fps = mongo_storage.get_known_fingerprints(
                         site_post_id, today_iso, site_key
                     )
+                    
+                    # Check if this is a WSOP post
+                    from datetime import timedelta
+                    extractor_name = extractor.__class__.__name__.lower()
+                    if 'wsop' in extractor_name:
+                        yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
+                        yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
+                        yesterday_fps = mongo_storage.get_known_fingerprints(
+                            site_post_id, yesterday_iso, site_key
+                        )
+                        known_fps = known_fps.union(yesterday_fps)
+                        print(f"[DEBUG] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
+                    
                     new_links = dedupe_by_fingerprint(all_links, known_fps)
 
                     print(
@@ -1427,11 +1464,20 @@ async def update_post_now(
                     results[site_key] = wp_result
 
                     # Save fingerprints for this specific site using the correct post ID
+                    # Group links by their date to save fingerprints correctly
                     if not wp_result.get("error"):
-                        new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(
-                            site_post_id, today_iso, new_fps, site_key
-                        )
+                        from collections import defaultdict
+                        fps_by_date = defaultdict(set)
+                        for link in new_links:
+                            fp = fingerprint(link)
+                            fps_by_date[link.published_date_iso].add(fp)
+                        
+                        # Save fingerprints for each date
+                        for date_iso, fps in fps_by_date.items():
+                            mongo_storage.save_new_links(
+                                site_post_id, date_iso, fps, site_key
+                            )
+                            logging.info(f"[MULTI-SITE] Saved {len(fps)} fingerprints for site {site_key}, date {date_iso}")
 
                 except Exception as e:
                     results[site_key] = {"error": str(e)}
@@ -1588,9 +1634,22 @@ async def run_update_sync(
                         break
 
         # Step 2: Deduplicate against known links for this specific site using correct post ID
+        # For WSOP extractor, also check yesterday's fingerprints
         known_fps = mongo_storage.get_known_fingerprints(
             target_post_id, today_iso, target_site_key
         )
+        
+        # Check if this is a WSOP post
+        from datetime import timedelta
+        if extractor_name and 'wsop' in extractor_name.lower():
+            yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
+            yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
+            yesterday_fps = mongo_storage.get_known_fingerprints(
+                target_post_id, yesterday_iso, target_site_key
+            )
+            known_fps = known_fps.union(yesterday_fps)
+            logging.info(f"[SYNC UPDATE] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
+        
         new_links = dedupe_by_fingerprint(all_links, known_fps)
 
         # Load site configuration if target_site_key is available
@@ -1606,11 +1665,20 @@ async def run_update_sync(
         )
 
         # Step 4: Save fingerprints for new links (site-specific with correct post ID)
+        # Group links by their date to save fingerprints correctly
         if new_links:
-            new_fps = {fingerprint(link) for link in new_links}
-            mongo_storage.save_new_links(
-                target_post_id, today_iso, new_fps, target_site_key
-            )
+            from collections import defaultdict
+            fps_by_date = defaultdict(set)
+            for link in new_links:
+                fp = fingerprint(link)
+                fps_by_date[link.published_date_iso].add(fp)
+            
+            # Save fingerprints for each date
+            for date_iso, fps in fps_by_date.items():
+                mongo_storage.save_new_links(
+                    target_post_id, date_iso, fps, target_site_key
+                )
+                logging.info(f"[SYNC UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
 
         # Build response message
         message_parts = []
@@ -1979,9 +2047,23 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             
             try:
                 # Deduplicate against known links for this specific site
+                # For WSOP extractor, also check yesterday's fingerprints to avoid re-adding old links
                 known_fps = mongo_storage.get_known_fingerprints(
                     target_post_id, today_iso, target_site_key
                 )
+                
+                # Check if this is a WSOP post (extractor returns links with both today and yesterday dates)
+                from datetime import timedelta
+                extractor_name = extractor.__class__.__name__.lower()
+                if 'wsop' in extractor_name:
+                    yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
+                    yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
+                    yesterday_fps = mongo_storage.get_known_fingerprints(
+                        target_post_id, yesterday_iso, target_site_key
+                    )
+                    known_fps = known_fps.union(yesterday_fps)
+                    logging.info(f"[BATCH UPDATE] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
+                
                 new_links = dedupe_by_fingerprint(all_links, known_fps)
 
                 await manager.update_post_state(
@@ -2016,15 +2098,27 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     )
                     
                     # Save fingerprints for this specific site
+                    # Group links by their date to save fingerprints correctly
                     if new_links:
-                        new_fps = {fingerprint(link) for link in new_links}
-                        mongo_storage.save_new_links(
-                            target_post_id, today_iso, new_fps, target_site_key
-                        )
+                        from collections import defaultdict
+                        fps_by_date = defaultdict(set)
+                        for link in new_links:
+                            fp = fingerprint(link)
+                            fps_by_date[link.published_date_iso].add(fp)
+                        
+                        # Save fingerprints for each date
+                        total_fps_saved = 0
+                        for date_iso, fps in fps_by_date.items():
+                            mongo_storage.save_new_links(
+                                target_post_id, date_iso, fps, target_site_key
+                            )
+                            total_fps_saved += len(fps)
+                            logging.info(f"[BATCH UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
+                        
                         await manager.update_post_state(
                             request_id,
                             post_id,
-                            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {len(new_fps)} fingerprints for site {target_site_key or 'default'}",
+                            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {total_fps_saved} fingerprints for site {target_site_key or 'default'}",
                         )
                 else:
                     sites_failed.append(target_site_key or 'default')
