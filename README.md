@@ -8,7 +8,7 @@ A minimal, Dockerized skeleton for updating WordPress posts by scraping target s
 - Worker: Celery worker orchestrates scraping → Gemini parsing (stubbed) → filter/dedupe → WordPress update.
 - Queue: Redis (local docker) for broker/result.
 - Scraping: `httpx` by default; optional ScraperAPI via env (`SCRAPER_API_URL`, `SCRAPER_API_KEY`).
-- LLM: Gemini placeholder in `app/llm.py` (plug your key + SDK and enforce JSON schema).
+- LLM: **Fully Implemented** with Google Gemini in `app/extractors/default.py` and `app/llm.py`.
 
 ## Why not Vercel for workers?
 
@@ -52,20 +52,27 @@ curl -X POST http://localhost:8000/trigger \
   }'
 ```
 
-Note: Gemini call is stubbed; update `app/llm.py` to integrate Google Gemini and return the strict JSON as described in the docs.
-
 ## File layout
 
 - `backend/app/main.py` – FastAPI API (`/trigger`)
 - `backend/app/queue_app.py` – Celery app and config
 - `backend/app/tasks.py` – Celery task orchestrating scrape → extract → update
 - `backend/app/scrape.py` – HTML fetch (direct or via ScraperAPI)
-- `backend/app/llm.py` – Gemini placeholder: implement schema-constrained parsing
+- `backend/app/llm.py` – Gemini integration for intelligent link extraction
+- `backend/app/extractors/` – Modular extractor system (includes `default.py` for Gemini)
 - `backend/app/dedupe.py` – filter-only-today + dedupe by fingerprint
 - `backend/app/wp.py` – WordPress REST client (Basic Auth via Application Password)
 - `backend/tests/test_dedupe.py` – minimal unit tests for dedupe logic
 - `backend/Dockerfile` – shared for API and worker
 - `docker-compose.yml` – brings up Redis, API, worker
+
+## Key Features
+
+- **Multi-Site Support**: Manage posts across multiple WordPress installations with site-specific post ID mapping.
+- **Custom Button Titles**: Option to override scraped titles with a custom call-to-action.
+- **Manual Link Addition**: Add links manually via the WordPress dashboard with full deduplication.
+- **Batch Updates**: Update multiple posts simultaneously with real-time progress tracking.
+- **Site-Specific Button Styles**: Configure different button styles for each site.
 
 ## Production hosting options
 
@@ -77,7 +84,6 @@ Note: Gemini call is stubbed; update `app/llm.py` to integrate Google Gemini and
 
 ## Next steps
 
-- Implement Gemini extraction in `app/llm.py` with your prompt + strict JSON schema.
 - Persist known fingerprints and last-run state in MongoDB Atlas.
 - Enhance `app/wp.py` to write to a custom field or block rather than prefixing content.
 - Add per-domain rate limiting and retries/backoff policies.

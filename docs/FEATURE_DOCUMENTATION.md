@@ -757,7 +757,7 @@ gcloud run deploy smartlink-api \
 - **GitHub:** https://github.com/Deepak22903/Smart-Link-Updater
 - **Documentation:** See `/docs` folder
 - **Architecture:** `ARCHITECTURE.md`
-- **Multi-Site Guide:** `MULTI_SITE_SOLUTION_SUMMARY.md`
+- **Multi-Site Guide:** `MULTI_SITE_POST_IDS.md`
 - **Extractor Guide:** `EXTRACTOR_GUIDE.md`
 - **Monitoring Guide:** `MONITORING.md`
 

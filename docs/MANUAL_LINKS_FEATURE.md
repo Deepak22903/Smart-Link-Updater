@@ -49,9 +49,10 @@ This feature allows users to manually add links to any configured post directly 
     }
   ],
   "date": "2025-11-10",
-  "target": "this"
+  "target_sites": ["this", "minecraft"] 
 }
 ```
+*Note: `target` field is deprecated. Use `target_sites` for multi-site support.*
 
 **Response**:
 ```json
