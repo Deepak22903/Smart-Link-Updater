@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://champion-certificate-aim-offset.trycloudflare.com';
+    private $api_base_url = 'https://definitions-rescue-convenient-scales.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -2835,6 +2835,7 @@ class SmartLinkUpdater {
                 const postId = parseInt($(e.currentTarget).data('post-id'));
                 
                 $('#config-mode').val('edit');
+                $('#config-post-id').val(postId);
                 $('#config-modal-title').text('Edit Post Configuration');
                 $('#save-config-text').text('Update Configuration');
                 
@@ -2917,15 +2918,15 @@ class SmartLinkUpdater {
                 });
             }
             
-            function savePostConfig() {
-                const mode = $('#config-mode').val();
-                const contentSlug = $('#config-content-slug').val().trim();
-                const $btn = $('#save-config-btn');
-                
-                // Collect site_post_ids and auto_update_sites
+            /**
+             * Collect site post IDs and auto-update settings
+             * @returns {object} Object with sitePostIds and autoUpdateSites arrays
+             */
+            function collectSiteConfiguration() {
                 const sitePostIds = {};
                 const autoUpdateSites = [];
                 let hasSiteIds = false;
+                
                 $('.site-post-id-input').each(function() {
                     const siteKey = $(this).data('site-key');
                     const sitePostId = parseInt($(this).val());
@@ -2941,13 +2942,14 @@ class SmartLinkUpdater {
                     }
                 });
                 
-                // Validation: Need at least one site-specific post ID
-                if (!hasSiteIds) {
-                    showToast('Please enter at least one site-specific post ID', 'error');
-                    return;
-                }
-                
-                // Collect source URLs
+                return { sitePostIds, autoUpdateSites, hasSiteIds };
+            }
+            
+            /**
+             * Collect source URLs from form
+             * @returns {array} Array of source URLs
+             */
+            function collectSourceUrls() {
                 const sourceUrls = [];
                 $('.source-url-input').each(function() {
                     const url = $(this).val().trim();
@@ -2955,84 +2957,140 @@ class SmartLinkUpdater {
                         sourceUrls.push(url);
                     }
                 });
-                
-                if (sourceUrls.length === 0) {
-                    showToast('Please add at least one source URL', 'error');
-                    return;
-                }
+                return sourceUrls;
+            }
+            
+            /**
+             * Collect extractor mappings for each source URL
+             * @returns {object} Mapping of URL to extractor name
+             */
+            function collectExtractorMap() {
+                const extractorMap = {};
+                $('.source-url-row').each(function() {
+                    const url = $(this).find('.source-url-input').val().trim();
+                    const extractor = $(this).find('.extractor-select').val();
+                    if (url && extractor) {
+                        extractorMap[url] = extractor;
+                    }
+                });
+                return extractorMap;
+            }
+            
+            /**
+             * Build configuration data object from form inputs
+             * @param {string} mode - 'add' or 'edit'
+             * @param {object} siteConfig - Site post IDs and auto-update settings
+             * @param {array} sourceUrls - Array of source URLs
+             * @returns {object} Configuration data object
+             */
+            function buildConfigData(mode, siteConfig, sourceUrls) {
+                const contentSlug = $('#config-content-slug').val().trim();
+                const daysToKeep = parseInt($('#config-days-to-keep').val()) || 5;
+                const useCustomButtonTitle = $('#use-custom-button-title').is(':checked');
+                const customButtonTitle = $('#custom-button-title').val().trim();
                 
                 // Build configuration object
                 const configData = {
-                    post_id: Object.values(sitePostIds)[0], // Use first site ID as post_id (required by backend)
+                    post_id: Object.values(siteConfig.sitePostIds)[0], // Use first site ID as post_id
                     source_urls: sourceUrls,
-                    timezone: $('#config-timezone').val()
+                    timezone: $('#config-timezone').val(),
+                    site_post_ids: siteConfig.sitePostIds
                 };
                 
                 // Add optional fields
                 if (contentSlug) {
                     configData.content_slug = contentSlug;
                 }
-                configData.site_post_ids = sitePostIds;
-                if (autoUpdateSites.length > 0) {
-                    configData.auto_update_sites = autoUpdateSites;
+                
+                if (siteConfig.autoUpdateSites.length > 0) {
+                    configData.auto_update_sites = siteConfig.autoUpdateSites;
                 }
                 
-                // Add days_to_keep (default to 5 if not specified)
-                const daysToKeep = parseInt($('#config-days-to-keep').val()) || 5;
                 if (daysToKeep > 0 && daysToKeep <= 30) {
                     configData.days_to_keep = daysToKeep;
                 }
                 
                 // Add custom button title configuration
-                const useCustomButtonTitle = $('#use-custom-button-title').is(':checked');
-                const customButtonTitle = $('#custom-button-title').val().trim();
                 configData.use_custom_button_title = useCustomButtonTitle;
                 if (useCustomButtonTitle && customButtonTitle) {
                     configData.custom_button_title = customButtonTitle;
                 }
                 
+                // Add extractor map
+                const extractorMap = collectExtractorMap();
+                if (Object.keys(extractorMap).length > 0) {
+                    configData.extractor_map = extractorMap;
+                }
+                
                 // Add site-specific ad codes
-                let siteAdCodes = getSiteAdCodes();
-                console.log('Site ad codes collected:', siteAdCodes);
-                // Ensure it's always an object (never array), or omit if empty
+                const siteAdCodes = getSiteAdCodes();
                 if (Object.keys(siteAdCodes).length > 0) {
                     configData.site_ad_codes = siteAdCodes;
-                    console.log('Site ad codes added to configData:', configData.site_ad_codes);
-                } else {
-                    // Don't include site_ad_codes if empty to avoid serialization issues
-                    console.log('No site ad codes to add');
                 }
                 
-                // Handle extractor configuration from inline selectors
-                // Only include mappings for URLs where an extractor is explicitly selected.
-                // If no extractor is chosen for a URL, the backend will default to Gemini.
-                const extractorMap = {};
-                $('.source-url-row').each(function() {
-                    const url = $(this).find('.source-url-input').val().trim();
-                    const extractor = $(this).find('.extractor-select').val();
-
-                    if (url && extractor) {
-                        extractorMap[url] = extractor;
-                    }
-                });
-
-                // If any extractors were chosen, send the mapping; otherwise omit it
-                if (Object.keys(extractorMap).length > 0) {
-                    console.log('Final extractor_map:', extractorMap);
-                    configData.extractor_map = extractorMap;
-                } else {
-                    console.log('No extractor_map provided; backend will use default extractor');
+                return configData;
+            }
+            
+            /**
+             * Validate configuration data before saving
+             * @param {object} siteConfig - Site configuration data
+             * @param {array} sourceUrls - Array of source URLs
+             * @returns {object} Object with isValid boolean and error message
+             */
+            function validateConfigData(siteConfig, sourceUrls) {
+                if (!siteConfig.hasSiteIds) {
+                    return { isValid: false, error: 'Please enter at least one site-specific post ID' };
                 }
                 
-                console.log('Config data to send:', configData);                
+                if (sourceUrls.length === 0) {
+                    return { isValid: false, error: 'Please add at least one source URL' };
+                }
+                
+                return { isValid: true };
+            }
+            
+            /**
+             * Save post configuration (add or update)
+             */
+            function savePostConfig() {
+                const mode = $('#config-mode').val();
+                const postId = parseInt($('#config-post-id').val()) || null;
+                const $btn = $('#save-config-btn');
+                
+                console.log('[savePostConfig] Mode:', mode, 'PostID:', postId);
+                
+                // Collect all data using modular functions
+                const siteConfig = collectSiteConfiguration();
+                const sourceUrls = collectSourceUrls();
+                
+                // Validate data
+                const validation = validateConfigData(siteConfig, sourceUrls);
+                if (!validation.isValid) {
+                    showToast(validation.error, 'error');
+                    return;
+                }
+                
+                // Check if we have a postId for edit mode
+                if (mode === 'edit' && !postId) {
+                    console.error('[savePostConfig] Edit mode but no postId found!');
+                    showToast('Error: Post ID not found. Please try again.', 'error');
+                    return;
+                }
+                
+                // Build configuration data
+                const configData = buildConfigData(mode, siteConfig, sourceUrls);
+                console.log('[savePostConfig] Config data to send:', configData);
+                
                 // Disable button and show loading
                 $btn.prop('disabled', true).html('<span class="spinner is-active" style="float: none;"></span> Saving...');
                 
-                // Send to API
+                // Determine API endpoint and method
                 const method = mode === 'add' ? 'POST' : 'PUT';
                 const url = mode === 'add' 
                     ? config.restUrl + '/config/post'
                     : config.restUrl + '/config/post/' + postId;
+                
+                console.log('[savePostConfig] Sending', method, 'to', url);
                 
                 $.ajax({
                     url: url,
@@ -3043,26 +3101,32 @@ class SmartLinkUpdater {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
                     },
                     success: function(response) {
+                        console.log('[savePostConfig] Success:', response);
                         showToast(mode === 'add' ? 'Configuration added successfully!' : 'Configuration updated successfully!', 'success');
                         $('#post-config-modal').fadeOut();
                         loadPosts(); // Refresh posts table
                     },
-                    error: function(xhr) {
-                        console.error('Save config error:', xhr);
+                    error: function(xhr, status, error) {
+                        console.error('[savePostConfig] Error:', { xhr, status, error });
                         let errorMsg = 'Unknown error';
-                        if (xhr.responseJSON && xhr.responseJSON.message) {
-                            errorMsg = xhr.responseJSON.message;
+                        
+                        if (xhr.responseJSON) {
+                            errorMsg = xhr.responseJSON.message || xhr.responseJSON.detail || xhr.responseJSON.error || errorMsg;
                         } else if (xhr.responseText) {
                             try {
                                 const errorData = JSON.parse(xhr.responseText);
-                                errorMsg = errorData.message || errorData.detail || xhr.statusText;
+                                errorMsg = errorData.message || errorData.detail || errorData.error || xhr.statusText;
                             } catch (e) {
                                 errorMsg = xhr.statusText || 'Server error';
                             }
+                        } else if (error) {
+                            errorMsg = error;
                         }
+                        
                         showToast('Failed to save configuration: ' + errorMsg, 'error');
                     },
                     complete: function() {
+                        console.log('[savePostConfig] Request complete');
                         $btn.prop('disabled', false).html(
                             '<span class="dashicons dashicons-yes"></span><span id="save-config-text">' + 
                             (mode === 'add' ? 'Save Configuration' : 'Update Configuration') + '</span>'
@@ -4363,6 +4427,7 @@ class SmartLinkUpdater {
                     <div class="smartlink-modal-body">
                         <form id="post-config-form">
                             <input type="hidden" id="config-mode" value="add">
+                            <input type="hidden" id="config-post-id" value="">
                             
                             <!-- Content Slug -->
                             <div style="margin-bottom: 20px;">

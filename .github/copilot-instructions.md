@@ -14,14 +14,17 @@ WordPress link automation system that scrapes reward/gaming sites, extracts link
 **Critical pattern**: Plugin-based architecture for scalability
 - Each extractor inherits from `BaseExtractor` with `can_handle()` and `extract()` methods
 - Auto-registered via decorator: `@register_extractor("site_name")`
+- **Auto-detection**: System uses `get_extractor_for_url()` to automatically select the right extractor based on domain
+- **Multi-day fingerprints**: Extractors can override `check_previous_days()` to check previous days' fingerprints (e.g., WSOP checks yesterday to avoid re-adding old links)
 - **Example**: `simplegameguide.py` - looks for h4 date headers, extracts links from following section
 - **Fallback**: `default.py` uses Gemini AI when no specific extractor matches
-- **Add new sites**: Copy extractor template, modify 20 lines, update `posts.json` with `"extractor": "site_name"`
+- **Add new sites**: Copy extractor template, modify 20 lines - NO changes to `main.py` needed!
 
 ### 3. Data Storage Layers
 - **MongoDB** (`mongo_storage.py`): Primary storage for configs, fingerprints, alerts, batch state
 - **JSON files** (`backend/data/`): Legacy fallback for `posts.json`, `fingerprints.json`
-- **Fingerprinting** (`dedupe.py`): `{url}|||{date_iso}` format prevents duplicate link insertions
+- **Fingerprinting** (`dedupe.py`): `{url}___{date_iso}` format prevents duplicate link insertions
+- **Multi-day deduplication**: `get_fingerprints_with_lookback()` automatically loads fingerprints for today and N previous days based on extractor configuration
 
 ### 4. WordPress Integration
 - **Authentication**: Basic Auth with Application Passwords (not user passwords!)
@@ -52,8 +55,9 @@ Edit `backend/data/posts.json` only:
 ### Create Custom Extractor (New Site)
 1. Copy `backend/app/extractors/simplegameguide.py` to `backend/app/extractors/newsite.py`
 2. Modify `can_handle()` to match domain, adjust extraction logic in `extract()`
-3. Update `posts.json` with `"extractor": "newsite"`
-4. See `EXTRACTOR_GUIDE.md` for detailed templates
+3. If extractor includes previous days' links, override `check_previous_days()` to return lookback days (e.g., return 1 for yesterday)
+4. Update `posts.json` with source URLs - extractor will be auto-detected by domain!
+5. See `EXTRACTOR_GUIDE.md` and `MULTI_DAY_FINGERPRINT_CHECKING.md` for detailed templates
 
 ### Test Extractor Locally
 ```bash

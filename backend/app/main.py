@@ -23,7 +23,7 @@ from .scrape import fetch_html
 from .extraction import extract_links_with_heading_filter
 from .dedupe import dedupe_by_fingerprint, fingerprint
 from .wp import update_post_links_section, get_configured_wp_sites
-from .extractors import get_extractor, list_extractors
+from .extractors import get_extractor, get_extractor_for_url, list_extractors
 from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
@@ -1100,7 +1100,7 @@ async def update_post_now(
 
     # Helper function to get extractor for a URL
     def get_extractor_for_source(url: str):
-        """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
+        """Get extractor for a source URL, checking extractor_map first, then auto-detecting"""
         print(f"[DEBUG] get_extractor_for_source called with url: {url}")
         print(f"[DEBUG] extractor_map: {extractor_map}")
 
@@ -1117,9 +1117,9 @@ async def update_post_now(
                         )
                         return get_extractor(map_extractor)
 
-        # Priority 2: Default to the default extractor (Gemini-based)
-        print(f"[DEBUG] No mapping found for {url}, using default extractor")
-        return get_extractor("default")
+        # Priority 2: Auto-detect extractor based on URL domain
+        print(f"[DEBUG] No mapping found for {url}, auto-detecting extractor")
+        return get_extractor_for_url(url)
 
     # If sync mode (for WordPress), run immediately and return results
     if sync:
@@ -1213,22 +1213,11 @@ async def update_post_now(
                             target_post_id = resolved_id
 
             # Step 3: Deduplicate against known links for this specific site using the correct post ID
-            # For WSOP extractor, also check yesterday's fingerprints to avoid re-adding old links
-            known_fps = mongo_storage.get_known_fingerprints(
-                target_post_id, today_iso, target_site_key
+            # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
+            from .dedupe import get_fingerprints_with_lookback
+            known_fps = get_fingerprints_with_lookback(
+                extractor, target_post_id, today_iso, target_site_key, mongo_storage
             )
-            
-            # Check if this is a WSOP post (extractor returns links with both today and yesterday dates)
-            from datetime import timedelta
-            extractor_name = extractor.__class__.__name__.lower()
-            if 'wsop' in extractor_name:
-                yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
-                yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
-                yesterday_fps = mongo_storage.get_known_fingerprints(
-                    target_post_id, yesterday_iso, target_site_key
-                )
-                known_fps = known_fps.union(yesterday_fps)
-                print(f"[DEBUG] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
             
             new_links = dedupe_by_fingerprint(all_links, known_fps)
 
@@ -1419,22 +1408,11 @@ async def update_post_now(
                         continue
 
                     # Deduplicate against known links for THIS specific site using the correct post ID
-                    # For WSOP extractor, also check yesterday's fingerprints
-                    known_fps = mongo_storage.get_known_fingerprints(
-                        site_post_id, today_iso, site_key
+                    # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
+                    from .dedupe import get_fingerprints_with_lookback
+                    known_fps = get_fingerprints_with_lookback(
+                        extractor, site_post_id, today_iso, site_key, mongo_storage
                     )
-                    
-                    # Check if this is a WSOP post
-                    from datetime import timedelta
-                    extractor_name = extractor.__class__.__name__.lower()
-                    if 'wsop' in extractor_name:
-                        yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
-                        yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
-                        yesterday_fps = mongo_storage.get_known_fingerprints(
-                            site_post_id, yesterday_iso, site_key
-                        )
-                        known_fps = known_fps.union(yesterday_fps)
-                        print(f"[DEBUG] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
                     
                     new_links = dedupe_by_fingerprint(all_links, known_fps)
 
@@ -1634,21 +1612,11 @@ async def run_update_sync(
                         break
 
         # Step 2: Deduplicate against known links for this specific site using correct post ID
-        # For WSOP extractor, also check yesterday's fingerprints
-        known_fps = mongo_storage.get_known_fingerprints(
-            target_post_id, today_iso, target_site_key
+        # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
+        from .dedupe import get_fingerprints_with_lookback
+        known_fps = get_fingerprints_with_lookback(
+            extractor, target_post_id, today_iso, target_site_key, mongo_storage
         )
-        
-        # Check if this is a WSOP post
-        from datetime import timedelta
-        if extractor_name and 'wsop' in extractor_name.lower():
-            yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
-            yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
-            yesterday_fps = mongo_storage.get_known_fingerprints(
-                target_post_id, yesterday_iso, target_site_key
-            )
-            known_fps = known_fps.union(yesterday_fps)
-            logging.info(f"[SYNC UPDATE] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
         
         new_links = dedupe_by_fingerprint(all_links, known_fps)
 
@@ -1773,7 +1741,7 @@ async def run_update_task(
 
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
-            """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
+            """Get extractor for a source URL, checking extractor_map first, then auto-detecting"""
             print(f"[DEBUG] BG get_extractor_for_source called with url: {url}")
             print(f"[DEBUG] BG extractor_map: {extractor_map}")
 
@@ -1790,9 +1758,9 @@ async def run_update_task(
                             )
                             return get_extractor(map_extractor)
 
-            # Priority 2: Default to the default extractor (Gemini-based)
-            print(f"[DEBUG] BG No mapping found for {url}, using default extractor")
-            return get_extractor("default")
+            # Priority 2: Auto-detect extractor based on URL domain
+            print(f"[DEBUG] BG No mapping found for {url}, auto-detecting extractor")
+            return get_extractor_for_url(url)
 
         # Step 1: Scrape and extract
         for url in source_urls:
@@ -1917,7 +1885,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
 
         # Helper function to get extractor for a URL
         def get_extractor_for_source(url: str):
-            """Get extractor for a source URL, checking extractor_map first, then defaulting to Gemini"""
+            """Get extractor for a source URL, checking extractor_map first, then auto-detecting"""
             # Priority 1: Check extractor_map for this specific URL (manual or smart match)
             if extractor_map:
                 # Normalize URL for comparison (handle trailing slash)
@@ -1931,9 +1899,9 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                             )
                             return get_extractor(map_extractor)
 
-            # Priority 2: Default to the default extractor (Gemini-based)
-            print(f"[BATCH] No mapping found for {url}, using default extractor")
-            return get_extractor("default")
+            # Priority 2: Auto-detect extractor based on URL domain
+            print(f"[BATCH] No mapping found for {url}, auto-detecting extractor")
+            return get_extractor_for_url(url)
 
         await manager.update_post_state(
             request_id,
@@ -2047,22 +2015,11 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             
             try:
                 # Deduplicate against known links for this specific site
-                # For WSOP extractor, also check yesterday's fingerprints to avoid re-adding old links
-                known_fps = mongo_storage.get_known_fingerprints(
-                    target_post_id, today_iso, target_site_key
+                # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
+                from .dedupe import get_fingerprints_with_lookback
+                known_fps = get_fingerprints_with_lookback(
+                    extractor, target_post_id, today_iso, target_site_key, mongo_storage
                 )
-                
-                # Check if this is a WSOP post (extractor returns links with both today and yesterday dates)
-                from datetime import timedelta
-                extractor_name = extractor.__class__.__name__.lower()
-                if 'wsop' in extractor_name:
-                    yesterday_date = datetime.strptime(today_iso, "%Y-%m-%d") - timedelta(days=1)
-                    yesterday_iso = yesterday_date.strftime("%Y-%m-%d")
-                    yesterday_fps = mongo_storage.get_known_fingerprints(
-                        target_post_id, yesterday_iso, target_site_key
-                    )
-                    known_fps = known_fps.union(yesterday_fps)
-                    logging.info(f"[BATCH UPDATE] WSOP extractor: checking fingerprints for both {today_iso} and {yesterday_iso}")
                 
                 new_links = dedupe_by_fingerprint(all_links, known_fps)
 

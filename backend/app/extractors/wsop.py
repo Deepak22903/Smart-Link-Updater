@@ -15,6 +15,13 @@ class WSOPExtractor(BaseExtractor):
     def can_handle(self, url: str) -> bool:
         url_lower = url.lower()
         return any(domain in url_lower for domain in ["wsopga.me", "freechipswsop.com", "wsopchipsfree.com"])
+    
+    def check_previous_days(self) -> int:
+        """
+        WSOP includes yesterday's links in their daily updates, so we need to
+        check fingerprints for both today and yesterday to avoid duplicates.
+        """
+        return 1  # Check today + yesterday
 
     def extract(self, html: str, date: str) -> List[Link]:
         import logging
