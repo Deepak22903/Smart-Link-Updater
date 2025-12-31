@@ -55,12 +55,17 @@ class BaseExtractor(ABC):
         """
         Number of previous days to check when deduplicating links.
         
-        Some extractors (like WSOP) include yesterday's links in their output,
-        which can cause duplicates if not properly filtered. This method allows
-        extractors to specify how many previous days' fingerprints should be
-        checked during deduplication.
+        DEFAULT BEHAVIOR: Checks today + yesterday to prevent duplicate links.
+        Most sites include previous days' links in their updates, so this is
+        the safest default to prevent re-adding old links.
+        
+        Override this method and return 0 if your site ONLY shows today's links.
+        Override and return 2, 3, etc. if your site shows more historical days.
         
         Returns:
-            Number of previous days to check (0 = today only, 1 = today + yesterday, etc.)
+            Number of previous days to check:
+            - 1 = today + yesterday (DEFAULT - prevents most duplicates)
+            - 0 = today only (use only if site never shows old links)
+            - 2 = today + last 2 days, etc.
         """
-        return 0  # Default: only check today's fingerprints
+        return 1  # Default: check today + yesterday to prevent duplicates

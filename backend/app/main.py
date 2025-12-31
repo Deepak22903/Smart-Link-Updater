@@ -249,7 +249,6 @@ async def configure_post(config: PostConfig = Body(...)):
         "post_id": config.post_id,
         "source_urls": [str(url) for url in config.source_urls],
         "timezone": config.timezone,
-        "extractor": config.extractor,
         "wp_site": config.wp_site,
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -275,6 +274,16 @@ async def configure_post(config: PostConfig = Body(...)):
             f"[SAVE CONFIG] Saving site_ad_codes for post {config.post_id}: {len(config.site_ad_codes)} sites, keys: {list(config.site_ad_codes.keys())}"
         )
     
+    # Add custom button title fields if provided
+    if config.use_custom_button_title is not None:
+        post_config["use_custom_button_title"] = config.use_custom_button_title
+    if config.custom_button_title:
+        post_config["custom_button_title"] = config.custom_button_title
+    
+    # Add auto_update_sites if provided
+    if config.auto_update_sites:
+        post_config["auto_update_sites"] = config.auto_update_sites
+    
     # Save to MongoDB
     save_result = mongo_storage.set_post_config(post_config)
     if not save_result:
@@ -292,7 +301,6 @@ async def configure_post(config: PostConfig = Body(...)):
         "post_id": config.post_id,
         "source_urls": [str(url) for url in config.source_urls],
         "timezone": config.timezone,
-        "extractor": config.extractor,
     }
 
     # Include multi-site fields in response
@@ -304,6 +312,14 @@ async def configure_post(config: PostConfig = Body(...)):
         response["extractor_map"] = config.extractor_map
     if config.site_ad_codes:
         response["site_ad_codes"] = config.site_ad_codes
+    if config.days_to_keep is not None:
+        response["days_to_keep"] = config.days_to_keep
+    if config.custom_button_title:
+        response["custom_button_title"] = config.custom_button_title
+    if config.use_custom_button_title is not None:
+        response["use_custom_button_title"] = config.use_custom_button_title
+    if config.auto_update_sites:
+        response["auto_update_sites"] = config.auto_update_sites
 
     if config.wp_site:
         response["wp_site"] = {
