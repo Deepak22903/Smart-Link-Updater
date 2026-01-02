@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://definitions-rescue-convenient-scales.trycloudflare.com';
+    private $api_base_url = 'https://ciao-paperback-noted-courier.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
