@@ -19,6 +19,122 @@ class WSOPExtractor(BaseExtractor):
     # Note: Using default check_previous_days() which returns 1 (today + yesterday)
     # This is the standard behavior for all extractors now
 
+    def _generate_date_patterns(self, date_obj: datetime) -> List[str]:
+        """Generate all possible date format variations for matching headings."""
+        patterns = []
+        day = date_obj.day
+        month = date_obj.strftime('%B')
+        year = date_obj.year
+        
+        # Generate ordinal suffix
+        if 10 <= day % 100 <= 20:
+            suffix = 'th'
+        else:
+            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+        
+        patterns.extend([
+            date_obj.strftime("%d %B %Y").lstrip('0'),  # "8 December 2025"
+            date_obj.strftime("%d %B %Y"),               # "08 December 2025"
+            f"{day}{suffix} {month} {year}",             # "8th December 2025"
+            f"{day}{suffix} {month.lower()} {year}",     # "8th december 2025"
+        ])
+        
+        # Also add ID-style pattern for h3 id matching: "h-30th-january-2026"
+        id_pattern = f"h-{day}{suffix}-{month.lower()}-{year}"
+        patterns.append(id_pattern)
+        
+        return patterns
+
+    def _extract_url_from_onclick(self, onclick: str) -> str:
+        """Extract wsopga.me URL from onclick attribute like showWsopOverlay('https://...')"""
+        match = re.search(r"showWsopOverlay\(['\"]([^'\"]+)['\"]\)", onclick)
+        if match:
+            return match.group(1)
+        return ""
+
+    def _extract_links_from_new_structure(self, soup: BeautifulSoup, today_patterns: List[str], 
+                                          yesterday_patterns: List[str], date_iso: str, 
+                                          yesterday_iso: str, logging) -> tuple:
+        """Extract links from new HTML structure with h3 headings and wsop-link-block divs."""
+        today_links = OrderedDict()
+        yesterday_links = OrderedDict()
+        found_today = False
+        found_yesterday = False
+        
+        # Find all h3 headings that could be date headers
+        h3_headings = soup.find_all('h3', class_=lambda c: c and 'wp-block-heading' in c)
+        
+        if not h3_headings:
+            logging.debug("[WSOPExtractor] No h3.wp-block-heading found, new structure not detected")
+            return None, None, False
+        
+        logging.info(f"[WSOPExtractor] Found {len(h3_headings)} h3.wp-block-heading elements")
+        
+        for h3 in h3_headings:
+            h3_text = h3.get_text(strip=True).lower()
+            h3_id = (h3.get('id') or '').lower()
+            
+            logging.debug(f"[WSOPExtractor] Checking h3: text='{h3_text}', id='{h3_id}'")
+            
+            # Check if this is today's heading
+            is_today = any(p.lower() in h3_text or p.lower() == h3_id for p in today_patterns)
+            is_yesterday = any(p.lower() in h3_text or p.lower() == h3_id for p in yesterday_patterns)
+            
+            if is_today:
+                found_today = True
+                logging.info(f"[WSOPExtractor] Found TODAY's h3 heading: {h3_text}")
+                self._extract_links_after_heading(h3, today_links, date_iso, logging)
+            elif is_yesterday:
+                found_yesterday = True
+                logging.info(f"[WSOPExtractor] Found YESTERDAY's h3 heading: {h3_text}")
+                self._extract_links_after_heading(h3, yesterday_links, yesterday_iso, logging)
+        
+        if found_today or found_yesterday:
+            logging.info(f"[WSOPExtractor] New structure: {len(today_links)} today links, {len(yesterday_links)} yesterday links")
+            return today_links, yesterday_links, True
+        
+        return None, None, False
+    
+    def _extract_links_after_heading(self, heading, target_dict: OrderedDict, target_date_iso: str, logging):
+        """Extract links from elements following a date heading until next h3."""
+        for sibling in heading.find_next_siblings():
+            # Stop at next h3 (next date section)
+            if sibling.name == 'h3':
+                break
+            
+            # Handle wsop-link-block divs (new structure)
+            if sibling.name == 'div' and 'wsop-link-block' in ' '.join(sibling.get('class', [])):
+                # Get title from inner h3
+                title_h3 = sibling.find('h3')
+                title = title_h3.get_text(strip=True) if title_h3 else "Free Chips"
+                
+                # Find anchor with onclick
+                anchor = sibling.find('a', onclick=True)
+                if anchor:
+                    onclick = anchor.get('onclick', '')
+                    url = self._extract_url_from_onclick(onclick)
+                    if url and 'wsopga.me' in url:
+                        if url not in target_dict:
+                            logging.info(f"[WSOPExtractor] Extracted from onclick: {url} | Title: {title}")
+                            target_dict[url] = Link(title=title, url=url, date=target_date_iso, published_date_iso=target_date_iso)
+                
+                # Also check for regular href links
+                for a in sibling.find_all('a', href=True):
+                    href = a.get('href', '')
+                    if href.startswith('http') and 'wsopga.me' in href:
+                        if href not in target_dict:
+                            logging.info(f"[WSOPExtractor] Extracted from href: {href} | Title: {title}")
+                            target_dict[href] = Link(title=title, url=href, date=target_date_iso, published_date_iso=target_date_iso)
+            
+            # Also handle any direct anchors with onclick
+            for a in sibling.find_all('a', onclick=True):
+                onclick = a.get('onclick', '')
+                url = self._extract_url_from_onclick(onclick)
+                if url and 'wsopga.me' in url and url not in target_dict:
+                    title = a.get_text(strip=True) or "Free Chips"
+                    logging.info(f"[WSOPExtractor] Extracted from nested onclick: {url} | Title: {title}")
+                    target_dict[url] = Link(title=title, url=url, date=target_date_iso, published_date_iso=target_date_iso)
+
     def extract(self, html: str, date: str) -> List[Link]:
         import logging
         soup = BeautifulSoup(html, 'html.parser')
@@ -39,40 +155,9 @@ class WSOPExtractor(BaseExtractor):
         from datetime import timedelta
         yesterday_obj = date_obj - timedelta(days=1)
         
-        # Generate date format variations for today
-        today_patterns = []
-        day = date_obj.day
-        month = date_obj.strftime('%B')
-        year = date_obj.year
-        
-        # Generate ordinal suffix
-        if 10 <= day % 100 <= 20:
-            suffix = 'th'
-        else:
-            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
-        
-        today_patterns.extend([
-            date_obj.strftime("%d %B %Y").lstrip('0'),  # "8 December 2025"
-            date_obj.strftime("%d %B %Y"),               # "08 December 2025"
-            f"{day}{suffix} {month} {year}",             # "8th December 2025"
-        ])
-        
-        # Generate date format variations for yesterday
-        yesterday_patterns = []
-        day_y = yesterday_obj.day
-        month_y = yesterday_obj.strftime('%B')
-        year_y = yesterday_obj.year
-        
-        if 10 <= day_y % 100 <= 20:
-            suffix_y = 'th'
-        else:
-            suffix_y = {1: 'st', 2: 'nd', 3: 'rd'}.get(day_y % 10, 'th')
-        
-        yesterday_patterns.extend([
-            yesterday_obj.strftime("%d %B %Y").lstrip('0'),  # "7 December 2025"
-            yesterday_obj.strftime("%d %B %Y"),               # "07 December 2025"
-            f"{day_y}{suffix_y} {month_y} {year_y}",         # "7th December 2025"
-        ])
+        # Generate date format variations for today and yesterday
+        today_patterns = self._generate_date_patterns(date_obj)
+        yesterday_patterns = self._generate_date_patterns(yesterday_obj)
         
         # Use appropriate dates: today's links get today's date, yesterday's links keep yesterday's date
         date_iso = date_obj.strftime("%Y-%m-%d")
@@ -83,6 +168,27 @@ class WSOPExtractor(BaseExtractor):
         logging.info(f"[WSOPExtractor] Yesterday's links will be marked with: {yesterday_iso}")
         logging.debug(f"[WSOPExtractor] Today patterns: {today_patterns}")
         logging.debug(f"[WSOPExtractor] Yesterday patterns: {yesterday_patterns}")
+        
+        # Try new HTML structure first (h3 headings + wsop-link-block divs)
+        today_links, yesterday_links, found_new_structure = self._extract_links_from_new_structure(
+            soup, today_patterns, yesterday_patterns, date_iso, yesterday_iso, logging
+        )
+        
+        if found_new_structure:
+            # Combine today's links with yesterday's links
+            url_map = OrderedDict()
+            for href, link in today_links.items():
+                url_map[href] = link
+            for href, link in yesterday_links.items():
+                if href not in url_map:
+                    url_map[href] = link
+            
+            total = len(url_map)
+            logging.info(f"[WSOPExtractor] Total links extracted from new structure (deduped): {total}")
+            return list(url_map.values())
+        
+        # Fall back to old HTML structure (p > strong headings)
+        logging.info("[WSOPExtractor] New structure not found, trying legacy structure...")
         
         # Debug: log all <p><strong> tags found
         all_headings = []
