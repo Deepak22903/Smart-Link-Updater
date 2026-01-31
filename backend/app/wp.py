@@ -857,37 +857,50 @@ async def update_post_promo_codes_section(
     
     merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
     
-    # Build promo codes HTML - clean table design
+    # Build promo codes HTML - clean modern table
     table_rows = []
     for code_data in merged_codes:
-        expiry_text = code_data['expiry'] if code_data['expiry'] else "No expiry"
+        expiry_text = code_data['expiry'] if code_data['expiry'] else "No Expiry"
         
-        table_rows.append(f'''<tr>
-<td style="padding: 12px 15px; border-bottom: 1px solid #eee; font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; color: #1a1a2e; letter-spacing: 1px;">{code_data['code']}</td>
-<td style="padding: 12px 15px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">{expiry_text}</td>
-<td style="padding: 12px 15px; border-bottom: 1px solid #eee; text-align: center;">
-<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.innerHTML='✓'; this.style.background='#22c55e'; setTimeout(() => {{ this.innerHTML='📋'; this.style.background='#3b82f6'; }}, 1500);" style="background: #3b82f6; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 16px;">📋</button>
-</td>
-</tr>''')
+        table_rows.append(f'''        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 16px 20px; font-family: 'Courier New', Consolas, monospace; font-size: 15px; font-weight: 600; color: #111827; background: #f9fafb;">{code_data['code']}</td>
+            <td style="padding: 16px 20px; color: #6b7280; font-size: 14px;">{expiry_text}</td>
+            <td style="padding: 16px 20px; text-align: center;">
+                <button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.textContent='Copied!'; this.style.background='#10b981'; setTimeout(() => {{ this.textContent='Copy'; this.style.background='#3b82f6'; }}, 2000);" style="background: #3b82f6; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">Copy</button>
+            </td>
+        </tr>''')
     
     codes_html = "\n".join(table_rows)
     
-    # Create the promo codes section
+    # Create the promo codes section with clean table structure
     new_section = f'''<!-- wp:html -->
-<div style="padding: 25px; margin: 25px 0; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-<h4 style="text-align: center; margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: #1e293b;">🎁 {section_title}</h4>
-
+<div style="margin: 30px 0; padding: 0; background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; text-align: center;">
+        <h3 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">🎁 {section_title}</h3>
+    </div>
+    <table style="width: 100%; border-collapse: collapse; margin: 0;">
+        <thead>
+            <tr style="background: #f3f4f6; border-bottom: 2px solid #e5e7eb;">
+                <th style="padding: 14px 20px; text-align: left; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Code</th>
+                <th style="padding: 14px 20px; text-align: left; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Validity</th>
+                <th style="padding: 14px 20px; text-align: center; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Action</th>
+            </tr>
+        </thead>
+        <tbody>
 {codes_html}
-
-<p style="text-align: center; margin: 20px 0 0 0; color: #94a3b8; font-size: 12px; font-style: italic;">Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
+        </tbody>
+    </table>
+    <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
+        <p style="margin: 0; color: #9ca3af; font-size: 11px;">Last updated: {now.strftime("%Y-%m-%d %H:%M")} UTC</p>
+    </div>
 </div>
 <!-- /wp:html -->'''
     
     # Insert the new section
     # Look for existing promo section, or insert after first h2
-    # Match both old wp:group style and new wp:html style
-    promo_block_pattern = r'(?:<!-- wp:html -->\s*)?<div[^>]*(?:class="[^"]*smartlink-promo-codes-section|style="[^"]*linear-gradient\(135deg, #f8fafc)[^>]*>'
-    promo_match = re.search(promo_block_pattern, cleaned_content)
+    # Match both old and new promo section styles
+    promo_block_pattern = r'<!-- wp:html -->\s*<div[^>]*>.*?🎁.*?</div>\s*<!-- /wp:html -->'
+    promo_match = re.search(promo_block_pattern, cleaned_content, re.DOTALL)
     
     if promo_match:
         # Replace at existing location
