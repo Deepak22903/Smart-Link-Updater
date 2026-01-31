@@ -857,42 +857,36 @@ async def update_post_promo_codes_section(
     
     merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
     
-    # Build promo codes HTML - clean modern table
+    # Build promo codes HTML - WordPress-friendly table
     table_rows = []
     for code_data in merged_codes:
         expiry_text = code_data['expiry'] if code_data['expiry'] else "No Expiry"
         
-        table_rows.append(f'''        <tr style="border-bottom: 1px solid #e5e7eb;">
-            <td style="padding: 16px 20px; font-family: 'Courier New', Consolas, monospace; font-size: 15px; font-weight: 600; color: #111827; background: #f9fafb;">{code_data['code']}</td>
-            <td style="padding: 16px 20px; color: #6b7280; font-size: 14px;">{expiry_text}</td>
-            <td style="padding: 16px 20px; text-align: center;">
-                <button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.textContent='Copied!'; this.style.background='#10b981'; setTimeout(() => {{ this.textContent='Copy'; this.style.background='#3b82f6'; }}, 2000);" style="background: #3b82f6; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s;">Copy</button>
-            </td>
-        </tr>''')
+        table_rows.append(f'''<tr><td style="padding:15px;border-bottom:1px solid #ddd;font-family:monospace;font-size:16px;font-weight:bold;color:#2c3e50;background:#f8f9fa;">{code_data['code']}</td><td style="padding:15px;border-bottom:1px solid #ddd;color:#555;font-size:14px;">{expiry_text}</td><td style="padding:15px;border-bottom:1px solid #ddd;text-align:center;"><button onclick="navigator.clipboard.writeText('{code_data['code']}');this.textContent='Copied!';this.style.background='#28a745';setTimeout(()=>{{this.textContent='Copy';this.style.background='#007bff';}},2000);" style="background:#007bff;color:white;border:none;padding:8px 20px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:500;">Copy</button></td></tr>''')
     
     codes_html = "\n".join(table_rows)
     
-    # Create the promo codes section with clean table structure
+    # Create the promo codes section - simplified for WordPress compatibility
     new_section = f'''<!-- wp:html -->
-<div style="margin: 30px 0; padding: 0; background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; text-align: center;">
-        <h3 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">🎁 {section_title}</h3>
-    </div>
-    <table style="width: 100%; border-collapse: collapse; margin: 0;">
-        <thead>
-            <tr style="background: #f3f4f6; border-bottom: 2px solid #e5e7eb;">
-                <th style="padding: 14px 20px; text-align: left; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Code</th>
-                <th style="padding: 14px 20px; text-align: left; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Validity</th>
-                <th style="padding: 14px 20px; text-align: center; font-weight: 600; color: #374151; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Action</th>
-            </tr>
-        </thead>
-        <tbody>
+<div style="margin:20px 0;background:white;border:2px solid #e0e0e0;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+<div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:18px;text-align:center;">
+<h3 style="margin:0;color:white;font-size:20px;font-weight:700;">🎁 {section_title}</h3>
+</div>
+<table style="width:100%;border-collapse:collapse;">
+<thead>
+<tr style="background:#f3f4f6;">
+<th style="padding:12px 15px;text-align:left;font-weight:600;color:#333;font-size:13px;border-bottom:2px solid #ddd;">CODE</th>
+<th style="padding:12px 15px;text-align:left;font-weight:600;color:#333;font-size:13px;border-bottom:2px solid #ddd;">VALIDITY</th>
+<th style="padding:12px 15px;text-align:center;font-weight:600;color:#333;font-size:13px;border-bottom:2px solid #ddd;">ACTION</th>
+</tr>
+</thead>
+<tbody>
 {codes_html}
-        </tbody>
-    </table>
-    <div style="padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center;">
-        <p style="margin: 0; color: #9ca3af; font-size: 11px;">Last updated: {now.strftime("%Y-%m-%d %H:%M")} UTC</p>
-    </div>
+</tbody>
+</table>
+<div style="padding:10px;background:#f8f9fa;border-top:1px solid #ddd;text-align:center;">
+<p style="margin:0;color:#999;font-size:11px;">Last updated: {now.strftime("%Y-%m-%d %H:%M")} UTC</p>
+</div>
 </div>
 <!-- /wp:html -->'''
     
