@@ -1224,6 +1224,13 @@ class SmartLinkUpdater {
                 $('#use-custom-button-title').on('change', function() {
                     $('#custom-button-title-container').toggle($(this).is(':checked'));
                 });
+                
+                // Extraction mode change handler - show/hide promo section title
+                $('#config-extraction-mode').on('change', function() {
+                    const mode = $(this).val();
+                    $('#promo-code-title-container').toggle(mode === 'promo_codes' || mode === 'both');
+                });
+                
                 // Ad code buttons are now handled per-site in initializeAdCodeAccordion()
                 // Removed: extractor-mode toggle - now always manual configuration
                 
@@ -2280,7 +2287,26 @@ class SmartLinkUpdater {
                     } else if (post.extractor) {
                         extractorDisplay = post.extractor;
                     }
-                    row.append($('<td>').html(`<span style="background: #e8e8e8; padding: 4px 10px; border-radius: 4px; font-size: 12px;">${extractorDisplay}</span>`));
+                    
+                    // Extraction mode badge
+                    const extractionMode = post.extraction_mode || 'links';
+                    let modeIcon = '🔗';
+                    let modeColor = '#667eea';
+                    let modeLabel = 'Links';
+                    if (extractionMode === 'promo_codes') {
+                        modeIcon = '🎁';
+                        modeColor = '#9c27b0';
+                        modeLabel = 'Codes';
+                    } else if (extractionMode === 'both') {
+                        modeIcon = '🔗🎁';
+                        modeColor = '#00b894';
+                        modeLabel = 'Both';
+                    }
+                    
+                    row.append($('<td>').html(`
+                        <span style="background: #e8e8e8; padding: 4px 10px; border-radius: 4px; font-size: 12px; display: block; margin-bottom: 4px;">${extractorDisplay}</span>
+                        <span style="background: ${modeColor}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; display: inline-block;">${modeIcon} ${modeLabel}</span>
+                    `));
                     
                     // Status (with badge and description)
                     const statusHtml = getStatusBadgeWithDescription(post);
@@ -2875,6 +2901,14 @@ class SmartLinkUpdater {
                         // Set days_to_keep (default to 5 if not specified)
                         $('#config-days-to-keep').val(postConfig.days_to_keep || 5);
                         
+                        // Load extraction mode configuration
+                        const extractionMode = postConfig.extraction_mode || 'links';
+                        const promoSectionTitle = postConfig.promo_code_section_title || '';
+                        $('#config-extraction-mode').val(extractionMode);
+                        $('#config-promo-section-title').val(promoSectionTitle);
+                        // Show/hide promo section title based on extraction mode
+                        $('#promo-code-title-container').toggle(extractionMode === 'promo_codes' || extractionMode === 'both');
+                        
                         // Load custom button title configuration
                         const useCustomButtonTitle = postConfig.use_custom_button_title || false;
                         const customButtonTitle = postConfig.custom_button_title || '';
@@ -2988,6 +3022,8 @@ class SmartLinkUpdater {
                 const daysToKeep = parseInt($('#config-days-to-keep').val()) || 5;
                 const useCustomButtonTitle = $('#use-custom-button-title').is(':checked');
                 const customButtonTitle = $('#custom-button-title').val().trim();
+                const extractionMode = $('#config-extraction-mode').val() || 'links';
+                const promoSectionTitle = $('#config-promo-section-title').val().trim();
                 
                 // Build configuration object
                 const configData = {
@@ -3014,6 +3050,12 @@ class SmartLinkUpdater {
                 configData.use_custom_button_title = useCustomButtonTitle;
                 if (useCustomButtonTitle && customButtonTitle) {
                     configData.custom_button_title = customButtonTitle;
+                }
+                
+                // Add extraction mode configuration
+                configData.extraction_mode = extractionMode;
+                if ((extractionMode === 'promo_codes' || extractionMode === 'both') && promoSectionTitle) {
+                    configData.promo_code_section_title = promoSectionTitle;
                 }
                 
                 // Add extractor map
@@ -4521,6 +4563,36 @@ class SmartLinkUpdater {
                                 <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
                                     Automatically remove link sections older than this many days (default: 5). For high-volume posts, use 2-3 days. For low-volume, use 7-10 days.
                                 </p>
+                            </div>
+                            
+                            <!-- Extraction Mode -->
+                            <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
+                                <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
+                                    <span class="dashicons dashicons-filter" style="font-size: 18px; vertical-align: middle; color: #9c27b0;"></span>
+                                    Extraction Mode
+                                </label>
+                                <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                                    <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                    Choose what to extract from source URLs: links, promo codes, or both.
+                                </p>
+                                <select id="config-extraction-mode" class="smartlink-select" style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <option value="links" selected>Links Only (Default)</option>
+                                    <option value="promo_codes">Promo Codes Only</option>
+                                    <option value="both">Both Links & Promo Codes</option>
+                                </select>
+                                
+                                <!-- Promo Code Section Title (shown when promo_codes or both selected) -->
+                                <div id="promo-code-title-container" style="margin-top: 15px; display: none;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">
+                                        Promo Codes Section Title (Optional)
+                                    </label>
+                                    <input type="text" id="config-promo-section-title" class="smartlink-input" 
+                                           placeholder="e.g., Today's Bonus Codes, {date} Promo Codes"
+                                           style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                        Use <code>{date}</code> as placeholder for the formatted date. Default: "Promo Codes for {date}"
+                                    </p>
+                                </div>
                             </div>
                             
                             <!-- Custom Button Title -->

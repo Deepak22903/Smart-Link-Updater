@@ -684,3 +684,258 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
         "section_updated": today_section_exists,
         "updated": True
     }
+
+
+async def update_post_promo_codes_section(
+    post_id: int, 
+    promo_codes: List, 
+    target_site_key: Optional[str] = None, 
+    post_config: Optional[Dict] = None, 
+    wp_site: Optional[Dict] = None
+) -> Dict[str, Any]:
+    """
+    Update WordPress post by inserting a styled 'Promo Codes' section.
+    
+    Similar to update_post_links_section but for promo codes instead of links.
+    Uses a separate anchor comment: <!-- SmartLink Updater: Promo Codes -->
+    
+    Args:
+        post_id: WordPress post ID
+        promo_codes: List of PromoCode objects
+        target_site_key: Optional site key for multi-site support
+        post_config: Optional post configuration dict
+        wp_site: Optional dict with WordPress site config
+    """
+    from .models import PromoCode
+    
+    base_url = _get_wp_base_url(wp_site)
+    auth_headers = _auth_header(wp_site)
+    
+    timeout = httpx.Timeout(30.0, connect=20.0)
+    max_retries = 3
+    is_page = False
+    
+    # Fetch existing content
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.get(f"{base_url}/wp-json/wp/v2/posts/{post_id}", headers=auth_headers)
+                r.raise_for_status()
+                post = r.json()
+                content = post.get("content", {}).get("raw") or post.get("content", {}).get("rendered", "")
+                is_page = False
+                logging.info(f"[WP PROMO] Successfully fetched post {post_id}")
+                break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                # Try as page
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        r = await client.get(f"{base_url}/wp-json/wp/v2/pages/{post_id}", headers=auth_headers)
+                        r.raise_for_status()
+                        post = r.json()
+                        content = post.get("content", {}).get("raw") or post.get("content", {}).get("rendered", "")
+                        is_page = True
+                        logging.info(f"[WP PROMO] Successfully fetched page {post_id}")
+                        break
+                except Exception as page_error:
+                    logging.error(f"[WP PROMO] Failed to GET page {post_id}: {page_error}")
+                    raise HTTPException(status_code=404, detail=f"Neither post nor page with ID {post_id} found")
+            else:
+                raise
+        except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2
+                logging.warning(f"[WP PROMO] Timeout on attempt {attempt + 1}/{max_retries}: {e}. Retrying...")
+                await asyncio.sleep(wait_time)
+            else:
+                raise HTTPException(status_code=504, detail=f"WordPress connection timeout after {max_retries} attempts")
+    
+    from datetime import datetime, timedelta
+    import pytz
+    import re
+    
+    now = datetime.now(pytz.timezone("UTC"))
+    today_date = promo_codes[0].published_date_iso if promo_codes else now.strftime("%Y-%m-%d")
+    
+    if not promo_codes:
+        return {
+            "codes_added": 0,
+            "updated": False
+        }
+    
+    # Get configuration
+    days_to_keep = post_config.get('days_to_keep', 5) if post_config else 5
+    section_title = post_config.get('promo_code_section_title', None) if post_config else None
+    
+    cutoff_date = now - timedelta(days=days_to_keep - 1)
+    
+    # Format date
+    try:
+        if 'T' in today_date:
+            date_obj = datetime.strptime(today_date.split('T')[0], "%Y-%m-%d")
+        else:
+            date_obj = datetime.strptime(today_date, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%d %B %Y")
+    except Exception:
+        formatted_date = today_date
+    
+    # Default section title
+    if not section_title:
+        section_title = f"Promo Codes for {formatted_date}"
+    else:
+        section_title = section_title.replace("{date}", formatted_date)
+    
+    cleaned_content = content
+    existing_codes = []
+    today_section_exists = False
+    sections_to_remove = []
+    
+    # Pattern to match promo code sections
+    promo_section_pattern = r'<div class="wp-block-group smartlink-promo-codes-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
+    date_pattern = r'<h4[^>]*>.*?(\d{2} \w+ \d{4}).*?</h4>'
+    
+    def should_keep_promo_section(section_text, section_date_str):
+        if section_date_str == formatted_date:
+            return False  # Rebuild today's section
+        try:
+            section_date = datetime.strptime(section_date_str, "%d %B %Y")
+            return section_date.date() >= cutoff_date.date()
+        except Exception:
+            return True
+    
+    # Find existing promo code sections
+    promo_matches = list(re.finditer(promo_section_pattern, content, re.DOTALL))
+    
+    for match in promo_matches:
+        section_text = match.group(0)
+        date_match = re.search(date_pattern, section_text, re.DOTALL)
+        
+        if date_match:
+            section_date_str = date_match.group(1)
+            
+            if section_date_str == formatted_date:
+                today_section_exists = True
+                # Extract existing codes
+                code_pattern = r'<code[^>]*>([^<]+)</code>'
+                for code_match in re.finditer(code_pattern, section_text):
+                    existing_codes.append(code_match.group(1).strip())
+                sections_to_remove.append((match.start(), match.end(), section_text))
+            elif not should_keep_promo_section(section_text, section_date_str):
+                sections_to_remove.append((match.start(), match.end(), section_text))
+    
+    # Remove old sections
+    sections_to_remove.sort(key=lambda x: x[0], reverse=True)
+    for start, end, _ in sections_to_remove:
+        cleaned_content = cleaned_content[:start] + cleaned_content[end:]
+    
+    # Merge promo codes (new first, then existing)
+    all_codes_map = {}
+    
+    for idx, code in enumerate(promo_codes, start=1):
+        code_str = code.code.upper()
+        if code_str not in all_codes_map:
+            all_codes_map[code_str] = {
+                'code': code.code,
+                'description': code.description or '',
+                'expiry': code.expiry_date,
+                'order': idx
+            }
+    
+    next_order = len(all_codes_map) + 1
+    for existing_code in existing_codes:
+        code_upper = existing_code.upper()
+        if code_upper not in all_codes_map:
+            all_codes_map[code_upper] = {
+                'code': existing_code,
+                'description': '',
+                'expiry': None,
+                'order': next_order
+            }
+            next_order += 1
+    
+    merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
+    
+    # Build promo codes HTML
+    codes_html_items = []
+    for code_data in merged_codes:
+        expiry_text = f" (Expires: {code_data['expiry']})" if code_data['expiry'] else ""
+        desc_text = f" - {code_data['description']}" if code_data['description'] else ""
+        
+        codes_html_items.append(f'''<!-- wp:paragraph -->
+<p style="margin: 10px 0; padding: 12px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; display: inline-block;">
+<code style="background: rgba(255,255,255,0.2); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 18px; font-weight: bold; letter-spacing: 1px;">{code_data['code']}</code>
+<span style="color: #fff; margin-left: 10px;">{desc_text}{expiry_text}</span>
+</p>
+<!-- /wp:paragraph -->''')
+    
+    codes_html = "\n".join(codes_html_items)
+    
+    # Create the promo codes section
+    new_section = f'''<!-- wp:group {{"className":"smartlink-promo-codes-section","metadata":{{"name":"SmartLink Promo Codes Section"}}}} -->
+<div class="wp-block-group smartlink-promo-codes-section" style="padding: 20px; margin: 20px 0; background: #f8f9fa; border-radius: 12px;">
+<!-- wp:heading {{"level":4,"style":{{"color":{{"text":"#764ba2"}},"typography":{{"fontSize":"20px"}}}},"textAlign":"center"}} -->
+<h4 class="wp-block-heading has-text-align-center" style="color:#764ba2;font-size:20px">🎁 {section_title}</h4>
+<!-- /wp:heading -->
+
+{codes_html}
+
+<!-- wp:paragraph {{"style":{{"typography":{{"fontSize":"12px"}},"color":{{"text":"#999"}}}}}} -->
+<p class="has-text-color" style="color:#999;font-size:12px"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
+<!-- /wp:paragraph -->
+</div>
+<!-- /wp:group -->'''
+    
+    # Insert the new section
+    # Look for existing promo section block, or insert after first h2
+    promo_block_pattern = r'<div class="wp-block-group smartlink-promo-codes-section[^>]*>'
+    promo_match = re.search(promo_block_pattern, cleaned_content)
+    
+    if promo_match:
+        # Replace at existing location
+        new_content = cleaned_content[:promo_match.start()] + new_section + cleaned_content[promo_match.end():]
+    else:
+        # Insert after first h2 (or after links section if exists)
+        links_section_end = re.search(r'<!-- /wp:group -->', cleaned_content)
+        h2_match = re.search(r'</h2>', cleaned_content)
+        
+        if links_section_end:
+            insert_pos = links_section_end.end()
+            new_content = cleaned_content[:insert_pos] + "\n\n" + new_section + cleaned_content[insert_pos:]
+        elif h2_match:
+            insert_pos = h2_match.end()
+            new_content = cleaned_content[:insert_pos] + "\n\n" + new_section + cleaned_content[insert_pos:]
+        else:
+            new_content = new_section + "\n\n" + cleaned_content
+    
+    # Update the post
+    payload = {"content": new_content}
+    timeout = httpx.Timeout(60.0, connect=20.0)
+    endpoint = f"{base_url}/wp-json/wp/v2/{'pages' if is_page else 'posts'}/{post_id}"
+    
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.post(
+                    endpoint,
+                    headers={"Content-Type": "application/json", **auth_headers},
+                    json=payload,
+                )
+                r.raise_for_status()
+                logging.info(f"[WP PROMO] Successfully updated post {post_id} with {len(merged_codes)} promo codes")
+                break
+        except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+            if attempt < max_retries - 1:
+                await asyncio.sleep((attempt + 1) * 3)
+            else:
+                raise HTTPException(status_code=504, detail="WordPress connection timeout")
+        except httpx.HTTPStatusError as e:
+            logging.error(f"[WP PROMO] HTTP error: {e}")
+            raise
+    
+    return {
+        "codes_added": len(promo_codes),
+        "total_codes_in_section": len(merged_codes),
+        "existing_codes_preserved": len(existing_codes),
+        "updated": True
+    }

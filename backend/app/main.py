@@ -132,6 +132,12 @@ class PostConfig(BaseModel):
     auto_update_sites: Optional[List[str]] = (
         None  # NEW: List of site_keys that should auto-update this post via cron
     )
+    extraction_mode: Optional[str] = (
+        "links"  # NEW: What to extract - "links", "promo_codes", or "both"
+    )
+    promo_code_section_title: Optional[str] = (
+        None  # NEW: Custom title for promo codes section (default: "Promo Codes for {date}")
+    )
 
 
 class UpdateJob(BaseModel):
@@ -172,6 +178,8 @@ class PostConfigUpdate(BaseModel):
     custom_button_title: Optional[str] = None  # Custom button title for all links
     use_custom_button_title: Optional[bool] = None  # Toggle for custom button title
     auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
+    extraction_mode: Optional[str] = None  # What to extract: "links", "promo_codes", "both"
+    promo_code_section_title: Optional[str] = None  # Custom title for promo codes section
 
 
 @app.get("/health")
@@ -284,6 +292,11 @@ async def configure_post(config: PostConfig = Body(...)):
     if config.auto_update_sites:
         post_config["auto_update_sites"] = config.auto_update_sites
     
+    # Add extraction_mode if provided (default: "links")
+    post_config["extraction_mode"] = config.extraction_mode or "links"
+    if config.promo_code_section_title:
+        post_config["promo_code_section_title"] = config.promo_code_section_title
+    
     # Save to MongoDB
     save_result = mongo_storage.set_post_config(post_config)
     if not save_result:
@@ -320,6 +333,10 @@ async def configure_post(config: PostConfig = Body(...)):
         response["use_custom_button_title"] = config.use_custom_button_title
     if config.auto_update_sites:
         response["auto_update_sites"] = config.auto_update_sites
+    if config.extraction_mode:
+        response["extraction_mode"] = config.extraction_mode
+    if config.promo_code_section_title:
+        response["promo_code_section_title"] = config.promo_code_section_title
 
     if config.wp_site:
         response["wp_site"] = {
@@ -1931,8 +1948,12 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         tz = pytz.timezone(timezone)
         today = datetime.now(tz)
         today_iso = today.strftime("%Y-%m-%d")
+        
+        # Get extraction mode from config (default: links only)
+        extraction_mode = config.get("extraction_mode", "links")
+        logging.info(f"[BATCH] Post {post_id} extraction_mode: {extraction_mode}")
 
-        # Extract links
+        # Extract links and/or promo codes
         await manager.update_post_state(
             request_id,
             post_id,
@@ -1942,6 +1963,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         )
 
         all_links = []
+        all_promo_codes = []
+        
         for url in source_urls:
             html = await fetch_html(url)
 
@@ -1949,7 +1972,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                 request_id,
                 post_id,
                 progress=40,
-                message=f"Extracting links from {url[:50]}...",
+                message=f"Extracting from {url[:50]}...",
                 log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Fetched {len(html)} bytes from {url}",
             )
 
@@ -1959,41 +1982,66 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             # Extract with monitoring
             monitor = get_monitor()
 
-            # Extract links using the extractor's extract method
-            links = extractor.extract(html, today_iso)
-            all_links.extend(links)
+            # Extract based on configured mode
+            extracted_items = []
+            
+            if extraction_mode in ("links", "both"):
+                # Extract links using the extractor's extract method
+                links = extractor.extract(html, today_iso)
+                all_links.extend(links)
+                extracted_items.append(f"{len(links)} links")
 
-            # Record extraction for monitoring
-            monitor.record_extraction(url, today_iso, len(links), 1.0, html)
+            if extraction_mode in ("promo_codes", "both"):
+                # Extract promo codes if extractor supports it
+                if extractor.supports_promo_codes():
+                    promo_codes = extractor.extract_promo_codes(html, today_iso)
+                    all_promo_codes.extend(promo_codes)
+                    extracted_items.append(f"{len(promo_codes)} promo codes")
+                else:
+                    logging.warning(f"[BATCH] Extractor {extractor.__class__.__name__} does not support promo codes")
+
+            # Record extraction for monitoring (links count)
+            monitor.record_extraction(url, today_iso, len(links) if extraction_mode in ("links", "both") else 0, 1.0, html)
 
             await manager.update_post_state(
                 request_id,
                 post_id,
                 progress=60,
-                message=f"Extracted {len(links)} links",
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {len(links)} links using {extractor.__class__.__name__} extractor",
+                message=f"Extracted {', '.join(extracted_items) if extracted_items else 'nothing'}",
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Extracted {', '.join(extracted_items)} using {extractor.__class__.__name__} extractor",
             )
 
-        if not all_links:
+        # Check if we have anything to process
+        has_links = len(all_links) > 0
+        has_promo_codes = len(all_promo_codes) > 0
+        
+        if not has_links and not has_promo_codes:
+            content_type = "links" if extraction_mode == "links" else "promo codes" if extraction_mode == "promo_codes" else "content"
             await manager.update_post_state(
                 request_id,
                 post_id,
                 status=UpdateStatus.SUCCESS,
                 progress=100,
-                message="No new links found",
+                message=f"No new {content_type} found",
                 links_found=0,
                 links_added=0,
-                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] No links found for today",
+                log_message=f"[{datetime.now().strftime('%H:%M:%S')}] No {content_type} found for today",
             )
             return
 
-        # Deduplicate against known links for this specific site
+        # Deduplicate against known links/promo codes for this specific site
+        dedup_msg = []
+        if has_links:
+            dedup_msg.append(f"{len(all_links)} links")
+        if has_promo_codes:
+            dedup_msg.append(f"{len(all_promo_codes)} promo codes")
+            
         await manager.update_post_state(
             request_id,
             post_id,
             progress=70,
-            message="Deduplicating links",
-            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {len(all_links)} links for site '{target}'...",
+            message=f"Deduplicating {' and '.join(dedup_msg)}",
+            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Deduplicating {' and '.join(dedup_msg)} for site '{target}'...",
         )
 
         # Resolve the correct post ID for the target site
@@ -2032,19 +2080,42 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             try:
                 # Deduplicate against known links for this specific site
                 # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
-                from .dedupe import get_fingerprints_with_lookback
-                known_fps = get_fingerprints_with_lookback(
-                    extractor, target_post_id, today_iso, target_site_key, mongo_storage
-                )
+                from .dedupe import get_fingerprints_with_lookback, promo_code_fingerprint
                 
-                new_links = dedupe_by_fingerprint(all_links, known_fps)
+                new_links = []
+                new_promo_codes = []
+                
+                # Deduplicate links if we have any
+                if has_links:
+                    known_fps = get_fingerprints_with_lookback(
+                        extractor, target_post_id, today_iso, target_site_key, mongo_storage
+                    )
+                    new_links = dedupe_by_fingerprint(all_links, known_fps)
+                
+                # Deduplicate promo codes if we have any
+                if has_promo_codes:
+                    # Get known promo code fingerprints
+                    known_promo_fps = mongo_storage.get_known_promo_fingerprints(
+                        target_post_id, today_iso, target_site_key
+                    )
+                    # Filter out duplicates
+                    new_promo_codes = [
+                        pc for pc in all_promo_codes 
+                        if promo_code_fingerprint(pc) not in known_promo_fps
+                    ]
 
+                update_msg_parts = []
+                if new_links:
+                    update_msg_parts.append(f"{len(new_links)} links")
+                if new_promo_codes:
+                    update_msg_parts.append(f"{len(new_promo_codes)} promo codes")
+                    
                 await manager.update_post_state(
                     request_id,
                     post_id,
                     progress=80,
-                    message=f"Updating {target_site_key or 'default'} ({len(new_links)} new)",
-                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {len(new_links)} new links",
+                    message=f"Updating {target_site_key or 'default'} ({' + '.join(update_msg_parts) if update_msg_parts else 'no new items'})",
+                    log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Site '{target_site_key or 'default'}': Found {' + '.join(update_msg_parts) if update_msg_parts else 'no new items'}",
                 )
 
                 # Load site configuration if target_site_key is available
@@ -2054,20 +2125,39 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     if site_config:
                         logging.info(f"[BATCH UPDATE] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
 
-                # Update WordPress
-                wp_result = await update_post_links_section(
-                    target_post_id, new_links, target_site_key, config, site_config
-                )
+                # Update WordPress with links
+                wp_links_result = {"links_added": 0, "sections_pruned": 0}
+                if new_links:
+                    wp_links_result = await update_post_links_section(
+                        target_post_id, new_links, target_site_key, config, site_config
+                    )
                 
-                if not wp_result.get("error"):
-                    total_links_added += wp_result.get("links_added", 0)
-                    total_sections_pruned += wp_result.get("sections_pruned", 0)
+                # Update WordPress with promo codes
+                wp_promo_result = {"codes_added": 0}
+                if new_promo_codes:
+                    from .wp import update_post_promo_codes_section
+                    wp_promo_result = await update_post_promo_codes_section(
+                        target_post_id, new_promo_codes, target_site_key, config, site_config
+                    )
+                
+                links_added = wp_links_result.get("links_added", 0)
+                codes_added = wp_promo_result.get("codes_added", 0)
+                
+                if not wp_links_result.get("error") and not wp_promo_result.get("error"):
+                    total_links_added += links_added
+                    total_sections_pruned += wp_links_result.get("sections_pruned", 0)
                     sites_updated_count += 1
+                    
+                    success_msg_parts = []
+                    if links_added > 0:
+                        success_msg_parts.append(f"{links_added} links")
+                    if codes_added > 0:
+                        success_msg_parts.append(f"{codes_added} promo codes")
                     
                     await manager.update_post_state(
                         request_id,
                         post_id,
-                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Site '{target_site_key or 'default'}' updated successfully: {wp_result.get('links_added', 0)} links added",
+                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Site '{target_site_key or 'default'}' updated successfully: {' + '.join(success_msg_parts) if success_msg_parts else 'no changes'}",
                     )
                     
                     # Save fingerprints for this specific site
@@ -2086,19 +2176,28 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                                 target_post_id, date_iso, fps, target_site_key
                             )
                             total_fps_saved += len(fps)
-                            logging.info(f"[BATCH UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
+                            logging.info(f"[BATCH UPDATE] Saved {len(fps)} link fingerprints for date {date_iso}")
+                    
+                    # Save promo code fingerprints
+                    if new_promo_codes:
+                        promo_fps = {promo_code_fingerprint(pc) for pc in new_promo_codes}
+                        mongo_storage.save_new_promo_codes(
+                            target_post_id, today_iso, promo_fps, target_site_key
+                        )
+                        logging.info(f"[BATCH UPDATE] Saved {len(promo_fps)} promo code fingerprints")
                         
                         await manager.update_post_state(
                             request_id,
                             post_id,
-                            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved {total_fps_saved} fingerprints for site {target_site_key or 'default'}",
+                            log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved fingerprints for site {target_site_key or 'default'}",
                         )
                 else:
+                    error_msg = wp_links_result.get('error') or wp_promo_result.get('error', 'Unknown error')
                     sites_failed.append(target_site_key or 'default')
                     await manager.update_post_state(
                         request_id,
                         post_id,
-                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Site '{target_site_key or 'default'}' update failed: {wp_result.get('error')}",
+                        log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Site '{target_site_key or 'default'}' update failed: {error_msg}",
                     )
             except Exception as site_error:
                 # Log the error but continue processing other sites

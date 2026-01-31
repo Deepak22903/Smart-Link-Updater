@@ -17,8 +17,24 @@ class Link(BaseModel):
         }
 
 
+class PromoCode(BaseModel):
+    """Represents a promotional/coupon code extracted from a source"""
+    code: str  # The actual promo code (e.g., "SAVE20", "FREESPINS100")
+    description: Optional[str] = None  # What the code offers (e.g., "20% off", "100 free spins")
+    published_date_iso: str  # YYYY-MM-DD
+    expiry_date: Optional[str] = None  # When the code expires (YYYY-MM-DD or descriptive)
+    source_url: Optional[str] = None  # Where the code came from
+    category: Optional[str] = None  # Type of code (discount, bonus, free spins, etc.)
+    
+    class Config:
+        json_encoders = {
+            HttpUrl: str
+        }
+
+
 class ExtractionResult(BaseModel):
     links: List[Link]
+    promo_codes: List[PromoCode] = []  # NEW: Extracted promo codes
     only_today: bool
     confidence: float
 

@@ -393,6 +393,68 @@ def get_post_fingerprints_history(post_id: int, limit: int = 30) -> List[Dict[st
     return results
 
 
+# ==================== Promo Code Fingerprint Operations ====================
+
+def get_known_promo_fingerprints(post_id: int, date_iso: str, site_key: str = None) -> Set[str]:
+    """
+    Get known promo code fingerprints for a post/date/site combination.
+    
+    Args:
+        post_id: The post ID
+        date_iso: The date in ISO format
+        site_key: Optional site key to get site-specific fingerprints
+        
+    Returns:
+        Set of known promo code fingerprints
+    """
+    try:
+        query = {"post_id": post_id, "date_iso": date_iso, "type": "promo_code"}
+        if site_key:
+            query["site_key"] = site_key
+            
+        result = _get_storage().db.fingerprints.find_one(query)
+        if result and "fingerprints" in result:
+            return set(result["fingerprints"])
+        return set()
+    except Exception as e:
+        print(f"Database error in get_known_promo_fingerprints: {e}")
+        return set()
+
+
+def save_new_promo_codes(post_id: int, date_iso: str, fingerprints: Set[str], site_key: str = None) -> None:
+    """
+    Save new promo code fingerprints (merge with existing) for a specific site.
+    
+    Args:
+        post_id: The post ID
+        date_iso: The date in ISO format
+        fingerprints: Set of promo code fingerprints to save
+        site_key: Optional site key for site-specific tracking
+    """
+    existing = get_known_promo_fingerprints(post_id, date_iso, site_key)
+    merged = list(existing.union(fingerprints))
+    
+    query = {"post_id": post_id, "date_iso": date_iso, "type": "promo_code"}
+    if site_key:
+        query["site_key"] = site_key
+    
+    _get_storage().db.fingerprints.update_one(
+        query,
+        {
+            "$set": {
+                "fingerprints": merged,
+                "updated_at": datetime.utcnow().isoformat()
+            },
+            "$setOnInsert": {
+                "created_at": datetime.utcnow().isoformat(),
+                "site_key": site_key,
+                "type": "promo_code"
+            }
+        },
+        upsert=True
+    )
+
+
 # ==================== Monitoring Operations ====================
 
 def get_source_monitoring(source_url: str) -> Optional[Dict[str, Any]]:

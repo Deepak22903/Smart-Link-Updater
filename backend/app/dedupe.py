@@ -1,5 +1,5 @@
 from typing import Iterable, List, Set, TYPE_CHECKING
-from .models import Link
+from .models import Link, PromoCode
 from .constants import FINGERPRINT_DELIMITER
 from datetime import datetime, timedelta
 import logging
@@ -10,6 +10,16 @@ if TYPE_CHECKING:
 
 def fingerprint(link: Link) -> str:
     return f"{link.url}{FINGERPRINT_DELIMITER}{link.published_date_iso}"
+
+
+def promo_code_fingerprint(promo_code: PromoCode) -> str:
+    """
+    Generate a unique fingerprint for a promo code.
+    
+    Format: {code}|||{date_iso}
+    The code is uppercased for consistency.
+    """
+    return f"{promo_code.code.upper()}{FINGERPRINT_DELIMITER}{promo_code.published_date_iso}"
 
 
 def filter_only_today(links: Iterable[Link], today_iso: str) -> List[Link]:
@@ -25,6 +35,31 @@ def dedupe_by_fingerprint(links: Iterable[Link], known_fingerprints: Set[str]) -
             continue
         seen.add(fp)
         out.append(l)
+    return out
+
+
+def dedupe_promo_codes_by_fingerprint(
+    promo_codes: Iterable[PromoCode], 
+    known_fingerprints: Set[str]
+) -> List[PromoCode]:
+    """
+    Deduplicate promo codes against known fingerprints.
+    
+    Args:
+        promo_codes: Iterable of PromoCode objects
+        known_fingerprints: Set of known promo code fingerprints
+        
+    Returns:
+        List of unique PromoCode objects not in known_fingerprints
+    """
+    out: List[PromoCode] = []
+    seen = set()
+    for pc in promo_codes:
+        fp = promo_code_fingerprint(pc)
+        if fp in known_fingerprints or fp in seen:
+            continue
+        seen.add(fp)
+        out.append(pc)
     return out
 
 
