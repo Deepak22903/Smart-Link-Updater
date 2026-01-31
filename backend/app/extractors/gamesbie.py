@@ -61,7 +61,7 @@ class GamesbieExtractor(BaseExtractor):
         """
         return ExtractionResult(links=[], published_date_iso=today_str, only_today=False, confidence=0.0)
 
-    def extract_promo_codes(self, html: str, url: str, today_str: str) -> ExtractionResult:
+    def extract_promo_codes(self, html: str, date: str) -> List[PromoCode]:
         """
         Extract active promo codes from gamesbie.com pages.
         
@@ -71,6 +71,13 @@ class GamesbieExtractor(BaseExtractor):
         3. Stop when we hit "Expired Codes" marker
         4. Parse each li for code (in <strong>) and expiry date (in <em>)
         5. Filter out already expired codes based on expiry date
+        
+        Args:
+            html: HTML content from the source page
+            date: Target date in YYYY-MM-DD format
+            
+        Returns:
+            List of PromoCode objects
         """
         soup = BeautifulSoup(html, "html.parser")
         promo_codes: List[PromoCode] = []
@@ -83,8 +90,8 @@ class GamesbieExtractor(BaseExtractor):
                 break
         
         if not active_header:
-            logger.warning(f"[Gamesbie] No 'Active' header found in {url}")
-            return ExtractionResult(links=[], promo_codes=[], published_date_iso=today_str, only_today=False, confidence=0.0)
+            logger.warning(f"[Gamesbie] No 'Active' header found")
+            return []
         
         logger.info(f"[Gamesbie] Found active header: {active_header.get_text()[:50]}")
         
@@ -99,33 +106,27 @@ class GamesbieExtractor(BaseExtractor):
                 break
         
         if not active_ul:
-            logger.warning(f"[Gamesbie] No ul found after active header in {url}")
-            return ExtractionResult(links=[], promo_codes=[], published_date_iso=today_str, only_today=False, confidence=0.0)
+            logger.warning(f"[Gamesbie] No ul found after active header")
+            return []
         
         # Parse today's date for expiry comparison
         try:
-            today_date = datetime.strptime(today_str, "%Y-%m-%d")
+            today_date = datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
             today_date = datetime.now()
         
         # Extract codes from list items
         for li in active_ul.find_all("li", recursive=False):
-            code_data = self._parse_code_item(li, url, today_str, today_date)
+            code_data = self._parse_code_item(li, date, today_date)
             if code_data:
                 promo_codes.append(code_data)
         
-        logger.info(f"[Gamesbie] Extracted {len(promo_codes)} active promo codes from {url}")
+        logger.info(f"[Gamesbie] Extracted {len(promo_codes)} active promo codes")
         
-        return ExtractionResult(
-            links=[],
-            promo_codes=promo_codes,
-            published_date_iso=today_str,
-            only_today=False,  # Promo codes have expiry dates, not published dates
-            confidence=1.0 if len(promo_codes) > 0 else 0.5
-        )
+        return promo_codes
 
     def _parse_code_item(
-        self, li: Tag, url: str, today_str: str, today_date: datetime
+        self, li: Tag, today_str: str, today_date: datetime
     ) -> Optional[PromoCode]:
         """
         Parse a single list item to extract code and expiry date.
@@ -175,7 +176,7 @@ class GamesbieExtractor(BaseExtractor):
             description=description,
             published_date_iso=today_str,
             expiry_date=expiry_str,
-            source_url=url,
+            source_url=None,  # URL not available in this context
             category="gift_code"
         )
 

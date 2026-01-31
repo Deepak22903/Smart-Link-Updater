@@ -52,15 +52,14 @@ class TestGamesbieExtractor:
         # Test with a date where some codes are still valid
         result = extractor.extract_promo_codes(
             SAMPLE_HTML,
-            "https://gamesbie.com/top-heroes-gift-codes/",
             "2026-01-20"  # Date where codes expiring after this are still valid
         )
         
-        # Should have promo codes
-        assert len(result.promo_codes) > 0
+        # Should have promo codes (returns List[PromoCode])
+        assert len(result) > 0
         
         # Get all extracted code values
-        codes = [pc.code for pc in result.promo_codes]
+        codes = [pc.code for pc in result]
         
         # Codes valid after Jan 20 should be included
         assert "9AC5D3369B" in codes  # Valid until 31st Jan
@@ -81,11 +80,10 @@ class TestGamesbieExtractor:
         """Test extraction when all active codes are still valid."""
         result = extractor.extract_promo_codes(
             SAMPLE_HTML,
-            "https://gamesbie.com/top-heroes-gift-codes/",
             "2026-01-01"  # Early date - all active codes should be valid
         )
         
-        codes = [pc.code for pc in result.promo_codes]
+        codes = [pc.code for pc in result]
         
         # All codes in active section should be present
         assert "5045BB1614" in codes
@@ -97,22 +95,21 @@ class TestGamesbieExtractor:
         assert "D7EF4423" in codes
         
         # Total should be 7 active codes
-        assert len(result.promo_codes) == 7
+        assert len(result) == 7
     
     def test_expiry_date_parsing(self, extractor):
         """Test that expiry dates are correctly parsed."""
         result = extractor.extract_promo_codes(
             SAMPLE_HTML,
-            "https://gamesbie.com/test/",
             "2026-01-01"
         )
         
         # Find a specific code and check its expiry
-        code_5045 = next((pc for pc in result.promo_codes if pc.code == "5045BB1614"), None)
+        code_5045 = next((pc for pc in result if pc.code == "5045BB1614"), None)
         assert code_5045 is not None
         assert code_5045.expiry_date == "2026-01-05"
         
-        code_9ac5 = next((pc for pc in result.promo_codes if pc.code == "9AC5D3369B"), None)
+        code_9ac5 = next((pc for pc in result if pc.code == "9AC5D3369B"), None)
         assert code_9ac5 is not None
         assert code_9ac5.expiry_date == "2026-01-31"
     
@@ -120,14 +117,12 @@ class TestGamesbieExtractor:
         """Test that extracted promo codes have correct structure."""
         result = extractor.extract_promo_codes(
             SAMPLE_HTML,
-            "https://gamesbie.com/top-heroes-gift-codes/",
             "2026-01-01"
         )
         
         # Check first promo code structure
-        pc = result.promo_codes[0]
+        pc = result[0]
         assert pc.code is not None and len(pc.code) > 0
-        assert pc.source_url == "https://gamesbie.com/top-heroes-gift-codes/"
         assert pc.published_date_iso == "2026-01-01"
         assert pc.category == "gift_code"
     
@@ -137,13 +132,13 @@ class TestGamesbieExtractor:
         <h2>Some Other Header</h2>
         <ul><li><strong>CODE123</strong></li></ul>
         """
-        result = extractor.extract_promo_codes(html, "https://gamesbie.com/test/", "2026-01-01")
-        assert len(result.promo_codes) == 0
+        result = extractor.extract_promo_codes(html, "2026-01-01")
+        assert len(result) == 0
     
     def test_empty_html(self, extractor):
         """Test handling of empty HTML."""
-        result = extractor.extract_promo_codes("", "https://gamesbie.com/test/", "2026-01-01")
-        assert len(result.promo_codes) == 0
+        result = extractor.extract_promo_codes("", "2026-01-01")
+        assert len(result) == 0
 
 
 if __name__ == "__main__":
