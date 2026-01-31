@@ -792,7 +792,8 @@ async def update_post_promo_codes_section(
     sections_to_remove = []
     
     # Pattern to match promo code sections
-    promo_section_pattern = r'<div class="wp-block-group smartlink-promo-codes-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
+    # Pattern to match promo code sections (both old and new format)
+    promo_section_pattern = r'(?:<!-- wp:html -->\s*)?<div[^>]*style="[^"]*background:[^"]*linear-gradient[^"]*"[^>]*>.*?Last updated:.*?</div>(?:\s*<!-- /wp:html -->)?'
     date_pattern = r'<h4[^>]*>.*?(\d{2} \w+ \d{4}).*?</h4>'
     
     def should_keep_promo_section(section_text, section_date_str):
@@ -856,41 +857,44 @@ async def update_post_promo_codes_section(
     
     merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
     
-    # Build promo codes HTML - clean design with copy button
+    # Build promo codes HTML - clean table design with copy button
     codes_html_items = []
     for code_data in merged_codes:
-        expiry_text = f"Expires: {code_data['expiry']}" if code_data['expiry'] else ""
+        expiry_text = f"Valid until: {code_data['expiry']}" if code_data['expiry'] else ""
         
-        codes_html_items.append(f'''<!-- wp:paragraph -->
-<p style="margin: 8px 0; padding: 12px 16px; background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-<span style="display: flex; align-items: center; gap: 12px;">
-<code style="background: #333; color: #fff; padding: 8px 14px; border-radius: 4px; font-size: 16px; font-weight: bold; letter-spacing: 1px; font-family: monospace;">{code_data['code']}</code>
-<span style="color: #666; font-size: 13px;">{expiry_text}</span>
-</span>
-<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.textContent='✓ Copied!'; setTimeout(() => this.textContent='📋 Copy', 1500);" style="background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">📋 Copy</button>
-</p>
-<!-- /wp:paragraph -->''')
+        codes_html_items.append(f'''<!-- wp:html -->
+<div style="margin: 12px 0; padding: 16px 20px; background: #ffffff; border: 2px solid #e8e8e8; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+<table style="width: 100%; border-collapse: collapse;">
+<tr>
+<td style="padding: 0; vertical-align: middle;">
+<code style="display: inline-block; background: #1a1a2e; color: #00ff88; padding: 10px 18px; border-radius: 6px; font-size: 18px; font-weight: bold; letter-spacing: 2px; font-family: 'Courier New', monospace;">{code_data['code']}</code>
+</td>
+<td style="padding: 0 15px; vertical-align: middle; color: #666; font-size: 14px;">{expiry_text}</td>
+<td style="padding: 0; vertical-align: middle; text-align: right; width: 100px;">
+<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.innerHTML='✓ Copied!'; this.style.background='#10b981'; setTimeout(() => {{ this.innerHTML='📋 Copy'; this.style.background='#3b82f6'; }}, 1500);" style="background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">📋 Copy</button>
+</td>
+</tr>
+</table>
+</div>
+<!-- /wp:html -->''')
     
     codes_html = "\n".join(codes_html_items)
     
     # Create the promo codes section
-    new_section = f'''<!-- wp:group {{"className":"smartlink-promo-codes-section","metadata":{{"name":"SmartLink Promo Codes Section"}}}} -->
-<div class="wp-block-group smartlink-promo-codes-section" style="padding: 20px; margin: 20px 0; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 12px;">
-<!-- wp:heading {{"level":4,"style":{{"typography":{{"fontSize":"18px"}}}},"textAlign":"center"}} -->
-<h4 class="wp-block-heading has-text-align-center" style="font-size:18px;margin-bottom:16px;">🎁 {section_title}</h4>
-<!-- /wp:heading -->
+    new_section = f'''<!-- wp:html -->
+<div style="padding: 25px; margin: 25px 0; background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+<h4 style="text-align: center; margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: #1e293b;">🎁 {section_title}</h4>
 
 {codes_html}
 
-<!-- wp:paragraph {{"style":{{"typography":{{"fontSize":"12px"}},"color":{{"text":"#999"}}}}}} -->
-<p class="has-text-color" style="color:#999;font-size:12px;margin-top:16px;"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
-<!-- /wp:paragraph -->
+<p style="text-align: center; margin: 20px 0 0 0; color: #94a3b8; font-size: 12px; font-style: italic;">Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</p>
 </div>
-<!-- /wp:group -->'''
+<!-- /wp:html -->'''
     
     # Insert the new section
-    # Look for existing promo section block, or insert after first h2
-    promo_block_pattern = r'<div class="wp-block-group smartlink-promo-codes-section[^>]*>'
+    # Look for existing promo section, or insert after first h2
+    # Match both old wp:group style and new wp:html style
+    promo_block_pattern = r'(?:<!-- wp:html -->\s*)?<div[^>]*(?:class="[^"]*smartlink-promo-codes-section|style="[^"]*linear-gradient\(135deg, #f8fafc)[^>]*>'
     promo_match = re.search(promo_block_pattern, cleaned_content)
     
     if promo_match:
