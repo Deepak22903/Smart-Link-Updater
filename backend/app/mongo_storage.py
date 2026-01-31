@@ -158,9 +158,35 @@ def _get_storage() -> MongoDBStorage:
 # ==================== Post Configuration Operations ====================
 
 def get_post_config(post_id: int) -> Optional[Dict[str, Any]]:
-    """Get post configuration by post_id (legacy method)"""
+    """Get post configuration by post_id (supports multi-site lookup).
+    
+    Searches in this order:
+    1. Direct match on post_id field
+    2. Match on any value in site_post_ids dict (for multi-site configs)
+    """
     try:
+        # First try direct post_id match
         result = _get_storage().db.posts.find_one({"post_id": post_id})
+        
+        # If not found, search in site_post_ids values
+        if not result:
+            # MongoDB query to find where any value in site_post_ids equals post_id
+            # This handles cases where post_id is a site-specific ID (e.g., wsop: 4252)
+            result = _get_storage().db.posts.find_one({
+                "$expr": {
+                    "$in": [post_id, {"$objectToArray": {"$ifNull": ["$site_post_ids", {}]}}]
+                }
+            })
+            
+            # If the $expr query doesn't work, fallback to iterating (more compatible)
+            if not result:
+                # Find all posts with site_post_ids and check if post_id is in values
+                for doc in _get_storage().db.posts.find({"site_post_ids": {"$exists": True}}):
+                    site_ids = doc.get("site_post_ids", {})
+                    if post_id in site_ids.values():
+                        result = doc
+                        break
+        
         if result:
             # Convert ObjectId to string for JSON serialization
             result["_id"] = str(result["_id"])
