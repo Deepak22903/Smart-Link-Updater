@@ -109,15 +109,9 @@ class GamesbieExtractor(BaseExtractor):
             logger.warning(f"[Gamesbie] No ul found after active header")
             return []
         
-        # Parse today's date for expiry comparison
-        try:
-            today_date = datetime.strptime(date, "%Y-%m-%d")
-        except ValueError:
-            today_date = datetime.now()
-        
         # Extract codes from list items
         for li in active_ul.find_all("li", recursive=False):
-            code_data = self._parse_code_item(li, date, today_date)
+            code_data = self._parse_code_item(li, date)
             if code_data:
                 promo_codes.append(code_data)
         
@@ -126,7 +120,7 @@ class GamesbieExtractor(BaseExtractor):
         return promo_codes
 
     def _parse_code_item(
-        self, li: Tag, today_str: str, today_date: datetime
+        self, li: Tag, today_str: str
     ) -> Optional[PromoCode]:
         """
         Parse a single list item to extract code and expiry date.
@@ -160,11 +154,6 @@ class GamesbieExtractor(BaseExtractor):
             expiry_date = self._parse_expiry_date(em_text)
             if expiry_date:
                 expiry_str = expiry_date.strftime("%Y-%m-%d")
-                
-                # Skip if already expired
-                if expiry_date < today_date:
-                    logger.debug(f"[Gamesbie] Skipping expired code {code} (expired: {expiry_str})")
-                    return None
         
         # Build description
         description = f"Promo code: {code}"

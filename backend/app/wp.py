@@ -856,16 +856,18 @@ async def update_post_promo_codes_section(
     
     merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
     
-    # Build promo codes HTML
+    # Build promo codes HTML - clean design with copy button
     codes_html_items = []
     for code_data in merged_codes:
-        expiry_text = f" (Expires: {code_data['expiry']})" if code_data['expiry'] else ""
-        desc_text = f" - {code_data['description']}" if code_data['description'] else ""
+        expiry_text = f"Expires: {code_data['expiry']}" if code_data['expiry'] else ""
         
         codes_html_items.append(f'''<!-- wp:paragraph -->
-<p style="margin: 10px 0; padding: 12px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; display: inline-block;">
-<code style="background: rgba(255,255,255,0.2); color: #fff; padding: 6px 12px; border-radius: 4px; font-size: 18px; font-weight: bold; letter-spacing: 1px;">{code_data['code']}</code>
-<span style="color: #fff; margin-left: 10px;">{desc_text}{expiry_text}</span>
+<p style="margin: 8px 0; padding: 12px 16px; background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+<span style="display: flex; align-items: center; gap: 12px;">
+<code style="background: #333; color: #fff; padding: 8px 14px; border-radius: 4px; font-size: 16px; font-weight: bold; letter-spacing: 1px; font-family: monospace;">{code_data['code']}</code>
+<span style="color: #666; font-size: 13px;">{expiry_text}</span>
+</span>
+<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.textContent='✓ Copied!'; setTimeout(() => this.textContent='📋 Copy', 1500);" style="background: #333; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s;">📋 Copy</button>
 </p>
 <!-- /wp:paragraph -->''')
     
@@ -873,15 +875,15 @@ async def update_post_promo_codes_section(
     
     # Create the promo codes section
     new_section = f'''<!-- wp:group {{"className":"smartlink-promo-codes-section","metadata":{{"name":"SmartLink Promo Codes Section"}}}} -->
-<div class="wp-block-group smartlink-promo-codes-section" style="padding: 20px; margin: 20px 0; background: #f8f9fa; border-radius: 12px;">
-<!-- wp:heading {{"level":4,"style":{{"color":{{"text":"#764ba2"}},"typography":{{"fontSize":"20px"}}}},"textAlign":"center"}} -->
-<h4 class="wp-block-heading has-text-align-center" style="color:#764ba2;font-size:20px">🎁 {section_title}</h4>
+<div class="wp-block-group smartlink-promo-codes-section" style="padding: 20px; margin: 20px 0; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 12px;">
+<!-- wp:heading {{"level":4,"style":{{"typography":{{"fontSize":"18px"}}}},"textAlign":"center"}} -->
+<h4 class="wp-block-heading has-text-align-center" style="font-size:18px;margin-bottom:16px;">🎁 {section_title}</h4>
 <!-- /wp:heading -->
 
 {codes_html}
 
 <!-- wp:paragraph {{"style":{{"typography":{{"fontSize":"12px"}},"color":{{"text":"#999"}}}}}} -->
-<p class="has-text-color" style="color:#999;font-size:12px"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
+<p class="has-text-color" style="color:#999;font-size:12px;margin-top:16px;"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
 <!-- /wp:paragraph -->
 </div>
 <!-- /wp:group -->'''
