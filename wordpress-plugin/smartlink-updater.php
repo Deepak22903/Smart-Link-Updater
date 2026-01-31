@@ -1081,7 +1081,8 @@ class SmartLinkUpdater {
                 'crazyashwin': 'Crazy Ashwin',
                 'techyhigher': 'Techy Higher',
                 'default': 'Default (Gemini AI)',
-                'wsop': 'WSOP'
+                'wsop': 'WSOP',
+                'gamesbie': 'Gamesbie (Promo Codes)'
             };
 
             function init() {
