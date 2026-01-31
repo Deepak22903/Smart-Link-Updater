@@ -857,28 +857,20 @@ async def update_post_promo_codes_section(
     
     merged_codes = sorted(all_codes_map.values(), key=lambda x: x['order'])
     
-    # Build promo codes HTML - clean table design with copy button
-    codes_html_items = []
+    # Build promo codes HTML - clean table design
+    table_rows = []
     for code_data in merged_codes:
-        expiry_text = f"Valid until: {code_data['expiry']}" if code_data['expiry'] else ""
+        expiry_text = code_data['expiry'] if code_data['expiry'] else "No expiry"
         
-        codes_html_items.append(f'''<!-- wp:html -->
-<div style="margin: 12px 0; padding: 16px 20px; background: #ffffff; border: 2px solid #e8e8e8; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-<table style="width: 100%; border-collapse: collapse;">
-<tr>
-<td style="padding: 0; vertical-align: middle;">
-<code style="display: inline-block; background: #1a1a2e; color: #00ff88; padding: 10px 18px; border-radius: 6px; font-size: 18px; font-weight: bold; letter-spacing: 2px; font-family: 'Courier New', monospace;">{code_data['code']}</code>
+        table_rows.append(f'''<tr>
+<td style="padding: 12px 15px; border-bottom: 1px solid #eee; font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; color: #1a1a2e; letter-spacing: 1px;">{code_data['code']}</td>
+<td style="padding: 12px 15px; border-bottom: 1px solid #eee; color: #666; font-size: 14px;">{expiry_text}</td>
+<td style="padding: 12px 15px; border-bottom: 1px solid #eee; text-align: center;">
+<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.innerHTML='✓'; this.style.background='#22c55e'; setTimeout(() => {{ this.innerHTML='📋'; this.style.background='#3b82f6'; }}, 1500);" style="background: #3b82f6; color: #fff; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 16px;">📋</button>
 </td>
-<td style="padding: 0 15px; vertical-align: middle; color: #666; font-size: 14px;">{expiry_text}</td>
-<td style="padding: 0; vertical-align: middle; text-align: right; width: 100px;">
-<button onclick="navigator.clipboard.writeText('{code_data['code']}'); this.innerHTML='✓ Copied!'; this.style.background='#10b981'; setTimeout(() => {{ this.innerHTML='📋 Copy'; this.style.background='#3b82f6'; }}, 1500);" style="background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">📋 Copy</button>
-</td>
-</tr>
-</table>
-</div>
-<!-- /wp:html -->''')
+</tr>''')
     
-    codes_html = "\n".join(codes_html_items)
+    codes_html = "\n".join(table_rows)
     
     # Create the promo codes section
     new_section = f'''<!-- wp:html -->
