@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://creatures-navy-limitations-attractive.trycloudflare.com';
+    private $api_base_url = 'https://periodic-marriage-care-elder.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -2384,6 +2384,7 @@ class SmartLinkUpdater {
                     });
                     
                     // Menu dropdown (only Edit and Delete)
+                    // IMPORTANT: Use post.post_id (MongoDB ID) for Edit/Delete API calls, not WP post_id
                     const menu = $('<div>').addClass('action-menu').attr('data-post-id', post.post_id).css({
                         'display': 'none',
                         'position': 'absolute',
@@ -2401,10 +2402,10 @@ class SmartLinkUpdater {
                         <div class="menu-item add-manual-links-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
                             <span class="dashicons dashicons-plus-alt" style="font-size: 14px;"></span> Add Links Manually
                         </div>
-                        <div class="menu-item edit-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
+                        <div class="menu-item edit-config-btn" data-mongo-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #f0f0f0;">
                             <span class="dashicons dashicons-edit" style="font-size: 14px;"></span> Edit
                         </div>
-                        <div class="menu-item delete-config-btn" data-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; color: #dc3232;">
+                        <div class="menu-item delete-config-btn" data-mongo-post-id="${post.post_id}" style="padding: 10px 15px; cursor: pointer; color: #dc3232;">
                             <span class="dashicons dashicons-trash" style="font-size: 14px;"></span> Delete
                         </div>
                     `);
@@ -2870,10 +2871,19 @@ class SmartLinkUpdater {
             }
             
             function openEditConfigModal(e) {
-                const postId = parseInt($(e.currentTarget).data('post-id'));
+                // IMPORTANT: Use mongo-post-id for API calls (this is the MongoDB ID, NOT the WP post_id)
+                const mongoPostId = parseInt($(e.currentTarget).data('mongo-post-id'));
+                
+                if (!mongoPostId) {
+                    console.error('[openEditConfigModal] No mongo-post-id found on element:', e.currentTarget);
+                    showToast('Error: Configuration ID not found', 'error');
+                    return;
+                }
+                
+                console.log('[openEditConfigModal] Using MongoDB post_id:', mongoPostId);
                 
                 $('#config-mode').val('edit');
-                $('#config-post-id').val(postId);
+                $('#config-post-id').val(mongoPostId);
                 $('#config-modal-title').text('Edit Post Configuration');
                 $('#save-config-text').text('Update Configuration');
                 
@@ -2881,7 +2891,7 @@ class SmartLinkUpdater {
                 showToast('Loading configuration...', 'info');
                 
                 $.ajax({
-                    url: config.restUrl + '/config/post/' + postId,
+                    url: config.restUrl + '/config/post/' + mongoPostId,
                     method: 'GET',
                     beforeSend: function(xhr) {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);
@@ -3039,11 +3049,17 @@ class SmartLinkUpdater {
                 
                 // Build configuration object
                 const configData = {
-                    post_id: Object.values(siteConfig.sitePostIds)[0], // Use first site ID as post_id
                     source_urls: sourceUrls,
                     timezone: $('#config-timezone').val(),
                     site_post_ids: siteConfig.sitePostIds
                 };
+                
+                // IMPORTANT: Only include post_id in ADD mode, not EDIT mode
+                // In EDIT mode, post_id is immutable and comes from the URL
+                if (mode === 'add') {
+                    // Use first site ID as the MongoDB post_id for new configs
+                    configData.post_id = Object.values(siteConfig.sitePostIds)[0];
+                }
                 
                 // Add optional fields
                 if (contentSlug) {
@@ -3190,9 +3206,18 @@ class SmartLinkUpdater {
             }
             
             function deletePostConfig(e) {
-                const postId = $(e.currentTarget).data('post-id');
+                // IMPORTANT: Use mongo-post-id for API calls (this is the MongoDB ID, NOT the WP post_id)
+                const mongoPostId = parseInt($(e.currentTarget).data('mongo-post-id'));
                 
-                if (!confirm('Are you sure you want to delete the configuration for Post ID ' + postId + '? This action cannot be undone.')) {
+                if (!mongoPostId) {
+                    console.error('[deletePostConfig] No mongo-post-id found on element:', e.currentTarget);
+                    showToast('Error: Configuration ID not found', 'error');
+                    return;
+                }
+                
+                console.log('[deletePostConfig] Using MongoDB post_id:', mongoPostId);
+                
+                if (!confirm('Are you sure you want to delete this configuration? This action cannot be undone.')) {
                     return;
                 }
                 
@@ -3202,7 +3227,7 @@ class SmartLinkUpdater {
                 showToast('Deleting configuration...', 'info');
                 
                 $.ajax({
-                    url: config.restUrl + '/config/post/' + postId,
+                    url: config.restUrl + '/config/post/' + mongoPostId,
                     method: 'DELETE',
                     beforeSend: function(xhr) {
                         xhr.setRequestHeader('X-WP-Nonce', config.nonce);

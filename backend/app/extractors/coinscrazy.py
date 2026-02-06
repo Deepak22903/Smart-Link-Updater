@@ -5,9 +5,18 @@ Extracts daily links from dated sections with button-style links.
 
 import re
 from datetime import datetime
-from typing import Optional
+from typing import List
 from bs4 import BeautifulSoup, Tag
-from .base import BaseExtractor, DailyLinks, register_extractor
+from .base import BaseExtractor
+from ..models import Link
+
+
+def register_extractor(name):
+    """Local registration decorator - will be imported by __init__.py"""
+    def decorator(cls):
+        cls._extractor_name = name
+        return cls
+    return decorator
 
 
 @register_extractor("coinscrazy")
@@ -18,7 +27,7 @@ class CoinsCrazyExtractor(BaseExtractor):
         """Check if this extractor can handle the given URL."""
         return "coinscrazy.com" in url.lower()
     
-    def extract(self, html: str, url: str, target_date: datetime) -> Optional[DailyLinks]:
+    def extract(self, html: str, date: str) -> List[Link]:
         """
         Extract links from the daily section matching target_date.
         
@@ -27,8 +36,21 @@ class CoinsCrazyExtractor(BaseExtractor):
         - Multiple wp-block-columns divs with button links
         - Links are in <a> tags within ub-button-container divs
         - Button text is in <span class="ub-button-block-btn">
+        
+        Args:
+            html: HTML content from the source page
+            date: Target date in YYYY-MM-DD format (e.g., "2026-02-06")
+            
+        Returns:
+            List of Link objects matching the date
         """
         soup = BeautifulSoup(html, 'html.parser')
+        
+        # Parse the date string (YYYY-MM-DD format)
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            return []
         
         # Format target date to match site format: "06 February 2026"
         target_date_str = target_date.strftime("%d %B %Y")
@@ -48,8 +70,7 @@ class CoinsCrazyExtractor(BaseExtractor):
                 break
         
         if not target_h4:
-            self.logger.warning(f"No h4 found for date: {target_date_str}")
-            return None
+            return []
         
         # Collect all links after this h4 until the next h4 date header
         links = []
@@ -74,32 +95,17 @@ class CoinsCrazyExtractor(BaseExtractor):
                     
                     # Extract button text from span
                     button_span = anchor.find('span', class_='ub-button-block-btn')
-                    button_text = button_span.get_text(strip=True) if button_span else None
+                    button_text = button_span.get_text(strip=True) if button_span else "Link"
                     
-                    # If we have button text, use it as custom title
-                    if button_text:
-                        links.append({
-                            'url': href,
-                            'custom_title': button_text
-                        })
-                    else:
-                        links.append({'url': href})
-                    
-                    self.logger.debug(f"Extracted link: {href} with title: {button_text}")
+                    # Create Link object with required fields
+                    link = Link(
+                        url=href,
+                        title=button_text,  # Use button text as title
+                        published_date_iso=date  # Date in YYYY-MM-DD format
+                    )
+                    links.append(link)
             
             current_element = current_element.find_next_sibling()
         
-        if not links:
-            self.logger.warning(f"No links found for date: {target_date_str}")
-            return None
-        
-        self.logger.info(f"Found {len(links)} links for {target_date_str}")
-        
-        # Format display date to match site style
-        display_date = target_date.strftime("%d %B %Y")
-        
-        return DailyLinks(
-            date=target_date,
-            date_display=display_date,
-            links=links
-        )
+        return links
+
