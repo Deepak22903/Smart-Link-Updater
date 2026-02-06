@@ -8,6 +8,16 @@
  * Author URI: https://yourwebsite.com
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * 
+ * Supported Extractors (loaded dynamically from API):
+ * - simplegameguide (SimpleGameGuide.com)
+ * - mosttechs (MostTechs.com)
+ * - wsop (WSOP daily links)
+ * - crazyashwin (CrazyAshwin.com)
+ * - techyhigher (TechyHigher.com)
+ * - gamesbie (GamesBie.com)
+ * - coinscrazy (CoinsCrazy.com) - NEW
+ * - default (Gemini AI fallback for unknown sites)
  */
 
 // Prevent direct access
@@ -18,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://ciao-paperback-noted-courier.trycloudflare.com';
+    private $api_base_url = 'https://creatures-navy-limitations-attractive.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -1082,7 +1092,8 @@ class SmartLinkUpdater {
                 'techyhigher': 'Techy Higher',
                 'default': 'Default (Gemini AI)',
                 'wsop': 'WSOP',
-                'gamesbie': 'Gamesbie (Promo Codes)'
+                'gamesbie': 'Gamesbie (Promo Codes)',
+                'coinscrazy': 'Coins Crazy'
             };
 
             function init() {
