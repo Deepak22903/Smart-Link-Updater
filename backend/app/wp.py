@@ -266,11 +266,27 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     today_section_exists = False
     today_section_content = ""
     
+    # DEBUG: Log a sample of the content to see what we're working with
+    logging.info(f"[WP DEBUG] Content length: {len(content)} chars")
+    logging.info(f"[WP DEBUG] 'Last updated' in content: {'Last updated' in content}")
+    logging.info(f"[WP DEBUG] 'smartlink-updater-section' in content: {'smartlink-updater-section' in content}")
+    
+    # Log first occurrence of "07 February 2026" if it exists
+    if "07 February 2026" in content:
+        idx = content.index("07 February 2026")
+        # Find the section end (next 1000 chars to see closing structure)
+        sample = content[max(0, idx-200):min(len(content), idx+1000)]
+        logging.info(f"[WP DEBUG] Sample around '07 February 2026': ...{sample}...")
+    else:
+        logging.info(f"[WP DEBUG] '07 February 2026' not found in content")
+    
     # Find all link sections with dates using patterns for both old and new formats
     # Pattern 1: New WordPress block format - NOTE: WordPress strips block comments from raw content
     # Match from outer div with smartlink-updater-section to the "Last updated" timestamp paragraph and closing tags
     # This is more reliable than trying to match nested divs
-    new_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
+    # UPDATED: Match based on the date header and section div, more flexible
+    new_block_pattern = r'<div class="[^"]*smartlink-updater-section[^"]*"[^>]*>.*?<h4[^>]*>\s*\d{2}\s+\w+\s+\d{4}\s*</h4>.*?(?=<div class="[^"]*smartlink-updater-section|<h2[^>]*>|$)'
+    
     # Pattern 2: Old div-based format (for backward compatibility)
     old_section_pattern = r'<div class="links-for-today"[^>]*>[\s\S]*?<p[^>]*>.*?</p>\s*</div>'
     # Date pattern works for both formats
@@ -302,11 +318,18 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     # Find and filter sections (check both new block format and old format)
     sections_to_remove = []
     existing_links = []
+    total_sections_found = 0  # Track total sections before removal
+    sections_to_keep_count = 0  # Track how many non-today sections we're keeping
+    had_sections = False  # Track if ANY sections existed (even if all removed)
     
     # Check new block format first
     new_block_matches = list(re.finditer(new_block_pattern, content, re.DOTALL))
     
+    logging.info(f"[WP DEBUG] Found {len(new_block_matches)} sections with new_block_pattern")
+    
     for match in new_block_matches:
+        total_sections_found += 1
+        had_sections = True  # Mark that we found at least one section
         section_text = match.group(0)
         date_match = re.search(date_pattern, section_text, re.DOTALL)
         
@@ -326,11 +349,19 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
                 sections_to_remove.append((match.start(), match.end(), section_text))
             elif not should_keep_section(section_text, section_date_str):
                 sections_to_remove.append((match.start(), match.end(), section_text))
+            else:
+                # This section will be kept
+                sections_to_keep_count += 1
     
     # Also check old format for backward compatibility
     old_format_matches = list(re.finditer(old_section_pattern, content, re.DOTALL))
     
+    logging.info(f"[WP DEBUG] Found {len(old_format_matches)} sections with old_section_pattern")
+    logging.info(f"[WP DEBUG] Total had_sections before loop: {had_sections}")
+    
     for match in old_format_matches:
+        total_sections_found += 1
+        had_sections = True  # Mark that we found at least one section
         section_text = match.group(0)
         date_match = re.search(date_pattern, section_text, re.DOTALL)
         
@@ -351,6 +382,12 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
                 sections_to_remove.append((match.start(), match.end(), section_text))
             elif not should_keep_section(section_text, section_date_str):
                 sections_to_remove.append((match.start(), match.end(), section_text))
+            else:
+                # This section will be kept
+                sections_to_keep_count += 1
+    
+    logging.info(f"[WP DEBUG] After processing: had_sections={had_sections}, sections_to_keep_count={sections_to_keep_count}, sections_to_remove={len(sections_to_remove)}")
+    logging.info(f"[WP DEBUG] existing_links extracted: {len(existing_links)} links")
     
     # Remove old sections and today's section (we'll recreate it with all links)
     if sections_to_remove:
@@ -417,7 +454,14 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     # Button style is determined by site configuration
     column_blocks = []
     
-    logging.info(f"[WP] Using button style: {button_style}")
+    # Get button numbering mode (post config overrides site config)
+    button_numbering = "auto"  # Default
+    if post_config and 'button_numbering' in post_config:
+        button_numbering = post_config.get('button_numbering', 'auto')
+    elif wp_site and isinstance(wp_site, dict) and 'button_numbering' in wp_site:
+        button_numbering = wp_site.get('button_numbering', 'auto')
+    
+    logging.info(f"[WP] Using button style: {button_style}, numbering mode: {button_numbering}")
     
     for i in range(0, len(merged_links), 3):
         # Get 3 links at a time
@@ -429,10 +473,11 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
             # Get target attribute (default to _blank for new tab)
             target = link.get('target', '_blank')
             
-            # Generate button HTML with site-specific style
+            # Generate button HTML with site-specific style and numbering mode
             button_html = button_styles.generate_button_html(
                 link={'url': link['url'], 'title': link['title'], 'order': link['order'], 'target': target},
-                style_name=button_style
+                style_name=button_style,
+                numbering_mode=button_numbering
             )
             buttons_in_group.append(button_html)
         
@@ -461,14 +506,6 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
 <!-- /wp:paragraph -->
 </div>
 <!-- /wp:group -->'''
-    
-    # ROBUST INSERTION LOGIC:
-    # 1. Find our existing SmartLink blocks if they exist
-    # 2. Insert new section after the first H2 (it becomes the top/newest section)
-    # 3. Old sections remain below (they were already pruned)
-    
-    # Use the same pattern - match to the "Last updated" timestamp as anchor
-    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
     
     # REMOVE OLD AD CODES FIRST (before inserting new sections)
     # Pattern to match ad code blocks inserted by our system
@@ -509,17 +546,57 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
         if total_remaining > 0:
             logging.warning(f"[WP] WARNING: {total_remaining} ad blocks still remain after removal!")
     
-    # Check if any SmartLink sections exist
-    existing_sections = list(re.finditer(smartlink_block_pattern, cleaned_content, re.DOTALL))
+    # ROBUST INSERTION LOGIC:
+    # 1. If we're keeping sections from previous days: insert before them
+    # 2. If we had sections but all were removed (all for today): insert at the top
+    # 3. If no sections existed at all: insert after first H2 (fresh post)
     
-    if existing_sections:
-        # Insert new section before the first existing section (at the top)
-        first_section = existing_sections[0]
-        new_content = cleaned_content[:first_section.start()] + new_section + "\n\n" + cleaned_content[first_section.start():]
-        logging.info(f"[WP] Inserted new SmartLink section before existing sections")
+    # Use the same pattern - match to the "Last updated" timestamp as anchor
+    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
+    
+    # Check if any SmartLink sections remain after pruning (using sections_to_keep_count)
+    # We already calculated how many sections we're keeping, so use that instead of re-searching
+    if sections_to_keep_count > 0:
+        # There are still sections remaining after removal (yesterday, day before, etc.)
+        # Insert new section before the first remaining section
+        # We need to find the first section in the cleaned_content
+        existing_sections = list(re.finditer(smartlink_block_pattern, cleaned_content, re.DOTALL))
+        
+        if existing_sections:
+            first_section = existing_sections[0]
+            new_content = cleaned_content[:first_section.start()] + new_section + "\n\n" + cleaned_content[first_section.start():]
+            logging.info(f"[WP] Inserted new SmartLink section before existing sections ({sections_to_keep_count} sections remaining)")
+        else:
+            # Fallback: should not happen if sections_to_keep_count > 0
+            logging.warning(f"[WP] Expected {sections_to_keep_count} sections but found none - inserting after H2")
+            h2_block_pattern = r'(<!-- wp:heading.*?-->.*?<h2[^>]*>.*?</h2>.*?<!-- /wp:heading -->|<h2[^>]*>.*?</h2>)'
+            h2_match = re.search(h2_block_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
+            
+            if h2_match:
+                h2_end = h2_match.end()
+                new_content = cleaned_content[:h2_end] + "\n\n" + new_section + "\n\n" + cleaned_content[h2_end:]
+            else:
+                new_content = new_section + "\n\n" + cleaned_content
+    elif had_sections:
+        # We had sections but all were removed (all were today's date)
+        # Insert at the top of SmartLink area (after first H2)
+        logging.info(f"[WP] All sections were for today and removed - inserting new merged section after first H2")
+        h2_block_pattern = r'(<!-- wp:heading.*?-->.*?<h2[^>]*>.*?</h2>.*?<!-- /wp:heading -->|<h2[^>]*>.*?</h2>)'
+        h2_match = re.search(h2_block_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
+        
+        if h2_match:
+            # Insert after the first H2 block
+            h2_end = h2_match.end()
+            new_content = cleaned_content[:h2_end] + "\n\n" + new_section + "\n\n" + cleaned_content[h2_end:]
+            logging.info(f"[WP] Inserted merged SmartLink block after first <h2> block")
+        else:
+            # Fallback: prepend to content (rare case)
+            new_content = new_section + "\n\n" + cleaned_content
+            logging.warning(f"[WP] No <h2> block found, prepending SmartLink block to beginning")
     else:
-        # No SmartLink sections exist, insert after first H2 block (WordPress heading block)
-        # Look for either block comment format or plain H2
+        # No SmartLink sections ever existed - this is a fresh post
+        # Insert after first H2 block (WordPress heading block)
+        logging.info(f"[WP] No SmartLink sections found - inserting after first H2 (fresh post)")
         h2_block_pattern = r'(<!-- wp:heading.*?-->.*?<h2[^>]*>.*?</h2>.*?<!-- /wp:heading -->|<h2[^>]*>.*?</h2>)'
         h2_match = re.search(h2_block_pattern, cleaned_content, re.DOTALL | re.IGNORECASE)
         

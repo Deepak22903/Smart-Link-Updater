@@ -216,12 +216,33 @@ def get_all_button_styles() -> Dict[str, Dict[str, Any]]:
     return BUTTON_STYLES
 
 
-def generate_button_html(link: Dict[str, Any], style_name: str = "default") -> str:
+def _title_has_leading_number(title: str) -> bool:
+    """Check if title already starts with a number pattern.
+    
+    Detects patterns like: "01.", "1.", "1+", "10.", "15.", etc.
+    
+    Args:
+        title: Button title text
+        
+    Returns:
+        True if title starts with a number pattern, False otherwise
+    """
+    import re
+    # Match patterns: "01.", "1.", "1+", "10.", etc. at the start
+    pattern = r'^\s*\d+[\.\+\-\)\:]\s*'
+    return bool(re.match(pattern, title.strip()))
+
+
+def generate_button_html(link: Dict[str, Any], style_name: str = "default", numbering_mode: str = "auto") -> str:
     """Generate button HTML with specified style.
     
     Args:
         link: Dict with 'url', 'title', 'order', and optional 'target'
         style_name: Name of the button style to apply
+        numbering_mode: How to handle button numbering:
+            - "auto": Only add number if title doesn't already have one (default)
+            - "always": Always add order number prefix
+            - "never": Never add order number prefix
         
     Returns:
         HTML string for the button within a WordPress column block
@@ -237,10 +258,25 @@ def generate_button_html(link: Dict[str, Any], style_name: str = "default") -> s
     hover_over = "; ".join([f"this.style.{k.replace('-', '')} = '{v}'" for k, v in style["hover"].items()])
     hover_out = "; ".join([f"this.style.{k.replace('-', '')} = '{style['css'].get(k, '')}' " for k in style["hover"].keys()])
     
+    # Determine button text based on numbering mode
+    title = link['title']
+    if numbering_mode == "always":
+        # Always add order number
+        button_text = f"{link['order']:02d}. {title}"
+    elif numbering_mode == "never":
+        # Never add order number
+        button_text = title
+    else:  # "auto" (default)
+        # Only add order number if title doesn't already have one
+        if _title_has_leading_number(title):
+            button_text = title
+        else:
+            button_text = f"{link['order']:02d}. {title}"
+    
     button_html = f'''<!-- wp:column {{"width":"33.33%"}} -->
 <div class="wp-block-column" style="flex-basis:33.33%">
     <div style="margin: 15px 0;">
-        <a href="{link['url']}" target="{target}"{rel_attr} style="{css_string}" onmouseover="{hover_over}" onmouseout="{hover_out}">{link['order']:02d}. {link['title']}</a>
+        <a href="{link['url']}" target="{target}"{rel_attr} style="{css_string}" onmouseover="{hover_over}" onmouseout="{hover_out}">{button_text}</a>
     </div>
 </div>
 <!-- /wp:column -->'''

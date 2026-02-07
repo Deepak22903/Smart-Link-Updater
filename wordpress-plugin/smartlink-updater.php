@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://periodic-marriage-care-elder.trycloudflare.com';
+    private $api_base_url = 'https://minority-declaration-arise-manner.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -1249,7 +1249,6 @@ class SmartLinkUpdater {
                 // Delegate checkbox change event
                 $(document).on('change', '.post-checkbox', updateSelectedCount);
                 $(document).on('click', '.view-logs-btn', viewLogs);
-                $(document).on('click', '.single-update-btn', singleUpdate);
                 $(document).on('click', '.add-manual-links-btn', openManualLinksModal);
                 $(document).on('click', '.edit-config-btn', openEditConfigModal);
                 $(document).on('click', '.delete-config-btn', deletePostConfig);
@@ -2355,23 +2354,8 @@ class SmartLinkUpdater {
                     const lastUpdated = post.last_updated ? formatTimeAgo(post.last_updated) : '-';
                     row.append($('<td>').text(lastUpdated).css({'color': '#666', 'font-size': '13px'}));
                     
-                    // Actions (Update button + three-dot menu)
+                    // Actions (three-dot menu only)
                     const actionsCell = $('<td>').addClass('actions-cell').css({'text-align': 'center', 'position': 'relative'});
-                    
-                    // Update button (standalone)
-                    const updateBtn = $('<button>').addClass('button button-primary button-small single-update-btn').attr({
-                        'data-post-id': post.post_id,
-                        'title': 'Scrape fresh links from sources and update this post'
-                    }).html(
-                        '<span class="dashicons dashicons-download" style="font-size: 13px; line-height: 1.4;"></span> Scrape Links'
-                    ).css({
-                        'margin-right': '8px',
-                        'padding': '6px 12px',
-                        'font-size': '12px',
-                        'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        'border': 'none',
-                        'box-shadow': '0 2px 4px rgba(102, 126, 234, 0.3)'
-                    });
                     
                     // Three-dot menu button
                     const menuBtn = $('<button>').addClass('action-menu-btn').attr('data-post-id', post.post_id).html('⋮').css({
@@ -2410,7 +2394,7 @@ class SmartLinkUpdater {
                         </div>
                     `);
                     
-                    actionsCell.append(updateBtn).append(menuBtn).append(menu);
+                    actionsCell.append(menuBtn).append(menu);
                     row.append(actionsCell);
                     
                     tbody.append(row);
@@ -2733,42 +2717,6 @@ class SmartLinkUpdater {
                 return badge;
             }
             
-            // ========== SINGLE UPDATE ==========
-            
-            function singleUpdate(e) {
-                const postId = parseInt($(e.currentTarget).data('post-id'));
-                
-                if (!confirm('Scrape fresh links from configured sources and update post ' + postId + '?')) {
-                    return;
-                }
-                
-                const btn = $(e.currentTarget);
-                btn.prop('disabled', true);
-                
-                $.ajax({
-                    url: config.restUrl + '/batch-update',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        post_ids: [postId],
-                        sync: false,
-                        target: 'this'
-                    }),
-                    beforeSend: function(xhr) {
-                        xhr.setRequestHeader('X-WP-Nonce', config.nonce);
-                    },
-                    success: function(response) {
-                        currentBatchRequestId = response.request_id;
-                        showToast('Scraping started for post ' + postId + ' - check progress below', 'success');
-                        startPolling();
-                    },
-                    error: function(xhr) {
-                        showToast('Failed to start scraping: ' + (xhr.responseJSON?.message || 'Unknown error'), 'error');
-                        btn.prop('disabled', false);
-                    }
-                });
-            }
-            
             // ========== LOGS MODAL ==========
             
             function viewLogs(e) {
@@ -2939,6 +2887,10 @@ class SmartLinkUpdater {
                         // Show/hide custom title input based on toggle
                         $('#custom-button-title-container').toggle(useCustomButtonTitle);
                         
+                        // Load button numbering configuration
+                        const buttonNumbering = postConfig.button_numbering || 'auto';
+                        $('#config-button-numbering').val(buttonNumbering);
+                        
                         // Load site post IDs - ensure sites are loaded first
                         if (!window.availableSites || window.availableSites.length === 0) {
                             console.log('[openEditConfigModal] Sites not loaded, loading now...');
@@ -3046,6 +2998,7 @@ class SmartLinkUpdater {
                 const customButtonTitle = $('#custom-button-title').val().trim();
                 const extractionMode = $('#config-extraction-mode').val() || 'links';
                 const promoSectionTitle = $('#config-promo-section-title').val().trim();
+                const buttonNumbering = $('#config-button-numbering').val() || 'auto';
                 
                 // Build configuration object
                 const configData = {
@@ -3084,6 +3037,13 @@ class SmartLinkUpdater {
                 configData.extraction_mode = extractionMode;
                 if ((extractionMode === 'promo_codes' || extractionMode === 'both') && promoSectionTitle) {
                     configData.promo_code_section_title = promoSectionTitle;
+                }
+                
+                // Add button numbering configuration
+                if (buttonNumbering && buttonNumbering !== 'auto') {
+                    configData.button_numbering = buttonNumbering;
+                } else {
+                    configData.button_numbering = 'auto';  // Explicitly set default
                 }
                 
                 // Add extractor map
@@ -4662,6 +4622,28 @@ class SmartLinkUpdater {
                                         This title will be used for all buttons instead of the scraped titles from target sites.
                                     </p>
                                 </div>
+                            </div>
+                            
+                            <!-- Button Numbering Mode -->
+                            <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
+                                <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
+                                    <span class="dashicons dashicons-sort" style="font-size: 18px; vertical-align: middle; color: #f97316;"></span>
+                                    Button Numbering
+                                </label>
+                                <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                                    <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                    Control how buttons are numbered. Auto-detection skips numbering if titles already start with numbers.
+                                </p>
+                                <select id="config-button-numbering" class="smartlink-select" style="width: 100%; padding: 12px; font-size: 14px; border: 2px solid #ddd; border-radius: 8px;">
+                                    <option value="auto" selected>Auto (Smart Detection) - Default</option>
+                                    <option value="always">Always Add Numbers</option>
+                                    <option value="never">Never Add Numbers</option>
+                                </select>
+                                <p style="color: #666; font-size: 13px; margin: 8px 0 0 0;">
+                                    <strong>Auto:</strong> Detects patterns like "01.", "1+", "10." and skips numbering<br>
+                                    <strong>Always:</strong> Forces "01. Title" format for all buttons<br>
+                                    <strong>Never:</strong> No numbering, uses titles as-is
+                                </p>
                             </div>
                         </form>
                     </div>
