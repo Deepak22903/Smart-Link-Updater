@@ -30,7 +30,7 @@ from .batch_manager import get_batch_manager, UpdateStatus
 from .analytics import get_analytics_engine
 from tenacity import RetryError
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 app = FastAPI(title="SmartLinkUpdater API")
@@ -2462,4 +2462,252 @@ async def preview_button_style(style_name: str):
     
     button_html = button_styles.generate_button_html(sample_link, style_name)
     return {"style_name": style_name, "html": button_html}
+
+
+# ==================== Travel Rewards API ====================
+
+
+@app.get("/api/rewards")
+async def get_rewards():
+    """
+    Get all rewards from post 206 fingerprints for the last 5 days.
+    Groups rewards by date sections: Today, Yesterday, This Week, Older.
+    
+    Returns rewards in the format:
+    {
+        "success": true,
+        "message": "Next update in X hours",
+        "data": [
+            {
+                "title": "Today",
+                "data": [
+                    {
+                        "id": "reward_001",
+                        "label": "50 Energy",
+                        "icon": "energy",
+                        "code": "ENERGY50",
+                        "expired": false,
+                        "expiresAt": "2026-02-09T23:59:59Z"
+                    }
+                ]
+            }
+        ]
+    }
+    """
+    try:
+        from datetime import datetime, timedelta
+        import pytz
+        
+        # Post ID for Travel Town rewards
+        POST_ID = 206
+        
+        # Get timezone (default to Asia/Kolkata or use post config)
+        post_config = mongo_storage.get_post_config(POST_ID)
+        timezone_str = post_config.get("timezone", "Asia/Kolkata") if post_config else "Asia/Kolkata"
+        tz = pytz.timezone(timezone_str)
+        
+        # Calculate date range (last 5 days)
+        now = datetime.now(tz)
+        today_date = now.date()
+        dates_to_fetch = [(today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+        
+        # Fetch fingerprints for all dates
+        all_fingerprints = []
+        for date_iso in dates_to_fetch:
+            fingerprints_set = mongo_storage.get_known_fingerprints(POST_ID, date_iso)
+            for fp in fingerprints_set:
+                # Parse fingerprint: format is {url}__{date_iso}
+                if "__" in fp:
+                    parts = fp.rsplit("__", 1)
+                    if len(parts) == 2:
+                        url, fp_date = parts
+                        all_fingerprints.append({
+                            "url": url,
+                            "date_iso": fp_date
+                        })
+        
+        # Transform fingerprints into rewards format
+        rewards = []
+        for idx, fp in enumerate(all_fingerprints):
+            url = fp["url"]
+            date_iso = fp["date_iso"]
+            
+            # Extract label from URL (simple extraction)
+            label = _extract_label_from_url(url)
+            
+            # Determine icon type based on label keywords
+            icon = _determine_icon_type(label)
+            
+            # Parse date and check if more than 3 days old
+            try:
+                date_obj = datetime.strptime(date_iso, "%Y-%m-%d").replace(tzinfo=tz)
+                expires_at = date_obj.replace(hour=23, minute=59, second=59)
+                # Mark as expired if more than 3 days old
+                days_old = (now.date() - date_obj.date()).days
+                expired = days_old > 3
+            except ValueError:
+                # Invalid date format, mark as expired
+                expires_at = now
+                expired = True
+            
+            rewards.append({
+                "id": f"reward_{idx+1:03d}",
+                "label": label,
+                "icon": icon,
+                "code": url,  # Using URL as code (can be customized)
+                "expired": expired,
+                "expiresAt": expires_at.isoformat(),
+                "createdAt": date_obj.isoformat() if not expired else None,
+                "_date_obj": date_obj  # For sorting
+            })
+        
+        # Group rewards by date sections
+        sections = _group_rewards_by_sections(rewards, now, tz)
+        
+        # Static message about reward validity
+        message = "Rewards are valid for a few days. If they don't work, they may have expired or already been used on your account."
+        
+        return {
+            "success": True,
+            "message": message,
+            "data": sections
+        }
+        
+    except Exception as e:
+        logging.error(f"Error fetching rewards: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Failed to fetch rewards",
+                "message": str(e)
+            }
+        )
+
+
+def _extract_label_from_url(url: str) -> str:
+    """
+    Extract a human-readable label from a URL.
+    Special handling for Travel Town and common gaming reward links.
+    """
+    import re
+    
+    url_lower = url.lower()
+    
+    # Special patterns for Travel Town links
+    if "travel-town" in url_lower or "traveltown" in url_lower:
+        # Look for common patterns in Travel Town URLs
+        if "energy" in url_lower:
+            # Try to extract number if present
+            match = re.search(r'(\d+)\s*energy', url_lower)
+            if match:
+                return f"{match.group(1)} Energy"
+            return "Free Energy"
+        
+        # Default for Travel Town links
+        return "50 Energy"  # Most common reward
+    
+    # Generic d10xl.com pattern
+    if "d10xl.com" in url_lower:
+        return "50 Energy"
+    
+    # Remove protocol and domain
+    path = url.split("//")[-1] if "//" in url else url
+    path = "/".join(path.split("/")[1:]) if "/" in path else path
+    
+    # Look for common reward patterns in the path
+    patterns = [
+        (r'(\d+)\s*(?:x\s*)?energy', lambda m: f"{m.group(1)} Energy"),
+        (r'(\d+)\s*(?:x\s*)?coins?', lambda m: f"{m.group(1)} Coins"),
+        (r'(\d+)\s*(?:x\s*)?gems?', lambda m: f"{m.group(1)} Gems"),
+        (r'(?:free|bonus)\s*energy', lambda m: "Free Energy"),
+        (r'(?:free|bonus)\s*coins?', lambda m: "Free Coins"),
+        (r'(?:free|bonus)\s*gems?', lambda m: "Free Gems"),
+    ]
+    
+    for pattern, formatter in patterns:
+        match = re.search(pattern, path.lower())
+        if match:
+            return formatter(match)
+    
+    # Default: extract filename or last path segment
+    if "/" in path:
+        filename = path.split("/")[-1]
+    else:
+        filename = path
+    
+    # Clean up: remove query params, hash, file extension
+    filename = filename.split("?")[0].split("#")[0]
+    filename = filename.rsplit(".", 1)[0] if "." in filename else filename
+    
+    # Replace hyphens/underscores with spaces and title case
+    label = filename.replace("-", " ").replace("_", " ").strip()
+    
+    # If still empty or too short, use generic label
+    if len(label) < 3:
+        label = "Free Energy"
+    
+    return label.title()
+
+
+def _determine_icon_type(label: str) -> str:
+    """
+    Determine icon type based on label keywords.
+    Returns: 'energy', 'coins', or 'gems'
+    """
+    label_lower = label.lower()
+    
+    if "energy" in label_lower or "energies" in label_lower:
+        return "energy"
+    elif "coin" in label_lower or "coins" in label_lower:
+        return "coins"
+    elif "gem" in label_lower or "gems" in label_lower:
+        return "gems"
+    
+    # Default to energy
+    return "energy"
+
+
+def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[Dict]:
+    """
+    Group rewards into sections: Today, Yesterday, This Week, Older
+    """
+    today = []
+    yesterday = []
+    this_week = []
+    older = []
+    
+    today_date = now.date()
+    yesterday_date = (now - timedelta(days=1)).date()
+    week_start = (now - timedelta(days=now.weekday())).date()
+    
+    for reward in rewards:
+        # Remove internal _date_obj before adding to section
+        date_obj = reward.pop("_date_obj", None)
+        if not date_obj:
+            older.append(reward)
+            continue
+        
+        reward_date = date_obj.date()
+        
+        if reward_date == today_date:
+            today.append(reward)
+        elif reward_date == yesterday_date:
+            yesterday.append(reward)
+        elif reward_date >= week_start:
+            this_week.append(reward)
+        else:
+            older.append(reward)
+    
+    sections = []
+    if today:
+        sections.append({"title": "Today", "data": today})
+    if yesterday:
+        sections.append({"title": "Yesterday", "data": yesterday})
+    if this_week:
+        sections.append({"title": "This Week", "data": this_week})
+    if older:
+        sections.append({"title": "Older", "data": older})
+    
+    return sections
 

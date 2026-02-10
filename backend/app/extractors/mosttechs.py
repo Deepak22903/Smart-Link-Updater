@@ -100,7 +100,8 @@ class MostTechsExtractor(BaseExtractor):
             # Normalize heading text to fix common typos
             normalized_heading = self._normalize_date_text(heading_text)
             
-            if normalized_heading not in date_patterns:
+            # Case-insensitive comparison to support lowercase months (e.g., "8 february 2026")
+            if normalized_heading.lower() not in [p.lower() for p in date_patterns]:
                 continue
             
             logging.info(f"[MostTechsExtractor] Found date heading: '{heading_text}'")
