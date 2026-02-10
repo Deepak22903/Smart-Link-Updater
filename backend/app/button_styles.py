@@ -195,6 +195,51 @@ BUTTON_STYLES = {
             "background-color": "#dbeafe",
             "border-color": "#2563eb"
         }
+    },
+    "popbies_split_layout": {
+        "name": "Popbies Split Layout",
+        "description": "Two-column layout with text on left and teal button on right, like popbies.com",
+        "layout_type": "split",  # Special flag for split layout
+        "container": {
+            "padding": "15px 20px",
+            "background-color": "#f3f4f6",
+            "border-radius": "12px",
+            "display": "flex",
+            "align-items": "center",
+            "justify-content": "space-between",
+            "margin": "10px 0",
+            "box-sizing": "border-box"
+        },
+        "label": {
+            "color": "#1f2937",
+            "font-size": "16px",
+            "font-weight": "600",
+            "margin": "0"
+        },
+        "css": {
+            "padding": "12px 35px",
+            "border": "none",
+            "border-radius": "8px",
+            "background-color": "#14b8a6",
+            "color": "white",
+            "font-size": "16px",
+            "font-weight": "600",
+            "text-decoration": "none",
+            "text-align": "center",
+            "transition": "all 0.3s",
+            "display": "inline-block",
+            "box-sizing": "border-box",
+            "min-width": "120px"
+        },
+        "hover": {
+            "background-color": "#0d9488",
+            "transform": "scale(1.02)"
+        },
+        "disabled": {
+            "background-color": "#9ca3af",
+            "color": "#e5e7eb",
+            "cursor": "not-allowed"
+        }
     }
 }
 
@@ -251,6 +296,11 @@ def generate_button_html(link: Dict[str, Any], style_name: str = "default", numb
     target = link.get('target', '_blank')
     rel_attr = ' rel="noopener noreferrer"' if target == '_blank' else ''
     
+    # Check if this is a split layout style
+    if style.get("layout_type") == "split":
+        return _generate_split_layout_html(link, style, target, rel_attr, numbering_mode)
+    
+    # Standard button layout (existing code)
     # Convert CSS dict to inline style string
     css_string = "; ".join([f"{k}: {v}" for k, v in style["css"].items()])
     
@@ -276,6 +326,59 @@ def generate_button_html(link: Dict[str, Any], style_name: str = "default", numb
     button_html = f'''<!-- wp:column {{"width":"33.33%"}} -->
 <div class="wp-block-column" style="flex-basis:33.33%">
     <div style="margin: 15px 0;">
+        <a href="{link['url']}" target="{target}"{rel_attr} style="{css_string}" onmouseover="{hover_over}" onmouseout="{hover_out}">{button_text}</a>
+    </div>
+</div>
+<!-- /wp:column -->'''
+    
+    return button_html
+
+
+def _generate_split_layout_html(link: Dict[str, Any], style: Dict[str, Any], target: str, rel_attr: str, numbering_mode: str) -> str:
+    """Generate split layout HTML (text on left, button on right).
+    
+    Args:
+        link: Dict with 'url', 'title', 'order', and optional 'target'
+        style: Style configuration dict
+        target: Link target attribute
+        rel_attr: Link rel attribute
+        numbering_mode: How to handle button numbering
+        
+    Returns:
+        HTML string for the split layout button
+    """
+    # Container styles
+    container_string = "; ".join([f"{k}: {v}" for k, v in style["container"].items()])
+    
+    # Label styles
+    label_string = "; ".join([f"{k}: {v}" for k, v in style["label"].items()])
+    
+    # Button styles
+    css_string = "; ".join([f"{k}: {v}" for k, v in style["css"].items()])
+    
+    # Convert hover dict to onmouseover/onmouseout handlers
+    hover_over = "; ".join([f"this.style.{css_property_to_js(k)} = '{v}'" for k, v in style["hover"].items()])
+    hover_out = "; ".join([f"this.style.{css_property_to_js(k)} = '{style['css'].get(k, '')}'" for k in style["hover"].keys()])
+    
+    # Determine label text (left side)
+    title = link['title']
+    if numbering_mode == "always":
+        label_text = f"{link['order']:02d}. {title}"
+    elif numbering_mode == "never":
+        label_text = title
+    else:  # "auto" (default)
+        if _title_has_leading_number(title):
+            label_text = title
+        else:
+            label_text = f"{link['order']:02d}. {title}"
+    
+    # Button text (right side) - typically "Claim" or custom
+    button_text = link.get('button_text', 'Claim')
+    
+    button_html = f'''<!-- wp:column {{"width":"100%"}} -->
+<div class="wp-block-column" style="flex-basis:100%">
+    <div style="{container_string}">
+        <span style="{label_string}">{label_text}</span>
         <a href="{link['url']}" target="{target}"{rel_attr} style="{css_string}" onmouseover="{hover_over}" onmouseout="{hover_out}">{button_text}</a>
     </div>
 </div>
