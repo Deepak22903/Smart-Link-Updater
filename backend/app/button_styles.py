@@ -375,14 +375,60 @@ def _generate_split_layout_html(link: Dict[str, Any], style: Dict[str, Any], tar
     # Button text (right side) - typically "Claim" or custom
     button_text = link.get('button_text', 'Claim')
     
+    # Disabled/claimed styles from the style config
+    disabled_css = style.get('disabled', {})
+    disabled_string = "; ".join([f"{k}: {v}" for k, v in disabled_css.items()])
+    
+    # Generate unique ID for this button based on URL (for localStorage)
+    import hashlib
+    button_id = hashlib.md5(link['url'].encode()).hexdigest()[:12]
+    
+    # JavaScript for claim functionality with localStorage persistence
+    onclick_js = f"""
+    (function(btn) {{
+        var storageKey = 'claimed_' + '{button_id}';
+        
+        // Check if already claimed
+        if (localStorage.getItem(storageKey) === 'true') {{
+            return false;
+        }}
+        
+        // Mark as claimed
+        setTimeout(function() {{
+            btn.textContent = 'Claimed';
+            btn.style.cssText = '{disabled_string}';
+            btn.style.pointerEvents = 'none';
+            localStorage.setItem(storageKey, 'true');
+        }}, 100);
+        
+        return true;
+    }})(this)
+    """.replace('\n', ' ').strip()
+    
+    # Check claimed state on page load script
+    onload_check = f"""
+    (function() {{
+        var storageKey = 'claimed_{button_id}';
+        if (localStorage.getItem(storageKey) === 'true') {{
+            var btn = document.querySelector('[data-btn-id=\\"{button_id}\\"]');
+            if (btn) {{
+                btn.textContent = 'Claimed';
+                btn.style.cssText = '{disabled_string}';
+                btn.style.pointerEvents = 'none';
+            }}
+        }}
+    }})();
+    """
+    
     button_html = f'''<!-- wp:column {{"width":"100%"}} -->
 <div class="wp-block-column" style="flex-basis:100%">
     <div style="{container_string}">
         <span style="{label_string}">{label_text}</span>
-        <a href="{link['url']}" target="{target}"{rel_attr} style="{css_string}" onmouseover="{hover_over}" onmouseout="{hover_out}">{button_text}</a>
+        <a href="{link['url']}" target="{target}"{rel_attr} data-btn-id="{button_id}" style="{css_string}" onmouseover="if(this.textContent!=='Claimed'){{{hover_over}}}" onmouseout="if(this.textContent!=='Claimed'){{{hover_out}}}" onclick="{onclick_js}">{button_text}</a>
     </div>
 </div>
-<!-- /wp:column -->'''
+<!-- /wp:column -->
+<script>{onload_check}</script>'''
     
     return button_html
 

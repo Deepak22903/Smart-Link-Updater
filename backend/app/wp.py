@@ -463,9 +463,16 @@ async def update_post_links_section(post_id: int, links: List[Link], target_site
     
     logging.info(f"[WP] Using button style: {button_style}, numbering mode: {button_numbering}")
     
-    for i in range(0, len(merged_links), 3):
-        # Get 3 links at a time
-        group = merged_links[i:i+3]
+    # Check if this is a split layout style (one button per row)
+    style_config = button_styles.get_button_style(button_style)
+    is_split_layout = style_config.get("layout_type") == "split"
+    
+    # Split layouts stack vertically (1 per row), standard layouts use 3 per row
+    buttons_per_row = 1 if is_split_layout else 3
+    
+    for i in range(0, len(merged_links), buttons_per_row):
+        # Get buttons for this row
+        group = merged_links[i:i+buttons_per_row]
         
         # Create button HTML for this group using the button_styles module
         buttons_in_group = []
