@@ -62,7 +62,7 @@ def list_extractors() -> List[str]:
 
 # Import all extractors to trigger registration
 # This must happen after register_extractor is defined
-from . import simplegameguide, default, mosttechs, crazyashwin, techyhigher, wsop, gamesbie, coinscrazy
+from . import simplegameguide, default, mosttechs, crazyashwin, techyhigher, wsop, gamesbie, coinscrazy, gamesbieLinks
 
 # Register them manually
 _EXTRACTOR_REGISTRY[simplegameguide.SimpleGameGuideExtractor._extractor_name] = simplegameguide.SimpleGameGuideExtractor
@@ -73,4 +73,5 @@ _EXTRACTOR_REGISTRY[techyhigher.TechyHigherExtractor._extractor_name] = techyhig
 _EXTRACTOR_REGISTRY[wsop.WSOPExtractor._extractor_name] = wsop.WSOPExtractor
 _EXTRACTOR_REGISTRY[gamesbie.GamesbieExtractor._extractor_name] = gamesbie.GamesbieExtractor
 _EXTRACTOR_REGISTRY[coinscrazy.CoinsCrazyExtractor._extractor_name] = coinscrazy.CoinsCrazyExtractor
+_EXTRACTOR_REGISTRY[gamesbieLinks.GamesbieLinksExtractor._extractor_name] = gamesbieLinks.GamesbieLinksExtractor
 
