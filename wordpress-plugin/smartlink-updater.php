@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://minority-declaration-arise-manner.trycloudflare.com';
+    private $api_base_url = 'https://smartlink-api-601738079869.us-central1.run.app';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -6623,6 +6623,7 @@ class SmartLinkUpdater {
                             <option value="modern_dark">Modern Dark</option>
                             <option value="neon_purple">Neon Purple</option>
                             <option value="minimal_blue">Minimal Blue</option>
+                            <option value="popbies_split_layout">Popbies Split Layout (Teal)</option>
                         </select>
                         <small>Choose the button design for this WordPress site</small>
                         <div id="button-preview" style="margin-top: 10px; padding: 15px; background: #f5f5f5; border-radius: 8px; display: none;">
