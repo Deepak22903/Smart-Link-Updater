@@ -573,7 +573,27 @@ async def update_post_links_section(
 
     # Create a proper WordPress group block that wraps our links section
     # This ensures the entire section is treated as a single block
-    new_section = f"""<!-- wp:group {{"className":"smartlink-updater-section","metadata":{{"name":"SmartLink Links Section"}}}} -->
+
+    site_url = (
+        wp_site.get("base_url") if wp_site and isinstance(wp_site, dict) else "default"
+    )
+    logging.info(f"Current Site = {site_url}")
+    if site_url == "https://popbies.com":
+        new_section = f"""<!-- wp:group {{"className":"smartlink-updater-section","metadata":{{"name":"SmartLink Links Section"}}}} -->
+<div class="wp-block-group smartlink-updater-section links-for-today" style="padding: 20px; margin: 20px 0;">
+<!-- wp:heading {{"level":4,"style":{{"color":{{"text":"red"}},"typography":{{"fontSize":"20px"}}}},"textAlign":"center"}} -->
+<h4 class="wp-block-heading has-text-align-center" style="color:red;font-size:20px">{formatted_date}</h4>
+<!-- /wp:heading -->
+
+{buttons_html}
+
+<!-- wp:paragraph {{"style":{{"typography":{{"fontSize":"12px"}},"color":{{"text":"#999"}}}}}} -->
+<p class="has-text-color" style="color:#999;font-size:12px"><em>Last updated: {now.strftime("%Y-%m-%d %H:%M:%S")} UTC</em></p>
+<!-- /wp:paragraph -->
+</div>
+<!-- /wp:group -->"""
+    else:
+        new_section = f"""<!-- wp:group {{"className":"smartlink-updater-section","metadata":{{"name":"SmartLink Links Section"}}}} -->
 <div class="wp-block-group smartlink-updater-section links-for-today" style="padding: 20px; margin: 20px 0;">
 <!-- wp:heading {{"level":4,"style":{{"color":{{"text":"#30d612"}},"typography":{{"fontSize":"20px"}}}},"textAlign":"center"}} -->
 <h4 class="wp-block-heading has-text-align-center" style="color:#30d612;font-size:20px">{formatted_date}</h4>
