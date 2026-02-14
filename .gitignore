@@ -134,3 +134,6 @@ env-config.yaml
 # Firebase Admin SDK credentials
 firebase-adminsdk.json
 *firebase-adminsdk*.json
+
+# Environment config for Cloud Run
+env-config.yaml
