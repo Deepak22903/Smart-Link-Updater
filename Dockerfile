@@ -19,9 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY .env .env
 
-# Copy Firebase service account (if exists, for simpler deployment)
+# Copy Firebase service account (if exists)
 # For production, use Secret Manager instead (see FIREBASE_DEPLOY_GUIDE.md)
-COPY firebase-adminsdk*.json ./firebase-adminsdk.json 2>/dev/null || true
+COPY firebase-adminsdk.json ./firebase-adminsdk.json
 
 # Create data directory for runtime files (MongoDB handles data persistence)
 RUN mkdir -p backend/data
