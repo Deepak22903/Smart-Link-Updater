@@ -194,6 +194,7 @@ class PushTokenRequest(BaseModel):
     token: str
     device_type: str  # 'ios' or 'android'
     app_version: Optional[str] = None
+    token_type: Optional[str] = 'fcm'  # 'fcm' or 'expo' (default: fcm)
 
 
 class PushTokenResponse(BaseModel):
@@ -2742,10 +2743,10 @@ def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[D
 @app.post("/api/notifications/register", response_model=PushTokenResponse)
 async def register_push_token(request: PushTokenRequest):
     """
-    Register or update a device's push notification token
+    Register or update a device's push notification token (FCM or Expo)
     
     Args:
-        request: PushTokenRequest with token, device_type, and optional app_version
+        request: PushTokenRequest with token, device_type, token_type, and optional app_version
     
     Returns:
         PushTokenResponse with success status and token_id
@@ -2758,11 +2759,12 @@ async def register_push_token(request: PushTokenRequest):
             "token": request.token,
             "device_type": request.device_type,
             "app_version": request.app_version,
+            "token_type": request.token_type or "fcm",
             "registered_at": datetime.utcnow().isoformat(),
             "last_updated": datetime.utcnow().isoformat()
         }
         
-        logging.info(f"Push token registered: {token_id}... ({request.device_type})")
+        logging.info(f"Push token registered: {token_id}... ({request.device_type}, {request.token_type})")
         
         return PushTokenResponse(
             success=True,

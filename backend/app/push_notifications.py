@@ -1,15 +1,38 @@
 """
-Push Notifications Module
-Handles sending push notifications to registered devices via Expo Push API
+Push Notifications Module - Firebase Cloud Messaging
+Handles sending push notifications to registered devices via Firebase FCM
 """
 
-import httpx
+import firebase_admin
+from firebase_admin import credentials, messaging
 from typing import List, Dict, Any
 import logging
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+# Initialize Firebase Admin SDK
+def initialize_firebase():
+    """Initialize Firebase Admin SDK with service account"""
+    try:
+        # Check if already initialized
+        if not firebase_admin._apps:
+            # Path to service account key
+            cred_path = Path(__file__).parent.parent.parent / "firebase-adminsdk.json"
+            
+            if not cred_path.exists():
+                logger.error(f"Firebase service account key not found at {cred_path}")
+                return False
+            
+            cred = credentials.Certificate(str(cred_path))
+            firebase_admin.initialize_app(cred)
+            logger.info("Firebase Admin SDK initialized successfully")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
+        return False
 
 
 async def send_push_notification(
@@ -19,10 +42,10 @@ async def send_push_notification(
     data: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
-    Send push notification to multiple Expo push tokens
+    Send push notification to multiple FCM tokens
     
     Args:
-        tokens: List of Expo push tokens
+        tokens: List of FCM device tokens
         title: Notification title
         body: Notification body
         data: Optional data payload (for navigation, etc.)
@@ -33,56 +56,153 @@ async def send_push_notification(
     if not tokens:
         return {"success": [], "failed": [], "error": "No tokens provided"}
     
-    messages = []
-    for token in tokens:
-        messages.append({
-            "to": token,
-            "sound": "default",
-            "title": title,
-            "body": body,
-            "data": data or {},
-            "priority": "high",
-            "channelId": "default"
-        })
+    # Initialize Firebase if needed
+    if not initialize_firebase():
+        return {"success": [], "failed": [], "error": "Firebase not initialized"}
     
     results = {"success": [], "failed": []}
     
-    async with httpx.AsyncClient() as client:
+    # Create notification message
+    notification = messaging.Notification(
+        title=title,
+        body=body
+    )
+    
+    # Convert data values to strings (FCM requirement)
+    fcm_data = {k: str(v) for k, v in (data or {}).items()}
+    
+    # Send to each token
+    for token in tokens:
         try:
-            response = await client.post(
-                EXPO_PUSH_URL,
-                json=messages,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json"
-                },
-                timeout=30.0
+            message = messaging.Message(
+                notification=notification,
+                data=fcm_data,
+                token=token,
+                android=messaging.AndroidConfig(
+                    priority='high',
+                    notification=messaging.AndroidNotification(
+                        channel_id='default',
+                        priority='high'
+                    )
+                ),
+                apns=messaging.APNSConfig(
+                    payload=messaging.APNSPayload(
+                        aps=messaging.Aps(
+                            sound='default',
+                            badge=1
+                        )
+                    )
+                )
             )
             
-            if response.status_code == 200:
-                response_data = response.json()
-                for i, result in enumerate(response_data.get("data", [])):
-                    if result.get("status") == "ok":
-                        results["success"].append(tokens[i])
-                        logger.info(f"Notification sent successfully to {tokens[i][:20]}...")
-                    else:
-                        error_msg = result.get("message", "Unknown error")
-                        results["failed"].append({
-                            "token": tokens[i][:20] + "...",
-                            "error": error_msg
-                        })
-                        logger.warning(f"Failed to send notification: {error_msg}")
-            else:
-                error_msg = f"HTTP {response.status_code}: {response.text}"
-                results["failed"] = [{"error": error_msg}]
-                logger.error(f"Expo Push API error: {error_msg}")
-                
+            # Send message
+            response = messaging.send(message)
+            results["success"].append(token[:20] + "...")
+            logger.info(f"FCM notification sent successfully: {response}")
+            
+        except messaging.UnregisteredError:
+            error_msg = "Token unregistered"
+            results["failed"].append({
+                "token": token[:20] + "...",
+                "error": error_msg
+            })
+            logger.warning(f"Token unregistered: {token[:20]}...")
+            
+        except messaging.InvalidArgumentError as e:
+            error_msg = f"Invalid argument: {str(e)}"
+            results["failed"].append({
+                "token": token[:20] + "...",
+                "error": error_msg
+            })
+            logger.error(f"Invalid FCM argument: {error_msg}")
+            
         except Exception as e:
             error_msg = str(e)
-            results["failed"] = [{"error": error_msg}]
-            logger.error(f"Exception sending notifications: {error_msg}")
+            results["failed"].append({
+                "token": token[:20] + "...",
+                "error": error_msg
+            })
+            logger.error(f"Failed to send FCM notification: {error_msg}")
     
     return results
+
+
+async def send_multicast_notification(
+    tokens: List[str],
+    title: str,
+    body: str,
+    data: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """
+    Send push notification to multiple tokens using multicast (more efficient)
+    
+    Args:
+        tokens: List of FCM device tokens (max 500)
+        title: Notification title
+        body: Notification body
+        data: Optional data payload
+    
+    Returns:
+        Dict with success/failed counts and details
+    """
+    if not tokens:
+        return {"success": [], "failed": [], "error": "No tokens provided"}
+    
+    # Initialize Firebase if needed
+    if not initialize_firebase():
+        return {"success": [], "failed": [], "error": "Firebase not initialized"}
+    
+    # Convert data values to strings
+    fcm_data = {k: str(v) for k, v in (data or {}).items()}
+    
+    # Create multicast message
+    message = messaging.MulticastMessage(
+        notification=messaging.Notification(
+            title=title,
+            body=body
+        ),
+        data=fcm_data,
+        tokens=tokens[:500],  # FCM limit is 500 tokens per request
+        android=messaging.AndroidConfig(
+            priority='high',
+            notification=messaging.AndroidNotification(
+                channel_id='default',
+                priority='high'
+            )
+        ),
+        apns=messaging.APNSConfig(
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    sound='default',
+                    badge=1
+                )
+            )
+        )
+    )
+    
+    try:
+        # Send to all tokens at once
+        response = messaging.send_multicast(message)
+        
+        results = {"success": [], "failed": []}
+        
+        # Process responses
+        for idx, resp in enumerate(response.responses):
+            token = tokens[idx]
+            if resp.success:
+                results["success"].append(token[:20] + "...")
+            else:
+                results["failed"].append({
+                    "token": token[:20] + "...",
+                    "error": str(resp.exception) if resp.exception else "Unknown error"
+                })
+        
+        logger.info(f"FCM multicast sent: {response.success_count} success, {response.failure_count} failed")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Failed to send FCM multicast: {str(e)}")
+        return {"success": [], "failed": [], "error": str(e)}
 
 
 async def notify_new_rewards(push_tokens_dict: dict, count: int = None) -> Dict[str, Any]:
@@ -105,14 +225,23 @@ async def notify_new_rewards(push_tokens_dict: dict, count: int = None) -> Dict[
     title = "New Rewards Available! 🎁"
     body = f"{count} new rewards added!" if count else "Check out the latest rewards"
     
-    logger.info(f"Sending notification to {len(tokens_list)} devices")
+    logger.info(f"Sending FCM notification to {len(tokens_list)} devices")
     
-    result = await send_push_notification(
-        tokens=tokens_list,
-        title=title,
-        body=body,
-        data={"screen": "Rewards"}
-    )
+    # Use multicast for better performance if many tokens
+    if len(tokens_list) > 10:
+        result = await send_multicast_notification(
+            tokens=tokens_list,
+            title=title,
+            body=body,
+            data={"screen": "Rewards"}
+        )
+    else:
+        result = await send_push_notification(
+            tokens=tokens_list,
+            title=title,
+            body=body,
+            data={"screen": "Rewards"}
+        )
     
     result["message"] = f"Sent to {len(result['success'])}/{len(tokens_list)} devices"
     return result

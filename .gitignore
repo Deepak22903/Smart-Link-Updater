@@ -130,3 +130,7 @@ cython_debug/
 
 # Ignore environment configuration file
 env-config.yaml
+
+# Firebase Admin SDK credentials
+firebase-adminsdk.json
+*firebase-adminsdk*.json
