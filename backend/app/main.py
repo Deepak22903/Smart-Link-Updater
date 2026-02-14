@@ -28,6 +28,7 @@ from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
 from .analytics import get_analytics_engine
+from .push_notifications import notify_new_rewards, send_push_notification
 from tenacity import RetryError
 import httpx
 from datetime import datetime, timedelta
@@ -53,6 +54,9 @@ app.add_middleware(
 
 # In-memory storage for task status
 task_status: Dict[str, dict] = {}
+
+# In-memory storage for push tokens (TODO: Replace with MongoDB for persistence)
+push_tokens: Dict[str, dict] = {}
 
 
 # ==================== Helper Functions ====================
@@ -180,6 +184,26 @@ class PostConfigUpdate(BaseModel):
     auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
     extraction_mode: Optional[str] = None  # What to extract: "links", "promo_codes", "both"
     promo_code_section_title: Optional[str] = None  # Custom title for promo codes section
+
+
+# ==================== Push Notification Models ====================
+
+
+class PushTokenRequest(BaseModel):
+    """Request model for registering push notification token"""
+    token: str
+    device_type: str  # 'ios' or 'android'
+    app_version: Optional[str] = None
+
+
+class PushTokenResponse(BaseModel):
+    """Response model for push token operations"""
+    success: bool
+    message: str
+    token_id: Optional[str] = None
+
+
+# ==================== API Endpoints ====================
 
 
 @app.get("/health")
@@ -2710,4 +2734,181 @@ def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[D
         sections.append({"title": "Older", "data": older})
     
     return sections
+
+
+# ==================== Push Notification Endpoints ====================
+
+
+@app.post("/api/notifications/register", response_model=PushTokenResponse)
+async def register_push_token(request: PushTokenRequest):
+    """
+    Register or update a device's push notification token
+    
+    Args:
+        request: PushTokenRequest with token, device_type, and optional app_version
+    
+    Returns:
+        PushTokenResponse with success status and token_id
+    """
+    try:
+        # Use first 20 chars of token as ID for storage
+        token_id = request.token[:20]
+        
+        push_tokens[token_id] = {
+            "token": request.token,
+            "device_type": request.device_type,
+            "app_version": request.app_version,
+            "registered_at": datetime.utcnow().isoformat(),
+            "last_updated": datetime.utcnow().isoformat()
+        }
+        
+        logging.info(f"Push token registered: {token_id}... ({request.device_type})")
+        
+        return PushTokenResponse(
+            success=True,
+            message="Push token registered successfully",
+            token_id=token_id
+        )
+    except Exception as e:
+        logging.error(f"Error registering push token: {str(e)}")
+        return PushTokenResponse(
+            success=False,
+            message=f"Failed to register token: {str(e)}"
+        )
+
+
+@app.delete("/api/notifications/unregister/{token}")
+async def unregister_push_token(token: str):
+    """
+    Unregister a device's push notification token
+    
+    Args:
+        token: The Expo push token to unregister
+    
+    Returns:
+        Dict with success status and message
+    """
+    token_id = token[:20]
+    
+    if token_id in push_tokens:
+        del push_tokens[token_id]
+        logging.info(f"Push token unregistered: {token_id}...")
+        return {"success": True, "message": "Token unregistered successfully"}
+    
+    return {"success": False, "message": "Token not found"}
+
+
+@app.get("/api/notifications/tokens/count")
+async def get_tokens_count():
+    """
+    Get count of registered push tokens (for admin/debugging)
+    
+    Returns:
+        Dict with count and list of token IDs
+    """
+    return {
+        "success": True,
+        "count": len(push_tokens),
+        "tokens": list(push_tokens.keys()),
+        "details": [
+            {
+                "token_id": token_id,
+                "device_type": data.get("device_type"),
+                "app_version": data.get("app_version"),
+                "registered_at": data.get("registered_at")
+            }
+            for token_id, data in push_tokens.items()
+        ]
+    }
+
+
+@app.post("/api/notifications/send/new-rewards")
+async def send_new_rewards_notification(count: Optional[int] = None):
+    """
+    Manually trigger new rewards notification to all registered devices
+    
+    Args:
+        count: Optional number of new rewards (for notification message)
+    
+    Returns:
+        Dict with notification send results
+    """
+    try:
+        if not push_tokens:
+            return {
+                "success": False,
+                "message": "No push tokens registered",
+                "sent": 0,
+                "failed": 0
+            }
+        
+        result = await notify_new_rewards(push_tokens, count)
+        
+        return {
+            "success": True,
+            "message": result.get("message", "Notifications sent"),
+            "sent": len(result.get("success", [])),
+            "failed": len(result.get("failed", [])),
+            "details": result
+        }
+    except Exception as e:
+        logging.error(f"Error sending notifications: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}",
+            "sent": 0,
+            "failed": 0
+        }
+
+
+@app.post("/api/notifications/send/custom")
+async def send_custom_notification(
+    title: str = Body(...),
+    body: str = Body(...),
+    data: Optional[Dict[str, Any]] = Body(None)
+):
+    """
+    Send custom push notification to all registered devices
+    
+    Args:
+        title: Notification title
+        body: Notification body
+        data: Optional data payload (e.g., {"screen": "Rewards"})
+    
+    Returns:
+        Dict with notification send results
+    """
+    try:
+        if not push_tokens:
+            return {
+                "success": False,
+                "message": "No push tokens registered",
+                "sent": 0,
+                "failed": 0
+            }
+        
+        tokens_list = [token_data["token"] for token_data in push_tokens.values()]
+        
+        result = await send_push_notification(
+            tokens=tokens_list,
+            title=title,
+            body=body,
+            data=data or {}
+        )
+        
+        return {
+            "success": True,
+            "message": f"Sent to {len(result['success'])}/{len(tokens_list)} devices",
+            "sent": len(result.get("success", [])),
+            "failed": len(result.get("failed", [])),
+            "details": result
+        }
+    except Exception as e:
+        logging.error(f"Error sending custom notification: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}",
+            "sent": 0,
+            "failed": 0
+        }
 
