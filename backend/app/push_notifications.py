@@ -18,16 +18,21 @@ def initialize_firebase():
     try:
         # Check if already initialized
         if not firebase_admin._apps:
-            # Path to service account key
-            cred_path = Path(__file__).parent.parent.parent / "firebase-adminsdk.json"
+            # Try Cloud Run secret mount path first
+            cred_path = Path("/app/firebase-adminsdk.json")
+            
+            # Fallback to local development path
+            if not cred_path.exists():
+                cred_path = Path(__file__).parent.parent.parent / "firebase-adminsdk.json"
             
             if not cred_path.exists():
                 logger.error(f"Firebase service account key not found at {cred_path}")
+                logger.error("Checked paths: /app/firebase-adminsdk.json and project root")
                 return False
             
             cred = credentials.Certificate(str(cred_path))
             firebase_admin.initialize_app(cred)
-            logger.info("Firebase Admin SDK initialized successfully")
+            logger.info(f"Firebase Admin SDK initialized successfully from {cred_path}")
         
         return True
     except Exception as e:
