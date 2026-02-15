@@ -19,7 +19,7 @@ gcloud run deploy smartlink-api \
 
 # Cleanup old images
 echo "Cleaning up old images..."
-KEEP_COUNT=1
+KEEP_COUNT=2
 REPOSITORY="us-central1-docker.pkg.dev/smart-link-updater/smartlink-repo/api"
 
 # Use --quiet to avoid interactive prompts and simplify parsing
@@ -36,13 +36,14 @@ echo "Keeping the latest $KEEP_COUNT image(s) and deleting the rest..."
 gcloud artifacts docker images list "$REPOSITORY" \
   --sort-by=~CREATE_TIME \
   --format="get(version)" \
-  --quiet \
-  | tail -n +$(($KEEP_COUNT + 1)) \
-  | while read -r digest; do
-      if [ -n "$digest" ]; then
-        echo "Deleting image: $digest"
-        gcloud artifacts docker images delete "$REPOSITORY@$digest" --quiet --delete-tags
-      fi
-    done
+  --quiet |
+  tail -n +$(($KEEP_COUNT + 1)) |
+  while read -r digest; do
+    if [ -n "$digest" ]; then
+      echo "Deleting image: $digest"
+      gcloud artifacts docker images delete "$REPOSITORY@$digest" --quiet --delete-tags
+    fi
+  done
 
 echo "Cleanup complete."
+

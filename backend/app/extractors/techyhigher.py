@@ -61,6 +61,12 @@ class TechyHigherExtractor(BaseExtractor):
             links.extend(date_links)
             print(f"[TechyHigherExtractor] Found {len(date_links)} links in date heading section")
 
+        # Strategy 3: Look for inline date patterns in anchor tags (e.g., "energy gifts links 15.2.2026")
+        inline_links = self._extract_from_inline_dates(soup, date_formats, date_iso)
+        if inline_links:
+            links.extend(inline_links)
+            print(f"[TechyHigherExtractor] Found {len(inline_links)} links with inline date patterns")
+
         # Remove duplicates based on URL
         seen_urls = set()
         unique_links = []
@@ -89,6 +95,9 @@ class TechyHigherExtractor(BaseExtractor):
             date_obj.strftime("%d %B %Y").lower().lstrip('0'),# "6 november 2025"
             date_obj.strftime("%d %b %Y").lower(),            # "06 nov 2025"
             date_obj.strftime("%d %B %Y").lower(),            # "06 november 2025"
+            date_obj.strftime("%d.%-m.%Y"),                   # "15.2.2026" (Unix)
+            date_obj.strftime("%d.%m.%Y"),                    # "15.02.2026"
+            date_obj.strftime("%-d.%-m.%Y"),                  # "15.2.2026" without leading zeros (Unix)
         ]
         
         # Remove duplicates while preserving order
@@ -169,6 +178,63 @@ class TechyHigherExtractor(BaseExtractor):
                     links.extend(section_links)
         
         return links
+
+    def _extract_from_inline_dates(self, soup: BeautifulSoup, date_formats: List[str], date_iso: str) -> List[Link]:
+        """
+        Extract links that have dates embedded in the anchor tag text.
+        Format: <p>2<a href="...">energy gifts links 15.2.2026</a></p>
+        """
+        links = []
+        
+        # Find all <p> tags containing <a> tags
+        for p_tag in soup.find_all('p'):
+            # Find all anchor tags in this paragraph
+            a_tags = p_tag.find_all('a', href=True)
+            
+            for a_tag in a_tags:
+                href = a_tag.get('href', '')
+                link_text = a_tag.get_text(strip=True)
+                
+                # Check if the link text contains any of our date formats
+                for date_fmt in date_formats:
+                    if date_fmt in link_text:
+                        # Validate it's a reward link
+                        if self._is_valid_reward_link(href):
+                            # Extract title from link text (remove date part if needed)
+                            title = self._clean_inline_date_title(link_text, date_fmt)
+                            
+                            links.append(Link(
+                                title=title,
+                                url=href,
+                                published_date_iso=date_iso
+                            ))
+                            print(f"[TechyHigherExtractor] Found inline date link: {title}")
+                            break  # Found matching date, move to next link
+        
+        return links
+
+    def _clean_inline_date_title(self, link_text: str, date_format: str) -> str:
+        """
+        Clean up link text that contains inline dates.
+        Removes the date portion and cleans up the title.
+        """
+        # Remove the date part
+        title = link_text.replace(date_format, '').strip()
+        
+        # Remove common prefixes/suffixes
+        title = re.sub(r'^[\d\.]+\s*', '', title)  # Remove leading numbers like "1." or "2"
+        title = re.sub(r'\s*links?\s*$', '', title, flags=re.IGNORECASE)  # Remove trailing "links" or "link"
+        title = title.strip('. ')
+        
+        # Capitalize if needed
+        if title and not title[0].isupper():
+            title = title.capitalize()
+        
+        # Fallback to generic title
+        if not title or len(title) < 3:
+            title = "Energy Gift Link"
+        
+        return title
 
     def _extract_links_after_heading(self, heading: BeautifulSoup, date_iso: str) -> List[Link]:
         """
