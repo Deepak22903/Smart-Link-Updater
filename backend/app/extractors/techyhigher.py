@@ -43,25 +43,34 @@ class TechyHigherExtractor(BaseExtractor):
         except ValueError:
             return links
 
-        # Create multiple date format variations for matching
-        date_formats = self._generate_date_formats(date_obj)
+        # Create multiple date format variations for matching (today and yesterday only)
+        date_formats_today = self._generate_date_formats(date_obj)
+        
+        # Calculate yesterday's date
+        from datetime import timedelta
+        yesterday_obj = date_obj - timedelta(days=1)
+        date_formats_yesterday = self._generate_date_formats(yesterday_obj)
+        
+        # Combine today and yesterday formats
+        date_formats = date_formats_today + date_formats_yesterday
         date_iso = date_obj.strftime("%Y-%m-%d")
         
-        print(f"[TechyHigherExtractor] Looking for date patterns: {', '.join(date_formats[:3])}...")
+        print(f"[TechyHigherExtractor] Looking for date patterns (today/yesterday): {', '.join(date_formats_today[:2])} and {', '.join(date_formats_yesterday[:2])}...")
 
-        # Strategy 1: Look for "Today" sections
-        today_links = self._extract_from_today_section(soup, date_formats, date_iso)
-        if today_links:
-            links.extend(today_links)
-            print(f"[TechyHigherExtractor] Found {len(today_links)} links in 'Today' section")
+        # Strategy 1: DISABLED - Don't use "Today" sections as they extract all links regardless of date
+        # today_links = self._extract_from_today_section(soup, date_formats, date_iso)
+        # if today_links:
+        #     links.extend(today_links)
+        #     print(f"[TechyHigherExtractor] Found {len(today_links)} links in 'Today' section")
 
-        # Strategy 2: Look for standalone date headings
-        date_links = self._extract_from_date_heading(soup, date_formats, date_iso)
-        if date_links:
-            links.extend(date_links)
-            print(f"[TechyHigherExtractor] Found {len(date_links)} links in date heading section")
+        # Strategy 2: DISABLED - Don't use standalone date headings as they extract all links regardless of date
+        # date_links = self._extract_from_date_heading(soup, date_formats, date_iso)
+        # if date_links:
+        #     links.extend(date_links)
+        #     print(f"[TechyHigherExtractor] Found {len(date_links)} links in date heading section")
 
         # Strategy 3: Look for inline date patterns in anchor tags (e.g., "energy gifts links 15.2.2026")
+        # This is the ONLY strategy used now - it validates the date in the link text itself
         inline_links = self._extract_from_inline_dates(soup, date_formats, date_iso)
         if inline_links:
             links.extend(inline_links)
@@ -183,6 +192,7 @@ class TechyHigherExtractor(BaseExtractor):
         """
         Extract links that have dates embedded in the anchor tag text.
         Format: <p>2<a href="...">energy gifts links 15.2.2026</a></p>
+        Only extracts links where the date matches today or yesterday.
         """
         links = []
         
@@ -195,7 +205,7 @@ class TechyHigherExtractor(BaseExtractor):
                 href = a_tag.get('href', '')
                 link_text = a_tag.get_text(strip=True)
                 
-                # Check if the link text contains any of our date formats
+                # Check if the link text contains any of our date formats (today or yesterday)
                 for date_fmt in date_formats:
                     if date_fmt in link_text:
                         # Validate it's a reward link
@@ -208,7 +218,7 @@ class TechyHigherExtractor(BaseExtractor):
                                 url=href,
                                 published_date_iso=date_iso
                             ))
-                            print(f"[TechyHigherExtractor] Found inline date link: {title}")
+                            print(f"[TechyHigherExtractor] Found inline date link (today/yesterday): {title} with date {date_fmt}")
                             break  # Found matching date, move to next link
         
         return links
