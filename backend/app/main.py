@@ -195,6 +195,8 @@ class PushTokenRequest(BaseModel):
     device_type: str  # 'ios' or 'android'
     app_version: Optional[str] = None
     token_type: Optional[str] = 'fcm'  # 'fcm' or 'expo' (default: fcm)
+    # New: indicate whether notifications are enabled on the device
+    notifications_enabled: Optional[bool] = True
 
 
 class PushTokenResponse(BaseModel):
@@ -2760,6 +2762,7 @@ async def register_push_token(request: PushTokenRequest):
             "device_type": request.device_type,
             "app_version": request.app_version,
             "token_type": request.token_type or "fcm",
+            "notifications_enabled": bool(request.notifications_enabled),
             "registered_at": datetime.utcnow().isoformat(),
             "last_updated": datetime.utcnow().isoformat()
         }
@@ -2798,6 +2801,23 @@ async def unregister_push_token(token: str):
         return {"success": True, "message": "Token unregistered successfully"}
     
     return {"success": False, "message": "Token not found"}
+
+@app.put("/api/notifications/{token}/enable")
+async def update_push_token_state(token: str, body: dict = Body(...)):
+    """Update notifications_enabled flag for a given token"""
+    try:
+        token_id = token[:20]
+        enabled = body.get('notifications_enabled')
+        if token_id not in push_tokens:
+            return {"success": False, "message": "Token not found"}
+        push_tokens[token_id]["notifications_enabled"] = bool(enabled)
+        push_tokens[token_id]["last_updated"] = datetime.utcnow().isoformat()
+        logging.info(f"Updated token {token_id} notifications_enabled={enabled}")
+        return {"success": True, "message": "Token state updated"}
+    except Exception as e:
+        logging.error(f"Error updating token state: {str(e)}")
+        return {"success": False, "message": f"Error: {str(e)}"}
+
 
 
 @app.get("/api/notifications/tokens/count")

@@ -221,11 +221,12 @@ async def notify_new_rewards(push_tokens_dict: dict, count: int = None) -> Dict[
     Returns:
         Dict with notification send results
     """
-    tokens_list = [data["token"] for data in push_tokens_dict.values()]
+    # Filter tokens to only those with notifications_enabled set to True (default True)
+    tokens_list = [data["token"] for data in push_tokens_dict.values() if data.get("notifications_enabled", True)]
     
     if not tokens_list:
-        logger.warning("No push tokens registered for notification")
-        return {"success": False, "message": "No tokens registered"}
+        logger.warning("No push tokens registered for notification or all tokens disabled")
+        return {"success": False, "message": "No tokens registered or notifications disabled"}
     
     title = "New Rewards Available! 🎁"
     body = f"{count} new rewards added!" if count else "Check out the latest rewards"
