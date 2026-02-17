@@ -2864,6 +2864,7 @@ async def get_tokens_count():
                 "token_id": token_id,
                 "device_type": data.get("device_type"),
                 "app_version": data.get("app_version"),
+                "notifications_enabled": data.get("notifications_enabled", True),
                 "registered_at": data.get("registered_at")
             }
             for token_id, data in push_tokens.items()
