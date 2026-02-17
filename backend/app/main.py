@@ -55,9 +55,6 @@ app.add_middleware(
 # In-memory storage for task status
 task_status: Dict[str, dict] = {}
 
-# In-memory storage for push tokens (TODO: Replace with MongoDB for persistence)
-push_tokens: Dict[str, dict] = {}
-
 
 # ==================== Helper Functions ====================
 
@@ -2772,14 +2769,10 @@ async def register_push_token(request: PushTokenRequest):
             from . import mongo_storage
             saved = mongo_storage.set_push_token(token_id, token_doc)
             if not saved:
-                logging.warning("Failed to persist push token to DB; falling back to in-memory storage")
-                push_tokens[token_id] = token_doc
-            else:
-                # keep in-memory cache in sync
-                push_tokens[token_id] = token_doc
+                logging.warning("Failed to persist push token to DB")
         except Exception as e:
             logging.error(f"Error saving push token to DB: {e}")
-            push_tokens[token_id] = token_doc
+            raise
 
         logging.info(f"Push token registered: {token_id}... ({request.device_type}, {request.token_type})")
 
@@ -2815,18 +2808,12 @@ async def unregister_push_token(token: str):
         removed = mongo_storage.delete_push_token(token_id)
         if removed:
             logging.info(f"Push token unregistered from DB: {token_id}...")
-            push_tokens.pop(token_id, None)
             return {"success": True, "message": "Token unregistered successfully"}
+        else:
+            return {"success": False, "message": "Token not found"}
     except Exception as e:
         logging.error(f"Error removing push token from DB: {e}")
-
-    # Fallback to in-memory
-    if token_id in push_tokens:
-        del push_tokens[token_id]
-        logging.info(f"Push token unregistered: {token_id}...")
-        return {"success": True, "message": "Token unregistered successfully"}
-
-    return {"success": False, "message": "Token not found"}
+        return {"success": False, "message": f"Error: {str(e)}"}
 
 @app.put("/api/notifications/{token}/enable")
 async def update_push_token_state(token: str, body: dict = Body(...)):
@@ -2835,13 +2822,7 @@ async def update_push_token_state(token: str, body: dict = Body(...)):
         import hashlib
         token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
         enabled = body.get('notifications_enabled')
-        if token_id not in push_tokens:
-            return {"success": False, "message": "Token not found"}
-        push_tokens[token_id]["notifications_enabled"] = bool(enabled)
-        push_tokens[token_id]["last_updated"] = datetime.utcnow().isoformat()
-        logging.info(f"Updated token {token_id} notifications_enabled={enabled}")
-        return {"success": True, "message": "Token state updated"}
-    except Exception as e:
+            except Exception as e:
         logging.error(f"Error updating token state: {str(e)}")
         return {"success": False, "message": f"Error: {str(e)}"}
 
@@ -2855,10 +2836,15 @@ async def get_tokens_count():
     Returns:
         Dict with count and list of token IDs
     """
+    try:
+        mongo_push = mongo_storage.list_push_tokens()
+    except Exception:
+        mongo_push = {}
+
     return {
         "success": True,
-        "count": len(push_tokens),
-        "tokens": list(push_tokens.keys()),
+        "count": len(mongo_push),
+        "tokens": list(mongo_push.keys()),
         "details": [
             {
                 "token_id": token_id,
@@ -2867,7 +2853,7 @@ async def get_tokens_count():
                 "notifications_enabled": data.get("notifications_enabled", True),
                 "registered_at": data.get("registered_at")
             }
-            for token_id, data in push_tokens.items()
+            for token_id, data in mongo_push.items()
         ]
     }
 
@@ -2892,9 +2878,8 @@ async def get_push_token(token: str):
         except Exception:
             pass
 
-        # Fallback to in-memory
-        if token_id in push_tokens:
-            return {"success": True, "token": push_tokens[token_id]}
+        if doc:
+            return {"success": True, "token": doc}
         return {"success": False, "message": "Token not found"}
     except Exception as e:
         logging.error(f"Error fetching push token: {e}")
@@ -2915,7 +2900,11 @@ async def send_new_rewards_notification(count: Optional[int] = None):
         Dict with notification send results
     """
     try:
-        if not push_tokens:
+        try:
+            mongo_push = mongo_storage.list_push_tokens()
+        except Exception:
+            mongo_push = {}
+        if not mongo_push:
             return {
                 "success": False,
                 "message": "No push tokens registered",
@@ -2923,7 +2912,7 @@ async def send_new_rewards_notification(count: Optional[int] = None):
                 "failed": 0
             }
         
-        result = await notify_new_rewards(push_tokens, count)
+        result = await notify_new_rewards(mongo_push, count)
         
         return {
             "success": True,
@@ -2960,7 +2949,11 @@ async def send_custom_notification(
         Dict with notification send results
     """
     try:
-        if not push_tokens:
+        try:
+            mongo_push = mongo_storage.list_push_tokens()
+        except Exception:
+            mongo_push = {}
+        if not mongo_push:
             return {
                 "success": False,
                 "message": "No push tokens registered",
@@ -2968,7 +2961,7 @@ async def send_custom_notification(
                 "failed": 0
             }
         
-        tokens_list = [token_data["token"] for token_data in push_tokens.values()]
+        tokens_list = [token_data["token"] for token_data in mongo_push.values()]
         
         result = await send_push_notification(
             tokens=tokens_list,
