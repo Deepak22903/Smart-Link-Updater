@@ -133,6 +133,12 @@ class MongoDBStorage:
             except Exception:
                 # Ignore if collection doesn't exist yet or index creation fails
                 pass
+            # Also index the full token field for faster lookups (unique)
+            try:
+                self._db.push_tokens.create_index("token", unique=True)
+            except Exception:
+                # Ignore if collection doesn't exist yet or index creation fails
+                pass
             
             print("Database indexes created successfully")
         except Exception as e:
