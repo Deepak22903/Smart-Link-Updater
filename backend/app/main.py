@@ -2822,11 +2822,19 @@ async def update_push_token_state(token: str, body: dict = Body(...)):
         import hashlib
         token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
         enabled = body.get('notifications_enabled')
-            except Exception as e:
-        logging.error(f"Error updating token state: {str(e)}")
+        try:
+            updated = mongo_storage.update_push_token_fields(token_id, {"notifications_enabled": bool(enabled)})
+            if updated:
+                logging.info(f"Updated token {token_id} notifications_enabled={enabled}")
+                return {"success": True, "message": "Token state updated"}
+            else:
+                return {"success": False, "message": "Token not found"}
+        except Exception as e:
+            logging.error(f"Error updating token state: {str(e)}")
+            return {"success": False, "message": f"Error: {str(e)}"}
+    except Exception as e:
+        logging.error(f"Error updating token state (outer): {str(e)}")
         return {"success": False, "message": f"Error: {str(e)}"}
-
-
 
 @app.get("/api/notifications/tokens/count")
 async def get_tokens_count():
