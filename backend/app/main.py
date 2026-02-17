@@ -2877,6 +2877,30 @@ async def update_push_token_state_alias(token: str, body: dict = Body(...)):
     # Delegate to existing enable endpoint logic
     return await update_push_token_state(token, body)
 
+@app.get("/api/notifications/{token}")
+async def get_push_token(token: str):
+    """Get stored push token document (server computes token_id via SHA256)"""
+    try:
+        import hashlib
+        token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        # Check DB first
+        try:
+            from . import mongo_storage
+            doc = mongo_storage.get_push_token(token_id)
+            if doc:
+                return {"success": True, "token": doc}
+        except Exception:
+            pass
+
+        # Fallback to in-memory
+        if token_id in push_tokens:
+            return {"success": True, "token": push_tokens[token_id]}
+        return {"success": False, "message": "Token not found"}
+    except Exception as e:
+        logging.error(f"Error fetching push token: {e}")
+        return {"success": False, "message": str(e)}
+
+
 
 
 @app.post("/api/notifications/send/new-rewards")
