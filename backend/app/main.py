@@ -2757,7 +2757,7 @@ async def register_push_token(request: PushTokenRequest):
         # Use first 20 chars of token as ID for storage
         token_id = request.token[:20]
         
-        push_tokens[token_id] = {
+        token_doc = {
             "token": request.token,
             "device_type": request.device_type,
             "app_version": request.app_version,
@@ -2766,9 +2766,22 @@ async def register_push_token(request: PushTokenRequest):
             "registered_at": datetime.utcnow().isoformat(),
             "last_updated": datetime.utcnow().isoformat()
         }
-        
+        # Persist to MongoDB
+        try:
+            from . import mongo_storage
+            saved = mongo_storage.set_push_token(token_id, token_doc)
+            if not saved:
+                logging.warning("Failed to persist push token to DB; falling back to in-memory storage")
+                push_tokens[token_id] = token_doc
+            else:
+                # keep in-memory cache in sync
+                push_tokens[token_id] = token_doc
+        except Exception as e:
+            logging.error(f"Error saving push token to DB: {e}")
+            push_tokens[token_id] = token_doc
+
         logging.info(f"Push token registered: {token_id}... ({request.device_type}, {request.token_type})")
-        
+
         return PushTokenResponse(
             success=True,
             message="Push token registered successfully",
@@ -2794,12 +2807,23 @@ async def unregister_push_token(token: str):
         Dict with success status and message
     """
     token_id = token[:20]
-    
+    # Remove from DB if present
+    try:
+        from . import mongo_storage
+        removed = mongo_storage.delete_push_token(token_id)
+        if removed:
+            logging.info(f"Push token unregistered from DB: {token_id}...")
+            push_tokens.pop(token_id, None)
+            return {"success": True, "message": "Token unregistered successfully"}
+    except Exception as e:
+        logging.error(f"Error removing push token from DB: {e}")
+
+    # Fallback to in-memory
     if token_id in push_tokens:
         del push_tokens[token_id]
         logging.info(f"Push token unregistered: {token_id}...")
         return {"success": True, "message": "Token unregistered successfully"}
-    
+
     return {"success": False, "message": "Token not found"}
 
 @app.put("/api/notifications/{token}/enable")
@@ -2842,6 +2866,13 @@ async def get_tokens_count():
             for token_id, data in push_tokens.items()
         ]
     }
+
+@app.put("/api/notifications/{token}")
+async def update_push_token_state_alias(token: str, body: dict = Body(...)):
+    """Alias endpoint: update notifications_enabled via PUT /api/notifications/{token} """
+    # Delegate to existing enable endpoint logic
+    return await update_push_token_state(token, body)
+
 
 
 @app.post("/api/notifications/send/new-rewards")
