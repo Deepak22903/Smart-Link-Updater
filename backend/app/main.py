@@ -2755,7 +2755,8 @@ async def register_push_token(request: PushTokenRequest):
     """
     try:
         # Use first 20 chars of token as ID for storage
-        token_id = request.token[:20]
+        import hashlib
+        token_id = hashlib.sha256(request.token.encode('utf-8')).hexdigest()
         
         token_doc = {
             "token": request.token,
@@ -2806,7 +2807,8 @@ async def unregister_push_token(token: str):
     Returns:
         Dict with success status and message
     """
-    token_id = token[:20]
+    import hashlib
+    token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
     # Remove from DB if present
     try:
         from . import mongo_storage
@@ -2830,7 +2832,8 @@ async def unregister_push_token(token: str):
 async def update_push_token_state(token: str, body: dict = Body(...)):
     """Update notifications_enabled flag for a given token"""
     try:
-        token_id = token[:20]
+        import hashlib
+        token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
         enabled = body.get('notifications_enabled')
         if token_id not in push_tokens:
             return {"success": False, "message": "Token not found"}
