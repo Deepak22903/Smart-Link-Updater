@@ -708,3 +708,74 @@ def get_database():
 def close_connection():
     """Close MongoDB connection"""
     _get_storage().close()
+
+
+# ==================== Push Token Operations ====================
+
+def set_push_token(token_id: str, token_data: Dict[str, Any]) -> bool:
+    """Save or update a push token document"""
+    try:
+        db = _get_storage().db
+        doc = token_data.copy()
+        doc["token_id"] = token_id
+        doc["updated_at"] = datetime.utcnow().isoformat()
+        if not db.push_tokens.find_one({"token_id": token_id}):
+            doc["created_at"] = datetime.utcnow().isoformat()
+        db.push_tokens.update_one({"token_id": token_id}, {"$set": doc}, upsert=True)
+        return True
+    except Exception as e:
+        logging.error(f"Failed to set push token in DB: {e}")
+        return False
+
+
+def get_push_token(token_id: str) -> Optional[Dict[str, Any]]:
+    """Get a push token document by token_id"""
+    try:
+        db = _get_storage().db
+        doc = db.push_tokens.find_one({"token_id": token_id})
+        if doc:
+            doc.pop("_id", None)
+        return doc
+    except Exception as e:
+        logging.error(f"Failed to get push token from DB: {e}")
+        return None
+
+
+def delete_push_token(token_id: str) -> bool:
+    """Delete a push token document by token_id"""
+    try:
+        db = _get_storage().db
+        res = db.push_tokens.delete_one({"token_id": token_id})
+        return res.deleted_count > 0
+    except Exception as e:
+        logging.error(f"Failed to delete push token from DB: {e}")
+        return False
+
+
+def list_push_tokens() -> Dict[str, Dict[str, Any]]:
+    """Return all push tokens as a dict token_id -> data"""
+    try:
+        db = _get_storage().db
+        docs = db.push_tokens.find({})
+        result = {}
+        for d in docs:
+            tid = d.get("token_id")
+            if tid:
+                d.pop("_id", None)
+                result[tid] = d
+        return result
+    except Exception as e:
+        logging.error(f"Failed to list push tokens from DB: {e}")
+        return {}
+
+
+def update_push_token_fields(token_id: str, fields: Dict[str, Any]) -> bool:
+    """Update specific fields for a push token"""
+    try:
+        db = _get_storage().db
+        fields["last_updated"] = datetime.utcnow().isoformat()
+        res = db.push_tokens.update_one({"token_id": token_id}, {"$set": fields})
+        return res.modified_count > 0
+    except Exception as e:
+        logging.error(f"Failed to update push token fields: {e}")
+        return False
