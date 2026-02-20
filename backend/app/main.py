@@ -56,6 +56,13 @@ app.add_middleware(
 # In-memory storage for task status
 task_status: Dict[str, dict] = {}
 
+# Mapping of post_id -> app_id for push notifications.
+# When new links are added for a post, only devices registered with the matching
+# app_id will receive a notification. Add new games here as new apps are developed.
+POST_NOTIFICATION_APP_MAP: Dict[int, str] = {
+    206: "travel_town",  # Travel Town rewards app
+}
+
 
 # ==================== Helper Functions ====================
 
@@ -140,6 +147,9 @@ class PostConfig(BaseModel):
     promo_code_section_title: Optional[str] = (
         None  # NEW: Custom title for promo codes section (default: "Promo Codes for {date}")
     )
+    send_notifications: Optional[bool] = (
+        False  # When True, sends push notification to the mapped app when new links are added
+    )
 
 
 class UpdateJob(BaseModel):
@@ -182,6 +192,7 @@ class PostConfigUpdate(BaseModel):
     auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
     extraction_mode: Optional[str] = None  # What to extract: "links", "promo_codes", "both"
     promo_code_section_title: Optional[str] = None  # Custom title for promo codes section
+    send_notifications: Optional[bool] = None  # Toggle push notifications when new links are added
 
 
 @app.get("/health")
@@ -299,6 +310,9 @@ async def configure_post(config: PostConfig = Body(...)):
     if config.promo_code_section_title:
         post_config["promo_code_section_title"] = config.promo_code_section_title
     
+    # Add send_notifications flag (controls push notifications on new link updates)
+    post_config["send_notifications"] = config.send_notifications if config.send_notifications is not None else False
+    
     # Save to MongoDB
     save_result = mongo_storage.set_post_config(post_config)
     if not save_result:
@@ -339,6 +353,7 @@ async def configure_post(config: PostConfig = Body(...)):
         response["extraction_mode"] = config.extraction_mode
     if config.promo_code_section_title:
         response["promo_code_section_title"] = config.promo_code_section_title
+    response["send_notifications"] = config.send_notifications if config.send_notifications is not None else False
 
     if config.wp_site:
         response["wp_site"] = {
@@ -805,6 +820,10 @@ async def add_manual_links(request: ManualLinkRequest):
             "duplicates": len(manual_links),
             "sites_updated": 0,
         }
+
+    # Send push notification if enabled for this post and new links were added
+    if total_links_added > 0 and config.get("send_notifications"):
+        await _notify_rewards_update(request.post_id, total_links_added)
 
     # Build success message
     if sites_updated_count > 1:
@@ -1550,6 +1569,39 @@ async def update_post_now(
     )
 
 
+async def _notify_rewards_update(post_id: int, links_added: int) -> None:
+    """
+    Send a push notification when new links are added for a post.
+
+    Uses POST_NOTIFICATION_APP_MAP to look up which app_id (game) owns this post,
+    then filters push tokens to only those registered with that app_id.
+    This ensures e.g. a Piggy Go post only notifies Piggy Go app users.
+    """
+    app_id = POST_NOTIFICATION_APP_MAP.get(post_id)
+    if not app_id:
+        logging.info(f"[NOTIFY] No app_id mapping for post {post_id} in POST_NOTIFICATION_APP_MAP, skipping notification")
+        return
+
+    try:
+        all_tokens = mongo_storage.list_push_tokens()  # Dict[token_id, data]
+        # Filter to tokens belonging to this specific app
+        app_tokens = {
+            tid: data for tid, data in all_tokens.items()
+            if data.get("app_id") == app_id
+        }
+
+        if not app_tokens:
+            logging.info(f"[NOTIFY] No tokens registered for app_id='{app_id}' (post {post_id}), skipping")
+            return
+
+        result = await notify_new_rewards(app_tokens, count=links_added)
+        sent = len(result.get("success", []))
+        failed = len(result.get("failed", []))
+        logging.info(f"[NOTIFY] Post {post_id} (app='{app_id}'): Notified {sent}/{sent + failed} devices, {links_added} new links")
+    except Exception as e:
+        logging.error(f"[NOTIFY] Failed to send notification for post {post_id}: {e}")
+
+
 async def run_update_sync(
     post_id: int,
     source_urls: List[str],
@@ -1682,6 +1734,10 @@ async def run_update_sync(
                     target_post_id, date_iso, fps, target_site_key
                 )
                 logging.info(f"[SYNC UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
+
+        # Send push notification if enabled for this post and new links were added
+        if config and config.get("send_notifications") and wp_result["links_added"] > 0:
+            await _notify_rewards_update(post_id, wp_result["links_added"])
 
         # Build response message
         message_parts = []
@@ -2235,6 +2291,10 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             status = UpdateStatus.NO_CHANGES
             message = "No links found"
 
+        # Send push notification if enabled for this post and new links were added
+        if config.get("send_notifications") and total_links_added > 0:
+            await _notify_rewards_update(post_id, total_links_added)
+
         # Success or No Changes
         await manager.update_post_state(
             request_id,
@@ -2724,6 +2784,7 @@ class PushTokenRequest(BaseModel):
     app_version: str = ""
     token_type: str = "fcm"
     notifications_enabled: bool = True
+    app_id: str = "travel_town"  # Identifies which game app this token belongs to
 
 class UpdateTokenStateRequest(BaseModel):
     notifications_enabled: bool
@@ -2745,6 +2806,7 @@ async def register_push_token(req: PushTokenRequest):
             "app_version": req.app_version,
             "token_type": req.token_type,
             "notifications_enabled": req.notifications_enabled,
+            "app_id": req.app_id,
             "registered_at": datetime.utcnow().isoformat(),
         }
         mongo_storage.set_push_token(token_id, token_data)
@@ -2803,17 +2865,14 @@ async def send_new_rewards_notification(req: SendRewardsNotificationRequest):
     """Send a push notification to all enabled devices."""
     try:
         all_tokens = mongo_storage.list_push_tokens()
-        enabled_tokens = [
-            t["token"] for t in all_tokens
-            if t.get("notifications_enabled", True) and t.get("token")
-        ]
-        if not enabled_tokens:
-            return {"success": True, "message": "No enabled tokens", "sent": 0, "failed": 0}
+        if not all_tokens:
+            return {"success": True, "message": "No tokens registered", "sent": 0, "failed": 0}
 
-        result = notify_new_rewards(enabled_tokens, req.title, req.body, req.data)
-        sent = sum(1 for r in result if r) if isinstance(result, list) else 0
-        failed = len(enabled_tokens) - sent
-        return {"success": True, "message": "Notifications sent", "sent": sent, "failed": failed}
+        # Pass full tokens dict; notify_new_rewards filters by notifications_enabled internally
+        result = await notify_new_rewards(all_tokens, title=req.title, body=req.body)
+        sent = len(result.get("success", []))
+        failed = len(result.get("failed", []))
+        return {"success": True, "message": f"Sent to {sent}/{sent + failed} devices", "sent": sent, "failed": failed}
     except Exception as e:
         logging.error(f"Error sending new-rewards notification: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2823,20 +2882,22 @@ async def send_new_rewards_notification(req: SendRewardsNotificationRequest):
 async def get_token_count():
     """Return total registered tokens and how many have notifications enabled."""
     try:
-        all_tokens = mongo_storage.list_push_tokens()
-        enabled = [t for t in all_tokens if t.get("notifications_enabled", True)]
+        all_tokens = mongo_storage.list_push_tokens()  # returns Dict[token_id, data]
+        token_list = list(all_tokens.values())
+        enabled = [t for t in token_list if t.get("notifications_enabled", True)]
         return {
-            "count": len(all_tokens),
+            "count": len(token_list),
             "enabled": len(enabled),
-            "tokens": [t.get("token_id", "") for t in all_tokens],
+            "tokens": [t.get("token_id", "") for t in token_list],
             "details": [
                 {
                     "token_id": t.get("token_id", ""),
                     "device_type": t.get("device_type", ""),
+                    "app_id": t.get("app_id", ""),
                     "notifications_enabled": t.get("notifications_enabled", True),
                     "registered_at": t.get("registered_at", ""),
                 }
-                for t in all_tokens
+                for t in token_list
             ],
         }
     except Exception as e:

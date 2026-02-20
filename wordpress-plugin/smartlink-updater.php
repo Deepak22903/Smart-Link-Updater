@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://consulting-corpus-pumps-council.trycloudflare.com';
+    private $api_base_url = 'https://ipaq-joan-rangers-americans.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -2790,6 +2790,9 @@ class SmartLinkUpdater {
                 $('#custom-button-title').val('');
                 $('#custom-button-title-container').hide();
                 
+                // Reset push notification toggle
+                $('#send-notifications').prop('checked', false);
+                
                 // Reset to single URL
                 $('#source-urls-container').html(`
                     <div class="source-url-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
@@ -2886,6 +2889,9 @@ class SmartLinkUpdater {
                         $('#custom-button-title').val(customButtonTitle);
                         // Show/hide custom title input based on toggle
                         $('#custom-button-title-container').toggle(useCustomButtonTitle);
+                        
+                        // Load push notification configuration
+                        $('#send-notifications').prop('checked', postConfig.send_notifications || false);
                         
                         // Load button numbering configuration
                         const buttonNumbering = postConfig.button_numbering || 'auto';
@@ -2999,6 +3005,7 @@ class SmartLinkUpdater {
                 const extractionMode = $('#config-extraction-mode').val() || 'links';
                 const promoSectionTitle = $('#config-promo-section-title').val().trim();
                 const buttonNumbering = $('#config-button-numbering').val() || 'auto';
+                const sendNotifications = $('#send-notifications').is(':checked');
                 
                 // Build configuration object
                 const configData = {
@@ -3038,6 +3045,9 @@ class SmartLinkUpdater {
                 if ((extractionMode === 'promo_codes' || extractionMode === 'both') && promoSectionTitle) {
                     configData.promo_code_section_title = promoSectionTitle;
                 }
+                
+                // Add push notification toggle
+                configData.send_notifications = sendNotifications;
                 
                 // Add button numbering configuration
                 if (buttonNumbering && buttonNumbering !== 'auto') {
@@ -4645,6 +4655,28 @@ class SmartLinkUpdater {
                                     <strong>Never:</strong> No numbering, uses titles as-is
                                 </p>
                             </div>
+
+                            <!-- Push Notifications -->
+                            <div style="margin-bottom: 20px; border: 2px solid #e0e0e0; border-radius: 10px; padding: 20px; background: #f9f9f9;">
+                                <label style="display: block; margin-bottom: 12px; font-weight: 600; color: #333; font-size: 16px;">
+                                    <span class="dashicons dashicons-bell" style="font-size: 18px; vertical-align: middle; color: #9b59b6;"></span>
+                                    Push Notifications
+                                </label>
+                                <p style="margin: 0 0 15px 0; color: #666; font-size: 13px;">
+                                    <span class="dashicons dashicons-info" style="color: #2271b1;"></span>
+                                    When enabled, sends a push notification to the associated mobile app when new links are added for this post.
+                                </p>
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <label class="switch" style="position: relative; display: inline-block; width: 60px; height: 28px;">
+                                        <input type="checkbox" id="send-notifications" style="opacity: 0; width: 0; height: 0;">
+                                        <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 28px;"></span>
+                                    </label>
+                                    <label for="send-notifications" style="cursor: pointer; font-weight: 500; color: #333;">
+                                        Send Notifications to App
+                                    </label>
+                                </div>
+                            </div>
+
                         </form>
                     </div>
                     <div class="smartlink-modal-footer">

@@ -210,26 +210,34 @@ async def send_multicast_notification(
         return {"success": [], "failed": [], "error": str(e)}
 
 
-async def notify_new_rewards(push_tokens_dict: dict, count: int = None) -> Dict[str, Any]:
+async def notify_new_rewards(
+    push_tokens_dict: dict,
+    count: int = None,
+    title: str = None,
+    body: str = None,
+) -> Dict[str, Any]:
     """
-    Send notification about new rewards to all registered devices
-    
+    Send notification about new rewards to all registered devices.
+
     Args:
-        push_tokens_dict: Dictionary of registered push tokens
-        count: Optional number of new rewards
-    
+        push_tokens_dict: Dictionary of registered push tokens (token_id -> data).
+                          Tokens with notifications_enabled=False are filtered out automatically.
+        count: Optional number of new rewards (used in default body text)
+        title: Optional notification title override (falls back to default)
+        body: Optional notification body override (falls back to default)
+
     Returns:
         Dict with notification send results
     """
     # Filter tokens to only those with notifications_enabled set to True (default True)
     tokens_list = [data["token"] for data in push_tokens_dict.values() if data.get("notifications_enabled", True)]
-    
+
     if not tokens_list:
         logger.warning("No push tokens registered for notification or all tokens disabled")
-        return {"success": False, "message": "No tokens registered or notifications disabled"}
-    
-    title = "New Rewards Available! 🎁"
-    body = f"{count} new rewards added!" if count else "Check out the latest rewards"
+        return {"success": [], "failed": [], "message": "No tokens registered or notifications disabled"}
+
+    title = title or "New Rewards Available! 🎁"
+    body = body or (f"{count} new rewards added!" if count else "Check out the latest rewards")
     
     logger.info(f"Sending FCM notification to {len(tokens_list)} devices")
     
