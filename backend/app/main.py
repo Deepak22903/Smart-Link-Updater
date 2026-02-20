@@ -28,11 +28,12 @@ from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
 from .analytics import get_analytics_engine
-from .push_notifications import notify_new_rewards, send_push_notification
 from tenacity import RetryError
 import httpx
+import hashlib
 from datetime import datetime, timedelta
 import pytz
+from .push_notifications import send_push_notification, send_multicast_notification, initialize_firebase, notify_new_rewards
 
 app = FastAPI(title="SmartLinkUpdater API")
 
@@ -181,29 +182,6 @@ class PostConfigUpdate(BaseModel):
     auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
     extraction_mode: Optional[str] = None  # What to extract: "links", "promo_codes", "both"
     promo_code_section_title: Optional[str] = None  # Custom title for promo codes section
-
-
-# ==================== Push Notification Models ====================
-
-
-class PushTokenRequest(BaseModel):
-    """Request model for registering push notification token"""
-    token: str
-    device_type: str  # 'ios' or 'android'
-    app_version: Optional[str] = None
-    token_type: Optional[str] = 'fcm'  # 'fcm' or 'expo' (default: fcm)
-    # New: indicate whether notifications are enabled on the device
-    notifications_enabled: Optional[bool] = True
-
-
-class PushTokenResponse(BaseModel):
-    """Response model for push token operations"""
-    success: bool
-    message: str
-    token_id: Optional[str] = None
-
-
-# ==================== API Endpoints ====================
 
 
 @app.get("/health")
@@ -2736,261 +2714,133 @@ def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[D
     return sections
 
 
-# ==================== Push Notification Endpoints ====================
+# ---------------------------------------------------------------------------
+# Push Notification Endpoints
+# ---------------------------------------------------------------------------
+
+class PushTokenRequest(BaseModel):
+    token: str
+    device_type: str  # "android" or "ios"
+    app_version: str = ""
+    token_type: str = "fcm"
+    notifications_enabled: bool = True
+
+class UpdateTokenStateRequest(BaseModel):
+    notifications_enabled: bool
+
+class SendRewardsNotificationRequest(BaseModel):
+    title: str = "New Rewards Available!"
+    body: str = "Tap to see today's latest rewards."
+    data: dict = {}
 
 
-@app.post("/api/notifications/register", response_model=PushTokenResponse)
-async def register_push_token(request: PushTokenRequest):
-    """
-    Register or update a device's push notification token (FCM or Expo)
-    
-    Args:
-        request: PushTokenRequest with token, device_type, token_type, and optional app_version
-    
-    Returns:
-        PushTokenResponse with success status and token_id
-    """
+@app.post("/api/notifications/register")
+async def register_push_token(req: PushTokenRequest):
+    """Register or update a device push token."""
     try:
-        # Use first 20 chars of token as ID for storage
-        import hashlib
-        token_id = hashlib.sha256(request.token.encode('utf-8')).hexdigest()
-        
-        token_doc = {
-            "token": request.token,
-            "device_type": request.device_type,
-            "app_version": request.app_version,
-            "token_type": request.token_type or "fcm",
-            "notifications_enabled": bool(request.notifications_enabled),
+        token_id = hashlib.sha256(req.token.encode()).hexdigest()
+        token_data = {
+            "token": req.token,
+            "device_type": req.device_type,
+            "app_version": req.app_version,
+            "token_type": req.token_type,
+            "notifications_enabled": req.notifications_enabled,
             "registered_at": datetime.utcnow().isoformat(),
-            "last_updated": datetime.utcnow().isoformat()
         }
-        # Persist to MongoDB
-        try:
-            from . import mongo_storage
-            saved = mongo_storage.set_push_token(token_id, token_doc)
-            if not saved:
-                logging.warning("Failed to persist push token to DB")
-        except Exception as e:
-            logging.error(f"Error saving push token to DB: {e}")
-            raise
-
-        logging.info(f"Push token registered: {token_id}... ({request.device_type}, {request.token_type})")
-
-        return PushTokenResponse(
-            success=True,
-            message="Push token registered successfully",
-            token_id=token_id
-        )
+        mongo_storage.set_push_token(token_id, token_data)
+        return {"success": True, "message": "Token registered", "token_id": token_id}
     except Exception as e:
-        logging.error(f"Error registering push token: {str(e)}")
-        return PushTokenResponse(
-            success=False,
-            message=f"Failed to register token: {str(e)}"
-        )
+        logging.error(f"Error registering push token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/notifications/unregister/{token}")
 async def unregister_push_token(token: str):
-    """
-    Unregister a device's push notification token
-    
-    Args:
-        token: The Expo push token to unregister
-    
-    Returns:
-        Dict with success status and message
-    """
-    import hashlib
-    token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
-    # Remove from DB if present
+    """Remove a device push token."""
     try:
-        from . import mongo_storage
-        removed = mongo_storage.delete_push_token(token_id)
-        if removed:
-            logging.info(f"Push token unregistered from DB: {token_id}...")
-            return {"success": True, "message": "Token unregistered successfully"}
-        else:
-            return {"success": False, "message": "Token not found"}
+        token_id = hashlib.sha256(token.encode()).hexdigest()
+        deleted = mongo_storage.delete_push_token(token_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Token not found")
+        return {"success": True, "message": "Token unregistered"}
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error removing push token from DB: {e}")
-        return {"success": False, "message": f"Error: {str(e)}"}
+        logging.error(f"Error unregistering push token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.put("/api/notifications/{token}/enable")
-async def update_push_token_state(token: str, body: dict = Body(...)):
-    """Update notifications_enabled flag for a given token"""
+async def update_token_state(token: str, req: UpdateTokenStateRequest):
+    """Enable or disable notifications for a device token."""
     try:
-        import hashlib
-        token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
-        enabled = body.get('notifications_enabled')
-        try:
-            updated = mongo_storage.update_push_token_fields(token_id, {"notifications_enabled": bool(enabled)})
-            if updated:
-                logging.info(f"Updated token {token_id} notifications_enabled={enabled}")
-                return {"success": True, "message": "Token state updated"}
-            else:
-                return {"success": False, "message": "Token not found"}
-        except Exception as e:
-            logging.error(f"Error updating token state: {str(e)}")
-            return {"success": False, "message": f"Error: {str(e)}"}
-    except Exception as e:
-        logging.error(f"Error updating token state (outer): {str(e)}")
-        return {"success": False, "message": f"Error: {str(e)}"}
-
-@app.get("/api/notifications/tokens/count")
-async def get_tokens_count():
-    """
-    Get count of registered push tokens (for admin/debugging)
-    
-    Returns:
-        Dict with count and list of token IDs
-    """
-    try:
-        mongo_push = mongo_storage.list_push_tokens()
-    except Exception:
-        mongo_push = {}
-
-    return {
-        "success": True,
-        "count": len(mongo_push),
-        "tokens": list(mongo_push.keys()),
-        "details": [
+        token_id = hashlib.sha256(token.encode()).hexdigest()
+        db = mongo_storage._get_storage().db
+        result = db["push_tokens"].update_one(
+            {"token_id": token_id},
             {
-                "token_id": token_id,
-                "device_type": data.get("device_type"),
-                "app_version": data.get("app_version"),
-                "notifications_enabled": data.get("notifications_enabled", True),
-                "registered_at": data.get("registered_at")
-            }
-            for token_id, data in mongo_push.items()
-        ]
-    }
-
-@app.put("/api/notifications/{token}")
-async def update_push_token_state_alias(token: str, body: dict = Body(...)):
-    """Alias endpoint: update notifications_enabled via PUT /api/notifications/{token} """
-    # Delegate to existing enable endpoint logic
-    return await update_push_token_state(token, body)
-
-@app.get("/api/notifications/{token}")
-async def get_push_token(token: str):
-    """Get stored push token document (server computes token_id via SHA256)"""
-    try:
-        import hashlib
-        token_id = hashlib.sha256(token.encode('utf-8')).hexdigest()
-        # Check DB first
-        try:
-            from . import mongo_storage
-            doc = mongo_storage.get_push_token(token_id)
-            if doc:
-                return {"success": True, "token": doc}
-        except Exception:
-            pass
-
-        if doc:
-            return {"success": True, "token": doc}
-        return {"success": False, "message": "Token not found"}
+                "$set": {
+                    "notifications_enabled": req.notifications_enabled,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "$setOnInsert": {
+                    "token": token,
+                    "token_id": token_id,
+                    "registered_at": datetime.utcnow().isoformat(),
+                },
+            },
+            upsert=True,
+        )
+        action = "enabled" if req.notifications_enabled else "disabled"
+        return {"success": True, "message": f"Notifications {action}"}
     except Exception as e:
-        logging.error(f"Error fetching push token: {e}")
-        return {"success": False, "message": str(e)}
-
-
+        logging.error(f"Error updating token state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/notifications/send/new-rewards")
-async def send_new_rewards_notification(count: Optional[int] = None):
-    """
-    Manually trigger new rewards notification to all registered devices
-    
-    Args:
-        count: Optional number of new rewards (for notification message)
-    
-    Returns:
-        Dict with notification send results
-    """
+async def send_new_rewards_notification(req: SendRewardsNotificationRequest):
+    """Send a push notification to all enabled devices."""
     try:
-        try:
-            mongo_push = mongo_storage.list_push_tokens()
-        except Exception:
-            mongo_push = {}
-        if not mongo_push:
-            return {
-                "success": False,
-                "message": "No push tokens registered",
-                "sent": 0,
-                "failed": 0
-            }
-        
-        result = await notify_new_rewards(mongo_push, count)
-        
-        return {
-            "success": True,
-            "message": result.get("message", "Notifications sent"),
-            "sent": len(result.get("success", [])),
-            "failed": len(result.get("failed", [])),
-            "details": result
-        }
+        all_tokens = mongo_storage.list_push_tokens()
+        enabled_tokens = [
+            t["token"] for t in all_tokens
+            if t.get("notifications_enabled", True) and t.get("token")
+        ]
+        if not enabled_tokens:
+            return {"success": True, "message": "No enabled tokens", "sent": 0, "failed": 0}
+
+        result = notify_new_rewards(enabled_tokens, req.title, req.body, req.data)
+        sent = sum(1 for r in result if r) if isinstance(result, list) else 0
+        failed = len(enabled_tokens) - sent
+        return {"success": True, "message": "Notifications sent", "sent": sent, "failed": failed}
     except Exception as e:
-        logging.error(f"Error sending notifications: {str(e)}")
-        return {
-            "success": False,
-            "message": f"Error: {str(e)}",
-            "sent": 0,
-            "failed": 0
-        }
+        logging.error(f"Error sending new-rewards notification: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/notifications/send/custom")
-async def send_custom_notification(
-    title: str = Body(...),
-    body: str = Body(...),
-    data: Optional[Dict[str, Any]] = Body(None)
-):
-    """
-    Send custom push notification to all registered devices
-    
-    Args:
-        title: Notification title
-        body: Notification body
-        data: Optional data payload (e.g., {"screen": "Rewards"})
-    
-    Returns:
-        Dict with notification send results
-    """
+@app.get("/api/notifications/tokens/count")
+async def get_token_count():
+    """Return total registered tokens and how many have notifications enabled."""
     try:
-        try:
-            mongo_push = mongo_storage.list_push_tokens()
-        except Exception:
-            mongo_push = {}
-        if not mongo_push:
-            return {
-                "success": False,
-                "message": "No push tokens registered",
-                "sent": 0,
-                "failed": 0
-            }
-        
-        tokens_list = [token_data["token"] for token_data in mongo_push.values()]
-        
-        result = await send_push_notification(
-            tokens=tokens_list,
-            title=title,
-            body=body,
-            data=data or {}
-        )
-        
+        all_tokens = mongo_storage.list_push_tokens()
+        enabled = [t for t in all_tokens if t.get("notifications_enabled", True)]
         return {
-            "success": True,
-            "message": f"Sent to {len(result['success'])}/{len(tokens_list)} devices",
-            "sent": len(result.get("success", [])),
-            "failed": len(result.get("failed", [])),
-            "details": result
+            "count": len(all_tokens),
+            "enabled": len(enabled),
+            "tokens": [t.get("token_id", "") for t in all_tokens],
+            "details": [
+                {
+                    "token_id": t.get("token_id", ""),
+                    "device_type": t.get("device_type", ""),
+                    "notifications_enabled": t.get("notifications_enabled", True),
+                    "registered_at": t.get("registered_at", ""),
+                }
+                for t in all_tokens
+            ],
         }
     except Exception as e:
-        logging.error(f"Error sending custom notification: {str(e)}")
-        return {
-            "success": False,
-            "message": f"Error: {str(e)}",
-            "sent": 0,
-            "failed": 0
-        }
+        logging.error(f"Error getting token count: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

@@ -4,7 +4,7 @@ Handles sending push notifications to registered devices via Firebase FCM
 """
 
 import firebase_admin
-from firebase_admin import credentials, messaging
+from firebase_admin import credentials, messaging, exceptions as fb_exceptions
 from typing import List, Dict, Any
 import logging
 import os
@@ -113,7 +113,7 @@ async def send_push_notification(
             })
             logger.warning(f"Token unregistered: {token[:20]}...")
             
-        except messaging.InvalidArgumentError as e:
+        except fb_exceptions.InvalidArgumentError as e:
             error_msg = f"Invalid argument: {str(e)}"
             results["failed"].append({
                 "token": token[:20] + "...",
