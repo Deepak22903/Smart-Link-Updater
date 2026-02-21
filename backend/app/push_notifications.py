@@ -7,6 +7,7 @@ import firebase_admin
 from firebase_admin import credentials, messaging, exceptions as fb_exceptions
 from typing import List, Dict, Any
 import logging
+import hashlib
 import os
 from pathlib import Path
 
@@ -38,6 +39,23 @@ def initialize_firebase():
     except Exception as e:
         logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
         return False
+
+
+def _cleanup_stale_token(raw_token: str) -> None:
+    """
+    Delete a stale/unregistered FCM token from MongoDB.
+    Called automatically when FCM reports a token as unregistered.
+    """
+    try:
+        from . import mongo_storage  # lazy import to avoid circular dependency
+        token_id = hashlib.sha256(raw_token.encode()).hexdigest()
+        deleted = mongo_storage.delete_push_token(token_id)
+        if deleted:
+            logger.info(f"[CLEANUP] Removed stale token {token_id[:16]}... from DB")
+        else:
+            logger.warning(f"[CLEANUP] Stale token {token_id[:16]}... not found in DB")
+    except Exception as e:
+        logger.error(f"[CLEANUP] Failed to remove stale token: {e}")
 
 
 async def send_push_notification(
@@ -111,7 +129,8 @@ async def send_push_notification(
                 "token": token[:20] + "...",
                 "error": error_msg
             })
-            logger.warning(f"Token unregistered: {token[:20]}...")
+            logger.warning(f"Token unregistered: {token[:20]}... — removing from DB")
+            _cleanup_stale_token(token)
             
         except fb_exceptions.InvalidArgumentError as e:
             error_msg = f"Invalid argument: {str(e)}"
@@ -186,8 +205,8 @@ async def send_multicast_notification(
     )
     
     try:
-        # Send to all tokens at once
-        response = messaging.send_multicast(message)
+        # send_each_for_multicast uses the FCM v1 API (send_multicast is deprecated - old /batch endpoint returns 404)
+        response = messaging.send_each_for_multicast(message)
         
         results = {"success": [], "failed": []}
         
@@ -197,10 +216,15 @@ async def send_multicast_notification(
             if resp.success:
                 results["success"].append(token[:20] + "...")
             else:
+                error_str = str(resp.exception) if resp.exception else "Unknown error"
                 results["failed"].append({
                     "token": token[:20] + "...",
-                    "error": str(resp.exception) if resp.exception else "Unknown error"
+                    "error": error_str
                 })
+                # Auto-cleanup unregistered tokens
+                if isinstance(resp.exception, messaging.UnregisteredError):
+                    logger.warning(f"Token unregistered: {token[:20]}... — removing from DB")
+                    _cleanup_stale_token(token)
         
         logger.info(f"FCM multicast sent: {response.success_count} success, {response.failure_count} failed")
         return results
