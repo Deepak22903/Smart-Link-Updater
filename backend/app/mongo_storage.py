@@ -396,12 +396,16 @@ def save_new_links(post_id: int, date_iso: str, fingerprints: Set[str], site_key
         fingerprints: Set of fingerprints to save
         site_key: Optional site key for site-specific tracking
     """
-    existing = get_known_fingerprints(post_id, date_iso, site_key)
-    merged = list(existing.union(fingerprints))
-    
     query = {"post_id": post_id, "date_iso": date_iso}
     if site_key:
         query["site_key"] = site_key
+
+    # Read existing as ordered list (not set) to preserve insertion order
+    existing_doc = _get_storage().db.fingerprints.find_one(query)
+    existing_list = existing_doc["fingerprints"] if existing_doc and "fingerprints" in existing_doc else []
+    existing_set = set(existing_list)
+    # Append only truly new fingerprints at the end — preserves historical order
+    merged = existing_list + [fp for fp in fingerprints if fp not in existing_set]
     
     _get_storage().db.fingerprints.update_one(
         query,

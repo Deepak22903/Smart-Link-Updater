@@ -2573,11 +2573,22 @@ async def get_rewards():
         today_date = now.date()
         dates_to_fetch = [(today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
         
-        # Fetch fingerprints for all dates
+        # Fetch fingerprints for all dates as ordered lists (newest-added last → reverse for newest-first)
+        # Use find() (not find_one) to aggregate across ALL site_keys for the same (post_id, date_iso)
+        # e.g. site_key=None (scheduled) + site_key='minecraft' (manual) are separate docs
+        db = mongo_storage._get_storage().db
         all_fingerprints = []
         for date_iso in dates_to_fetch:
-            fingerprints_set = mongo_storage.get_known_fingerprints(POST_ID, date_iso)
-            for fp in fingerprints_set:
+            results = list(db.fingerprints.find({"post_id": POST_ID, "date_iso": date_iso}))
+            seen_fps = set()
+            merged = []
+            for doc in results:
+                for fp in doc.get("fingerprints", []):
+                    if fp not in seen_fps:
+                        seen_fps.add(fp)
+                        merged.append(fp)
+            fingerprints_list = list(reversed(merged))
+            for fp in fingerprints_list:
                 # Parse fingerprint: format is {url}__{date_iso}
                 if "__" in fp:
                     parts = fp.rsplit("__", 1)
@@ -2650,66 +2661,24 @@ async def get_rewards():
 def _extract_label_from_url(url: str) -> str:
     """
     Extract a human-readable label from a URL.
-    Special handling for Travel Town and common gaming reward links.
+    Uses suffix-based mapping for traveltowngame.net URLs.
     """
-    import re
-    
-    url_lower = url.lower()
-    
-    # Special patterns for Travel Town links
-    if "travel-town" in url_lower or "traveltown" in url_lower:
-        # Look for common patterns in Travel Town URLs
-        if "energy" in url_lower:
-            # Try to extract number if present
-            match = re.search(r'(\d+)\s*energy', url_lower)
-            if match:
-                return f"{match.group(1)} Energy"
-            return "Free Energy"
-        
-        # Default for Travel Town links
-        return "50 Energy"  # Most common reward
-    
-    # Generic d10xl.com pattern
-    if "d10xl.com" in url_lower:
-        return "50 Energy"
-    
-    # Remove protocol and domain
-    path = url.split("//")[-1] if "//" in url else url
-    path = "/".join(path.split("/")[1:]) if "/" in path else path
-    
-    # Look for common reward patterns in the path
-    patterns = [
-        (r'(\d+)\s*(?:x\s*)?energy', lambda m: f"{m.group(1)} Energy"),
-        (r'(\d+)\s*(?:x\s*)?coins?', lambda m: f"{m.group(1)} Coins"),
-        (r'(\d+)\s*(?:x\s*)?gems?', lambda m: f"{m.group(1)} Gems"),
-        (r'(?:free|bonus)\s*energy', lambda m: "Free Energy"),
-        (r'(?:free|bonus)\s*coins?', lambda m: "Free Coins"),
-        (r'(?:free|bonus)\s*gems?', lambda m: "Free Gems"),
-    ]
-    
-    for pattern, formatter in patterns:
-        match = re.search(pattern, path.lower())
-        if match:
-            return formatter(match)
-    
-    # Default: extract filename or last path segment
-    if "/" in path:
-        filename = path.split("/")[-1]
-    else:
-        filename = path
-    
-    # Clean up: remove query params, hash, file extension
-    filename = filename.split("?")[0].split("#")[0]
-    filename = filename.rsplit(".", 1)[0] if "." in filename else filename
-    
-    # Replace hyphens/underscores with spaces and title case
-    label = filename.replace("-", " ").replace("_", " ").strip()
-    
-    # If still empty or too short, use generic label
-    if len(label) < 3:
-        label = "Free Energy"
-    
-    return label.title()
+    last_segment = url.rstrip("/").split("/")[-1]  # e.g. "sWjN9cdB_FCB"
+    if "_" in last_segment:
+        suffix = last_segment.rsplit("_", 1)[-1].upper()
+        suffix_energy_map = {
+            "FCB":     "25 Energy",
+            "TRADING": "10 Energy",
+            "INS":     "15 Energy",
+            "TWI":     "10 Energy",
+            "WA":      "20 Energy",
+            "PUSH":    "25 Energy",
+            "CHATB":   "10 Energy",
+        }
+        if suffix in suffix_energy_map:
+            return suffix_energy_map[suffix]
+
+    return "10 Energy"
 
 
 def _determine_icon_type(label: str) -> str:
@@ -2732,45 +2701,42 @@ def _determine_icon_type(label: str) -> str:
 
 def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[Dict]:
     """
-    Group rewards into sections: Today, Yesterday, This Week, Older
+    Group rewards into sections: Today, Yesterday, then individual dates (e.g. "February 18")
     """
-    today = []
-    yesterday = []
-    this_week = []
-    older = []
-    
+    from collections import defaultdict
+
     today_date = now.date()
     yesterday_date = (now - timedelta(days=1)).date()
-    week_start = (now - timedelta(days=now.weekday())).date()
-    
+
+    today = []
+    yesterday = []
+    by_date: dict = defaultdict(list)  # date object → list of rewards
+
     for reward in rewards:
-        # Remove internal _date_obj before adding to section
         date_obj = reward.pop("_date_obj", None)
         if not date_obj:
-            older.append(reward)
             continue
-        
+
         reward_date = date_obj.date()
-        
+
         if reward_date == today_date:
             today.append(reward)
         elif reward_date == yesterday_date:
             yesterday.append(reward)
-        elif reward_date >= week_start:
-            this_week.append(reward)
         else:
-            older.append(reward)
-    
+            by_date[reward_date].append(reward)
+
     sections = []
     if today:
         sections.append({"title": "Today", "data": today})
     if yesterday:
         sections.append({"title": "Yesterday", "data": yesterday})
-    if this_week:
-        sections.append({"title": "This Week", "data": this_week})
-    if older:
-        sections.append({"title": "Older", "data": older})
-    
+
+    # Add individual date sections, newest date first
+    for date_obj in sorted(by_date.keys(), reverse=True):
+        title = date_obj.strftime("%B %-d")  # e.g. "February 18"
+        sections.append({"title": title, "data": by_date[date_obj]})
+
     return sections
 
 
