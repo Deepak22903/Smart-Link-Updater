@@ -2617,7 +2617,7 @@ async def get_rewards():
                 expires_at = date_obj.replace(hour=23, minute=59, second=59)
                 # Mark as expired if more than 3 days old
                 days_old = (now.date() - date_obj.date()).days
-                expired = days_old > 3
+                expired = days_old > 4
             except ValueError:
                 # Invalid date format, mark as expired
                 expires_at = now
