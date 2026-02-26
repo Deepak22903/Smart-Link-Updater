@@ -1,10 +1,10 @@
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { ComingSoon } from "@/components/coming-soon";
+import { AnalyticsPage } from "@/components/analytics-page";
 
-export default function AnalyticsPage() {
+export default function AnalyticsRoute() {
   return (
     <DashboardLayout>
-      <ComingSoon title="Analytics" />
+      <AnalyticsPage />
     </DashboardLayout>
   );
 }

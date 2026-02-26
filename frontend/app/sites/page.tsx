@@ -1,10 +1,10 @@
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { ComingSoon } from "@/components/coming-soon";
+import { SitesPage } from "@/components/sites-page";
 
-export default function SitesPage() {
+export default function SitesRoute() {
   return (
     <DashboardLayout>
-      <ComingSoon title="Sites" />
+      <SitesPage />
     </DashboardLayout>
   );
 }

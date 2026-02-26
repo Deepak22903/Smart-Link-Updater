@@ -1,10 +1,10 @@
 import { DashboardLayout } from "@/components/dashboard-layout";
-import { ComingSoon } from "@/components/coming-soon";
+import { SettingsPage } from "@/components/settings-page";
 
-export default function SettingsPage() {
+export default function SettingsRoute() {
   return (
     <DashboardLayout>
-      <ComingSoon title="Settings" />
+      <SettingsPage />
     </DashboardLayout>
   );
 }
