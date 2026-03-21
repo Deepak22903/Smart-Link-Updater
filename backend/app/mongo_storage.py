@@ -558,7 +558,9 @@ def get_alerts(
         .limit(limit)
     )
     for result in results:
-        result.pop("_id", None)
+        object_id = result.pop("_id", None)
+        if object_id:
+            result["id"] = str(object_id)
     return results
 
 

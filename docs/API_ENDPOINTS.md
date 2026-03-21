@@ -145,7 +145,15 @@ Get detailed list of configured posts with health status.
 ### `GET /api/sites/list`
 Get list of all configured WordPress sites from MongoDB.
 
-**Returns:** Dictionary of sites with full configuration including credentials (for management UI)
+**Returns:** Dictionary of sites with `app_password` redacted for security.
+
+Each site object includes:
+- `base_url`
+- `username`
+- `display_name`
+- `button_style`
+- `app_password` (masked as `********` when set)
+- `has_app_password` (boolean)
 
 ### `POST /api/sites/add`
 Add a new WordPress site to configuration.
@@ -337,12 +345,16 @@ Get recent alerts from the monitoring system.
 **Query Parameters:**
 - `hours` (int): Number of hours to look back (default: 24)
 
-**Returns:** Array of alerts with alert details
+**Returns:** Array of alerts with alert details.
+
+Each alert now includes a stable identifier in both fields for compatibility:
+- `_id` (string)
+- `id` (string)
 
 ### `GET /alerts/unnotified`
 Get alerts that haven't been sent yet.
 
-**Returns:** Array of unnotified alerts
+**Returns:** Array of unnotified alerts with stable `_id` and `id` fields
 
 ### `POST /alerts/send`
 Process and send all unnotified alerts.

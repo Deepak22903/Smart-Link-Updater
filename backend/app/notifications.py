@@ -290,9 +290,10 @@ async def process_unnotified_alerts():
         except Exception as e:
             print(f"Failed to send alert: {e}")
     
-    # Mark alerts as notified
-    alert_ids = list(range(len(alerts)))
-    monitor.mark_alerts_notified(alert_ids)
+    # Mark alerts as notified (MongoDB ObjectId strings)
+    alert_ids = [alert.id for alert in alerts if getattr(alert, "id", None)]
+    if alert_ids:
+        monitor.mark_alerts_notified(alert_ids)
     
     return {
         "processed": sent_count,

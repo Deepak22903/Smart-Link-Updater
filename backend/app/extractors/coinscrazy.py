@@ -3,10 +3,10 @@ Extractor for CoinsCrazy.com
 Extracts daily links from dated sections with button-style links.
 """
 
-import re
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timedelta
 from typing import List
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from .base import BaseExtractor
 from ..models import Link
 
@@ -51,61 +51,65 @@ class CoinsCrazyExtractor(BaseExtractor):
             target_date = datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
             return []
-        
-        # Format target date to match site format: "06 February 2026"
-        target_date_str = target_date.strftime("%d %B %Y")
-        
-        # Also try "Updated On: DD Month YYYY" format
-        updated_on_str = f"Updated On: {target_date_str}"
-        
-        # Find all h4 headings
+
+        yesterday_date = target_date - timedelta(days=1)
+
+        def _date_strings(d: datetime) -> tuple[str, str]:
+            date_str = d.strftime("%d %B %Y")
+            return date_str, f"Updated On: {date_str}"
+
+        target_date_str, target_updated_on_str = _date_strings(target_date)
+        yesterday_date_str, yesterday_updated_on_str = _date_strings(yesterday_date)
+
+        target_date_iso = target_date.strftime("%Y-%m-%d")
+        yesterday_date_iso = yesterday_date.strftime("%Y-%m-%d")
+
+        # Keep insertion order and avoid duplicate URLs (today first, then yesterday)
+        links_map = OrderedDict()
+
+        # Find all h4 headings and extract sections for today + yesterday
         h4_tags = soup.find_all('h4', class_='wp-block-heading')
-        
-        target_h4 = None
+
         for h4 in h4_tags:
             h4_text = h4.get_text(strip=True)
-            # Match both "Updated On: 06 February 2026" and "06 February 2026" formats
-            if updated_on_str in h4_text or target_date_str in h4_text:
-                target_h4 = h4
-                break
-        
-        if not target_h4:
-            return []
-        
-        # Collect all links after this h4 until the next h4 date header
-        links = []
-        current_element = target_h4.find_next_sibling()
-        
-        while current_element:
-            # Stop if we hit another h4 heading (next date section)
-            if current_element.name == 'h4' and 'wp-block-heading' in current_element.get('class', []):
-                break
-            
-            # Extract links from wp-block-columns divs
-            if current_element.name == 'div' and 'wp-block-columns' in current_element.get('class', []):
-                # Find all anchor tags within this columns div
-                anchors = current_element.find_all('a', href=True)
-                
-                for anchor in anchors:
-                    href = anchor.get('href', '').strip()
-                    
-                    # Skip empty or invalid links
-                    if not href or href.startswith('#') or href == '':
-                        continue
-                    
-                    # Extract button text from span
-                    button_span = anchor.find('span', class_='ub-button-block-btn')
-                    button_text = button_span.get_text(strip=True) if button_span else "Link"
-                    
-                    # Create Link object with required fields
-                    link = Link(
-                        url=href,
-                        title=button_text,  # Use button text as title
-                        published_date_iso=date  # Date in YYYY-MM-DD format
-                    )
-                    links.append(link)
-            
-            current_element = current_element.find_next_sibling()
-        
-        return links
+
+            section_date_iso = None
+            if target_updated_on_str in h4_text or target_date_str in h4_text:
+                section_date_iso = target_date_iso
+            elif yesterday_updated_on_str in h4_text or yesterday_date_str in h4_text:
+                section_date_iso = yesterday_date_iso
+
+            if not section_date_iso:
+                continue
+
+            # Collect links after this heading until next heading
+            current_element = h4.find_next_sibling()
+            while current_element:
+                # Stop at next date header
+                if current_element.name == 'h4' and 'wp-block-heading' in current_element.get('class', []):
+                    break
+
+                if current_element.name == 'div' and 'wp-block-columns' in current_element.get('class', []):
+                    anchors = current_element.find_all('a', href=True)
+                    for anchor in anchors:
+                        href = anchor.get('href', '').strip()
+
+                        # Skip empty or invalid links
+                        if not href or href.startswith('#'):
+                            continue
+
+                        button_span = anchor.find('span', class_='ub-button-block-btn')
+                        button_text = button_span.get_text(strip=True) if button_span else "Link"
+
+                        # Prefer today's version if same URL appears in both sections
+                        if href not in links_map:
+                            links_map[href] = Link(
+                                url=href,
+                                title=button_text,
+                                published_date_iso=section_date_iso
+                            )
+
+                current_element = current_element.find_next_sibling()
+
+        return list(links_map.values())
 

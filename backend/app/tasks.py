@@ -8,10 +8,17 @@ from .models import Link
 from .wp import update_post_links_section
 from .extraction import extract_links_with_heading_filter
 from .storage import get_known_fingerprints, save_new_links
+from .rewards_notifications import notify_rewards_update_for_post
 
 
 @shared_task(name="tasks.update_post_task")
-def update_post_task(post_id: int, source_urls: List[str], timezone: str, today_iso: str | None = None):
+def update_post_task(
+    post_id: int,
+    source_urls: List[str],
+    timezone: str,
+    today_iso: str | None = None,
+    send_notifications: bool = False,
+):
     """
     Orchestrates for a single post: scrape, extract, filter, dedupe, and update WP.
     This task is sync in Celery context; internal async calls are driven via asyncio.
@@ -47,6 +54,15 @@ def update_post_task(post_id: int, source_urls: List[str], timezone: str, today_
             save_new_links(post_id, today_iso_local, {fingerprint(link) for link in deduped})
 
         # Update WordPress
-        await update_post_links_section(post_id, deduped)
+        wp_result = await update_post_links_section(post_id, deduped)
+
+        links_added = 0
+        if isinstance(wp_result, dict):
+            links_added = int(wp_result.get("links_added", len(deduped)) or 0)
+        else:
+            links_added = len(deduped)
+
+        if send_notifications and links_added > 0:
+            await notify_rewards_update_for_post(post_id, links_added)
 
     return asyncio.run(run())

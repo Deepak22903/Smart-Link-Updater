@@ -34,6 +34,10 @@ import hashlib
 from datetime import datetime, timedelta
 import pytz
 from .push_notifications import send_push_notification, send_multicast_notification, initialize_firebase, notify_new_rewards
+from .rewards_notifications import (
+    is_notifications_enabled,
+    notify_rewards_update_for_post,
+)
 
 app = FastAPI(title="SmartLinkUpdater API")
 
@@ -55,14 +59,6 @@ app.add_middleware(
 
 # In-memory storage for task status
 task_status: Dict[str, dict] = {}
-
-# Mapping of post_id -> app_id for push notifications.
-# When new links are added for a post, only devices registered with the matching
-# app_id will receive a notification. Add new games here as new apps are developed.
-POST_NOTIFICATION_APP_MAP: Dict[int, str] = {
-    206: "travel_town",  # Travel Town rewards app
-}
-
 
 # ==================== Helper Functions ====================
 
@@ -822,8 +818,8 @@ async def add_manual_links(request: ManualLinkRequest):
         }
 
     # Send push notification if enabled for this post and new links were added
-    if total_links_added > 0 and config.get("send_notifications"):
-        await _notify_rewards_update(request.post_id, total_links_added)
+    if total_links_added > 0 and is_notifications_enabled(config):
+        await notify_rewards_update_for_post(request.post_id, total_links_added)
 
     # Build success message
     if sites_updated_count > 1:
@@ -909,8 +905,16 @@ async def list_wordpress_sites():
     for site_key, site_data in sites.items():
         logging.info(f"[SITES LIST] {site_key}: button_style={site_data.get('button_style', 'NOT SET')}")
 
-    # Return sites with all info including credentials for management UI
-    return {"sites": sites}
+    # Return sites with app password redacted for frontend safety
+    redacted_sites = {}
+    for site_key, site_data in sites.items():
+        redacted_site = dict(site_data)
+        has_password = bool(redacted_site.get("app_password"))
+        redacted_site["app_password"] = "********" if has_password else ""
+        redacted_site["has_app_password"] = has_password
+        redacted_sites[site_key] = redacted_site
+
+    return {"sites": redacted_sites}
 
 
 @app.get("/api/cron/settings")
@@ -1004,13 +1008,20 @@ async def update_wordpress_site(site_key: str, site_data: dict):
     display_name = site_data.get("display_name", site_key).strip()
     button_style = site_data.get("button_style", "default").strip()
     
-    if not all([base_url, username, app_password]):
+    if not all([base_url, username]):
         raise HTTPException(status_code=400, detail="Missing required fields")
     
     # Check if site exists
     existing = mongo_storage.get_wp_site(site_key)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
+    
+    # Keep existing password if none provided
+    if not app_password:
+        app_password = existing.get("app_password", "")
+    
+    if not app_password:
+        raise HTTPException(status_code=400, detail="Site must have an application password")
     
     # Update site in MongoDB
     site_config = {
@@ -1085,19 +1096,21 @@ async def trigger_update(job: UpdateJob = Body(...)):
     """Trigger link update for a post (with optional source URLs override)."""
     # Use provided URLs or fetch from config
     source_urls = [str(url) for url in job.source_urls] if job.source_urls else None
+    post_config = mongo_storage.get_post_config(job.post_id)
 
     if not source_urls:
         # Try to get from stored config
-        config = mongo_storage.get_post_config(job.post_id)
-        if not config:
+        if not post_config:
             raise HTTPException(
                 status_code=400,
                 detail=f"Post {job.post_id} not configured. Use /config/post to set source URLs first.",
             )
-        source_urls = config["source_urls"]
-        timezone = config.get("timezone", job.timezone)
+        source_urls = post_config["source_urls"]
+        timezone = post_config.get("timezone", job.timezone)
     else:
         timezone = job.timezone
+
+    send_notifications = is_notifications_enabled(post_config)
 
     task = celery_app.send_task(
         "tasks.update_post_task",
@@ -1106,6 +1119,7 @@ async def trigger_update(job: UpdateJob = Body(...)):
             "source_urls": source_urls,
             "timezone": timezone,
             "today_iso": job.today_iso,
+            "send_notifications": send_notifications,
         },
     )
     return JSONResponse(
@@ -1187,6 +1201,15 @@ async def update_post_now(
             raise HTTPException(
                 status_code=400,
                 detail="Target site must be specified. Use a site key from Sites tab or 'all'."
+            )
+
+        if target == "all":
+            return await run_update_sync_all_sites(
+                post_id=post_id,
+                source_urls=source_urls,
+                timezone=timezone,
+                extractor_map=extractor_map,
+                config=config,
             )
         
         if target == "all":
@@ -1569,37 +1592,157 @@ async def update_post_now(
     )
 
 
-async def _notify_rewards_update(post_id: int, links_added: int) -> None:
-    """
-    Send a push notification when new links are added for a post.
+async def run_update_sync_all_sites(
+    post_id: int,
+    source_urls: List[str],
+    timezone: str,
+    extractor_map: Optional[Dict[str, str]] = None,
+    config: Optional[Dict[str, Any]] = None,
+):
+    """Synchronous update across all configured sites with single notification dispatch."""
+    tz = pytz.timezone(timezone)
+    today_iso = datetime.now(tz).strftime("%Y-%m-%d")
 
-    Uses POST_NOTIFICATION_APP_MAP to look up which app_id (game) owns this post,
-    then filters push tokens to only those registered with that app_id.
-    This ensures e.g. a Piggy Go post only notifies Piggy Go app users.
-    """
-    app_id = POST_NOTIFICATION_APP_MAP.get(post_id)
-    if not app_id:
-        logging.info(f"[NOTIFY] No app_id mapping for post {post_id} in POST_NOTIFICATION_APP_MAP, skipping notification")
-        return
+    # 1) Extract once from all sources
+    extracted_sources = []  # List[Tuple[extractor, List[Link]]]
+    all_links = []
+    errors = []
 
-    try:
-        all_tokens = mongo_storage.list_push_tokens()  # Dict[token_id, data]
-        # Filter to tokens belonging to this specific app
-        app_tokens = {
-            tid: data for tid, data in all_tokens.items()
-            if data.get("app_id") == app_id
+    for url in source_urls:
+        try:
+            html = await fetch_html(url)
+
+            # Prefer extractor_map for exact URL matches, then auto-detect
+            extractor = None
+            if extractor_map:
+                url_normalized = url.rstrip("/")
+                for map_url, map_extractor in extractor_map.items():
+                    if url_normalized == map_url.rstrip("/") and map_extractor:
+                        extractor = get_extractor(map_extractor)
+                        break
+            if extractor is None:
+                extractor = get_extractor_for_url(url)
+
+            extracted_links = extractor.extract(html, today_iso)
+            extracted_sources.append((extractor, extracted_links))
+            all_links.extend(extracted_links)
+        except RetryError as e:
+            last_exception = e.last_attempt.exception() if e.last_attempt else None
+            error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
+            errors.append({"url": url, "error": error_msg})
+        except httpx.TimeoutException as e:
+            errors.append({"url": url, "error": f"Request timeout: {str(e)}"})
+        except httpx.HTTPStatusError as e:
+            errors.append(
+                {
+                    "url": url,
+                    "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+                }
+            )
+        except Exception as e:
+            errors.append({"url": url, "error": f"{type(e).__name__}: {str(e)}"})
+
+    if not all_links:
+        return JSONResponse(
+            {
+                "success": True,
+                "post_id": post_id,
+                "message": "No links found for today",
+                "links_found": 0,
+                "links_added": 0,
+                "sections_pruned": 0,
+                "errors": errors,
+            }
+        )
+
+    # 2) Update each configured site
+    sites = get_configured_wp_sites()
+    if not sites:
+        return JSONResponse(
+            {
+                "success": False,
+                "post_id": post_id,
+                "message": "No WordPress sites configured",
+                "links_found": len(all_links),
+                "links_added": 0,
+                "errors": errors,
+            }
+        )
+
+    results = {}
+    total_links_added = 0
+    total_sections_pruned = 0
+
+    from .dedupe import get_fingerprints_with_lookback
+    from collections import defaultdict
+
+    for site_key in sites.keys():
+        try:
+            if not config:
+                results[site_key] = {"error": "Missing post configuration"}
+                continue
+
+            site_post_id = resolve_post_id_for_site(config, site_key)
+            if not site_post_id:
+                results[site_key] = {
+                    "error": f"No post ID configured for site '{site_key}'"
+                }
+                continue
+
+            # Build known fingerprints using each extractor's lookback requirement
+            known_fps = set()
+            for ext, _ in extracted_sources:
+                known_fps.update(
+                    get_fingerprints_with_lookback(
+                        ext, site_post_id, today_iso, site_key, mongo_storage
+                    )
+                )
+
+            new_links = dedupe_by_fingerprint(all_links, known_fps)
+            if not new_links:
+                results[site_key] = {
+                    "message": "No new links for this site",
+                    "links_added": 0,
+                    "sections_pruned": 0,
+                }
+                continue
+
+            site_config = mongo_storage.get_wp_site(site_key)
+            wp_result = await update_post_links_section(
+                site_post_id, new_links, site_key, config, site_config
+            )
+            results[site_key] = wp_result
+
+            if wp_result.get("error"):
+                continue
+
+            total_links_added += wp_result.get("links_added", 0)
+            total_sections_pruned += wp_result.get("sections_pruned", 0)
+
+            fps_by_date = defaultdict(set)
+            for link in new_links:
+                fps_by_date[link.published_date_iso].add(fingerprint(link))
+
+            for date_iso, fps in fps_by_date.items():
+                mongo_storage.save_new_links(site_post_id, date_iso, fps, site_key)
+
+        except Exception as e:
+            results[site_key] = {"error": str(e)}
+
+    if config and is_notifications_enabled(config) and total_links_added > 0:
+        await notify_rewards_update_for_post(post_id, total_links_added)
+
+    return JSONResponse(
+        {
+            "success": True,
+            "post_id": post_id,
+            "links_found": len(all_links),
+            "links_added": total_links_added,
+            "sections_pruned": total_sections_pruned,
+            "results": results,
+            "errors": errors,
         }
-
-        if not app_tokens:
-            logging.info(f"[NOTIFY] No tokens registered for app_id='{app_id}' (post {post_id}), skipping")
-            return
-
-        result = await notify_new_rewards(app_tokens, count=links_added)
-        sent = len(result.get("success", []))
-        failed = len(result.get("failed", []))
-        logging.info(f"[NOTIFY] Post {post_id} (app='{app_id}'): Notified {sent}/{sent + failed} devices, {links_added} new links")
-    except Exception as e:
-        logging.error(f"[NOTIFY] Failed to send notification for post {post_id}: {e}")
+    )
 
 
 async def run_update_sync(
@@ -1736,8 +1879,8 @@ async def run_update_sync(
                 logging.info(f"[SYNC UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
 
         # Send push notification if enabled for this post and new links were added
-        if config and config.get("send_notifications") and wp_result["links_added"] > 0:
-            await _notify_rewards_update(post_id, wp_result["links_added"])
+        if config and is_notifications_enabled(config) and wp_result["links_added"] > 0:
+            await notify_rewards_update_for_post(post_id, wp_result["links_added"])
 
         # Build response message
         message_parts = []
@@ -2292,8 +2435,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             message = "No links found"
 
         # Send push notification if enabled for this post and new links were added
-        if config.get("send_notifications") and total_links_added > 0:
-            await _notify_rewards_update(post_id, total_links_added)
+        if is_notifications_enabled(config) and total_links_added > 0:
+            await notify_rewards_update_for_post(post_id, total_links_added)
 
         # Success or No Changes
         await manager.update_post_state(

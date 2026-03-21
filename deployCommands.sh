@@ -11,6 +11,7 @@ gcloud run deploy smartlink-api \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
+  --min-instances 1 \
   --memory 512Mi \
   --cpu 1 \
   --max-instances 10 \

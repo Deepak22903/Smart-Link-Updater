@@ -90,6 +90,7 @@ class SourceMonitoring(BaseModel):
 
 class Alert(BaseModel):
     """Alert/notification record"""
+    id: Optional[str] = None
     alert_type: str  # structure_changed, zero_links, low_confidence, size_anomaly
     source_url: str
     severity: str  # info, warning, critical
