@@ -12,6 +12,7 @@ from .push_notifications import notify_new_rewards
 # app_id will receive a notification.
 POST_NOTIFICATION_APP_MAP: Dict[int, str] = {
     206: "travel_town",  # Travel Town rewards app
+    1149: "gossip_energy",  # Gossip Energy rewards app
 }
 
 
@@ -56,7 +57,7 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
             )
             return
 
-        result = await notify_new_rewards(app_tokens, count=links_added)
+        result = await notify_new_rewards(app_tokens, count=links_added, app_id=app_id)
         sent = len(result.get("success", []))
         failed = len(result.get("failed", []))
         logging.info(

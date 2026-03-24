@@ -2672,6 +2672,85 @@ async def preview_button_style(style_name: str):
 # ==================== Travel Rewards API ====================
 
 
+def _build_rewards_response(post_id: int, static_label: Optional[str] = None) -> Dict[str, Any]:
+    """Build grouped rewards response from fingerprints for a specific post."""
+    # Get timezone (default to Asia/Kolkata or use post config)
+    post_config = mongo_storage.get_post_config(post_id)
+    timezone_str = post_config.get("timezone", "Asia/Kolkata") if post_config else "Asia/Kolkata"
+    tz = pytz.timezone(timezone_str)
+
+    # Calculate date range (last 5 days)
+    now = datetime.now(tz)
+    today_date = now.date()
+    dates_to_fetch = [(today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+
+    # Fetch fingerprints for all dates as ordered lists (newest-added last → reverse for newest-first)
+    # Use find() (not find_one) to aggregate across ALL site_keys for the same (post_id, date_iso)
+    db = mongo_storage._get_storage().db
+    all_fingerprints = []
+    for date_iso in dates_to_fetch:
+        results = list(db.fingerprints.find({"post_id": post_id, "date_iso": date_iso}))
+        seen_fps = set()
+        merged = []
+        for doc in results:
+            for fp in doc.get("fingerprints", []):
+                if fp not in seen_fps:
+                    seen_fps.add(fp)
+                    merged.append(fp)
+        fingerprints_list = list(reversed(merged))
+        for fp in fingerprints_list:
+            # Parse fingerprint: format is {url}__{date_iso}
+            if "__" in fp:
+                parts = fp.rsplit("__", 1)
+                if len(parts) == 2:
+                    url, fp_date = parts
+                    all_fingerprints.append({"url": url, "date_iso": fp_date})
+
+    # Transform fingerprints into rewards format
+    rewards = []
+    for idx, fp in enumerate(all_fingerprints):
+        url = fp["url"]
+        date_iso = fp["date_iso"]
+
+        # Label strategy: static for Gossip Energy, extracted for Travel Town
+        label = static_label if static_label else _extract_label_from_url(url)
+
+        # Determine icon type based on label keywords
+        icon = _determine_icon_type(label)
+
+        # Parse date and check if more than 4 days old
+        date_obj = None
+        try:
+            date_obj = datetime.strptime(date_iso, "%Y-%m-%d").replace(tzinfo=tz)
+            expires_at = date_obj.replace(hour=23, minute=59, second=59)
+            days_old = (now.date() - date_obj.date()).days
+            expired = days_old > 4
+        except ValueError:
+            expires_at = now
+            expired = True
+
+        rewards.append(
+            {
+                "id": f"reward_{idx+1:03d}",
+                "label": label,
+                "icon": icon,
+                "code": url,  # Using URL as code (can be customized)
+                "expired": expired,
+                "expiresAt": expires_at.isoformat(),
+                "createdAt": date_obj.isoformat() if date_obj else None,
+                "_date_obj": date_obj,  # For sorting
+            }
+        )
+
+    # Group rewards by date sections
+    sections = _group_rewards_by_sections(rewards, now, tz)
+
+    # Static message about reward validity
+    message = "Rewards are valid for a few days. If they don't work, they may have expired or already been used on your account."
+
+    return {"success": True, "message": message, "data": sections}
+
+
 @app.get("/api/rewards")
 async def get_rewards():
     """
@@ -2700,95 +2779,7 @@ async def get_rewards():
     }
     """
     try:
-        from datetime import datetime, timedelta
-        import pytz
-        
-        # Post ID for Travel Town rewards
-        POST_ID = 206
-        
-        # Get timezone (default to Asia/Kolkata or use post config)
-        post_config = mongo_storage.get_post_config(POST_ID)
-        timezone_str = post_config.get("timezone", "Asia/Kolkata") if post_config else "Asia/Kolkata"
-        tz = pytz.timezone(timezone_str)
-        
-        # Calculate date range (last 5 days)
-        now = datetime.now(tz)
-        today_date = now.date()
-        dates_to_fetch = [(today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
-        
-        # Fetch fingerprints for all dates as ordered lists (newest-added last → reverse for newest-first)
-        # Use find() (not find_one) to aggregate across ALL site_keys for the same (post_id, date_iso)
-        # e.g. site_key=None (scheduled) + site_key='minecraft' (manual) are separate docs
-        db = mongo_storage._get_storage().db
-        all_fingerprints = []
-        for date_iso in dates_to_fetch:
-            results = list(db.fingerprints.find({"post_id": POST_ID, "date_iso": date_iso}))
-            seen_fps = set()
-            merged = []
-            for doc in results:
-                for fp in doc.get("fingerprints", []):
-                    if fp not in seen_fps:
-                        seen_fps.add(fp)
-                        merged.append(fp)
-            fingerprints_list = list(reversed(merged))
-            for fp in fingerprints_list:
-                # Parse fingerprint: format is {url}__{date_iso}
-                if "__" in fp:
-                    parts = fp.rsplit("__", 1)
-                    if len(parts) == 2:
-                        url, fp_date = parts
-                        all_fingerprints.append({
-                            "url": url,
-                            "date_iso": fp_date
-                        })
-        
-        # Transform fingerprints into rewards format
-        rewards = []
-        for idx, fp in enumerate(all_fingerprints):
-            url = fp["url"]
-            date_iso = fp["date_iso"]
-            
-            # Extract label from URL (simple extraction)
-            label = _extract_label_from_url(url)
-            
-            # Determine icon type based on label keywords
-            icon = _determine_icon_type(label)
-            
-            # Parse date and check if more than 3 days old
-            try:
-                date_obj = datetime.strptime(date_iso, "%Y-%m-%d").replace(tzinfo=tz)
-                expires_at = date_obj.replace(hour=23, minute=59, second=59)
-                # Mark as expired if more than 3 days old
-                days_old = (now.date() - date_obj.date()).days
-                expired = days_old > 4
-            except ValueError:
-                # Invalid date format, mark as expired
-                expires_at = now
-                expired = True
-            
-            rewards.append({
-                "id": f"reward_{idx+1:03d}",
-                "label": label,
-                "icon": icon,
-                "code": url,  # Using URL as code (can be customized)
-                "expired": expired,
-                "expiresAt": expires_at.isoformat(),
-                "createdAt": date_obj.isoformat() if not expired else None,
-                "_date_obj": date_obj  # For sorting
-            })
-        
-        # Group rewards by date sections
-        sections = _group_rewards_by_sections(rewards, now, tz)
-        
-        # Static message about reward validity
-        message = "Rewards are valid for a few days. If they don't work, they may have expired or already been used on your account."
-        
-        return {
-            "success": True,
-            "message": message,
-            "data": sections
-        }
-        
+        return _build_rewards_response(post_id=206)
     except Exception as e:
         logging.error(f"Error fetching rewards: {e}")
         return JSONResponse(
@@ -2798,6 +2789,26 @@ async def get_rewards():
                 "error": "Failed to fetch rewards",
                 "message": str(e)
             }
+        )
+
+
+@app.get("/api/rewards/gossip-energy")
+async def get_gossip_energy_rewards():
+    """
+    Get all rewards from post 1149 fingerprints for the last 5 days.
+    Uses a static label for now: '25+ Free Energy'.
+    """
+    try:
+        return _build_rewards_response(post_id=1149, static_label="25+ Free Energy")
+    except Exception as e:
+        logging.error(f"Error fetching gossip energy rewards: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Failed to fetch gossip energy rewards",
+                "message": str(e),
+            },
         )
 
 
@@ -2899,6 +2910,7 @@ class UpdateTokenStateRequest(BaseModel):
     notifications_enabled: bool
 
 class SendRewardsNotificationRequest(BaseModel):
+    app_id: str
     title: str = "New Rewards Available!"
     body: str = "Tap to see today's latest rewards."
     data: dict = {}
@@ -2971,17 +2983,48 @@ async def update_token_state(token: str, req: UpdateTokenStateRequest):
 
 @app.post("/api/notifications/send/new-rewards")
 async def send_new_rewards_notification(req: SendRewardsNotificationRequest):
-    """Send a push notification to all enabled devices."""
+    """Send a push notification to enabled devices for a specific app_id."""
     try:
+        app_id = (req.app_id or "").strip()
+        if not app_id:
+            raise HTTPException(status_code=400, detail="app_id is required")
+
         all_tokens = mongo_storage.list_push_tokens()
         if not all_tokens:
             return {"success": True, "message": "No tokens registered", "sent": 0, "failed": 0}
 
-        # Pass full tokens dict; notify_new_rewards filters by notifications_enabled internally
-        result = await notify_new_rewards(all_tokens, title=req.title, body=req.body)
+        app_tokens = {
+            token_id: token_data
+            for token_id, token_data in all_tokens.items()
+            if token_data.get("app_id") == app_id
+        }
+
+        if not app_tokens:
+            return {
+                "success": True,
+                "message": f"No tokens registered for app_id '{app_id}'",
+                "sent": 0,
+                "failed": 0,
+            }
+
+        # Pass app-scoped tokens only; notify_new_rewards enforces app_id + enabled filtering internally
+        result = await notify_new_rewards(
+            app_tokens,
+            title=req.title,
+            body=req.body,
+            app_id=app_id,
+        )
         sent = len(result.get("success", []))
         failed = len(result.get("failed", []))
-        return {"success": True, "message": f"Sent to {sent}/{sent + failed} devices", "sent": sent, "failed": failed}
+        return {
+            "success": True,
+            "message": f"Sent to {sent}/{sent + failed} devices for app_id '{app_id}'",
+            "sent": sent,
+            "failed": failed,
+            "app_id": app_id,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error sending new-rewards notification: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3011,6 +3054,42 @@ async def get_token_count():
         }
     except Exception as e:
         logging.error(f"Error getting token count: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/notifications/tokens/{app_id}")
+async def list_tokens_for_app(app_id: str):
+    """List registered tokens for a specific app_id."""
+    try:
+        app_id = app_id.strip()
+        if not app_id:
+            raise HTTPException(status_code=400, detail="app_id is required")
+
+        all_tokens = mongo_storage.list_push_tokens()  # returns Dict[token_id, data]
+        token_list = [
+            t for t in all_tokens.values() if (t.get("app_id") or "").strip() == app_id
+        ]
+        enabled = [t for t in token_list if t.get("notifications_enabled", True)]
+
+        return {
+            "app_id": app_id,
+            "count": len(token_list),
+            "enabled": len(enabled),
+            "tokens": [t.get("token_id", "") for t in token_list],
+            "details": [
+                {
+                    "token_id": t.get("token_id", ""),
+                    "device_type": t.get("device_type", ""),
+                    "notifications_enabled": t.get("notifications_enabled", True),
+                    "registered_at": t.get("registered_at", ""),
+                }
+                for t in token_list
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error listing tokens for app_id '{app_id}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
