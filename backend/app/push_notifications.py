@@ -14,10 +14,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Supported app IDs for scoped notification sends.
-# Per user requirement, both currently use the same credentials file path.
 APP_ID_TO_FIREBASE_APP_NAME: Dict[str, str] = {
     "travel_town": "travel_town",
     "gossip_energy": "gossip_energy",
+    "domino_rewards": "domino_rewards",
 }
 
 # Default credential file candidates per app_id.
@@ -30,6 +30,10 @@ APP_ID_CREDENTIAL_CANDIDATES: Dict[str, List[Path]] = {
     "gossip_energy": [
         Path("/app/firebase-adminsdk-gossip-energy.json"),
         Path(__file__).parent.parent.parent / "firebase-adminsdk-gossip-energy.json",
+    ],
+    "domino_rewards": [
+        Path("/app/firebase-adminsdk-domino-rewards.json"),
+        Path(__file__).parent.parent.parent / "firebase-adminsdk-domino-rewards.json",
     ],
 }
 
@@ -53,6 +57,7 @@ def _resolve_credential_path_for_app(app_id: str) -> Path | None:
     1) Optional explicit env override per app_id
        - travel_town: FIREBASE_CREDENTIALS_TRAVEL_TOWN_PATH
        - gossip_energy: FIREBASE_CREDENTIALS_GOSSIP_ENERGY_PATH
+         - domino_rewards: FIREBASE_CREDENTIALS_DOMINO_REWARDS_PATH
     2) Default candidate paths from APP_ID_CREDENTIAL_CANDIDATES
     """
     env_key = f"FIREBASE_CREDENTIALS_{app_id.upper().replace('-', '_')}_PATH"

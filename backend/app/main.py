@@ -33,7 +33,12 @@ import httpx
 import hashlib
 from datetime import datetime, timedelta
 import pytz
-from .push_notifications import send_push_notification, send_multicast_notification, initialize_firebase, notify_new_rewards
+from .push_notifications import (
+    send_push_notification,
+    send_multicast_notification,
+    initialize_firebase,
+    notify_new_rewards,
+)
 from .rewards_notifications import (
     is_notifications_enabled,
     notify_rewards_update_for_post,
@@ -163,7 +168,9 @@ class BatchUpdateRequest(BaseModel):
     post_ids: List[int]
     sync: Optional[bool] = False
     initiator: Optional[str] = "wp-plugin"
-    target: Optional[str] = None  # site_key or 'all' (sites must be configured in Sites tab)
+    target: Optional[str] = (
+        None  # site_key or 'all' (sites must be configured in Sites tab)
+    )
 
 
 class PostConfigUpdate(BaseModel):
@@ -179,16 +186,20 @@ class PostConfigUpdate(BaseModel):
     site_post_ids: Optional[Dict[str, int]] = (
         None  # Maps site_key -> post_id for each WordPress site
     )
-    site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = (
-        None  # Per-site ad codes
-    )
+    site_ad_codes: Optional[Dict[str, List[Dict[str, Any]]]] = None  # Per-site ad codes
     days_to_keep: Optional[int] = None  # Days to keep link sections
     custom_button_title: Optional[str] = None  # Custom button title for all links
     use_custom_button_title: Optional[bool] = None  # Toggle for custom button title
     auto_update_sites: Optional[List[str]] = None  # List of site_keys for auto-update
-    extraction_mode: Optional[str] = None  # What to extract: "links", "promo_codes", "both"
-    promo_code_section_title: Optional[str] = None  # Custom title for promo codes section
-    send_notifications: Optional[bool] = None  # Toggle push notifications when new links are added
+    extraction_mode: Optional[str] = (
+        None  # What to extract: "links", "promo_codes", "both"
+    )
+    promo_code_section_title: Optional[str] = (
+        None  # Custom title for promo codes section
+    )
+    send_notifications: Optional[bool] = (
+        None  # Toggle push notifications when new links are added
+    )
 
 
 @app.get("/health")
@@ -269,10 +280,14 @@ async def configure_post(config: PostConfig = Body(...)):
         "wp_site": config.wp_site,
         "updated_at": datetime.utcnow().isoformat(),
     }
-    
+
     # Add days_to_keep (default to 5 if not specified)
-    post_config["days_to_keep"] = config.days_to_keep if config.days_to_keep is not None else 5
-    logging.info(f"[SAVE CONFIG] Post {config.post_id}: Saving days_to_keep={post_config['days_to_keep']}")
+    post_config["days_to_keep"] = (
+        config.days_to_keep if config.days_to_keep is not None else 5
+    )
+    logging.info(
+        f"[SAVE CONFIG] Post {config.post_id}: Saving days_to_keep={post_config['days_to_keep']}"
+    )
 
     # Add optional multi-site fields
     if config.content_slug:
@@ -290,36 +305,44 @@ async def configure_post(config: PostConfig = Body(...)):
         logging.info(
             f"[SAVE CONFIG] Saving site_ad_codes for post {config.post_id}: {len(config.site_ad_codes)} sites, keys: {list(config.site_ad_codes.keys())}"
         )
-    
+
     # Add custom button title fields if provided
     if config.use_custom_button_title is not None:
         post_config["use_custom_button_title"] = config.use_custom_button_title
     if config.custom_button_title:
         post_config["custom_button_title"] = config.custom_button_title
-    
+
     # Add auto_update_sites if provided
     if config.auto_update_sites:
         post_config["auto_update_sites"] = config.auto_update_sites
-    
+
     # Add extraction_mode if provided (default: "links")
     post_config["extraction_mode"] = config.extraction_mode or "links"
     if config.promo_code_section_title:
         post_config["promo_code_section_title"] = config.promo_code_section_title
-    
+
     # Add send_notifications flag (controls push notifications on new link updates)
-    post_config["send_notifications"] = config.send_notifications if config.send_notifications is not None else False
-    
+    post_config["send_notifications"] = (
+        config.send_notifications if config.send_notifications is not None else False
+    )
+
     # Save to MongoDB
     save_result = mongo_storage.set_post_config(post_config)
     if not save_result:
-        raise HTTPException(status_code=500, detail="Failed to save post configuration to MongoDB")
-    
+        raise HTTPException(
+            status_code=500, detail="Failed to save post configuration to MongoDB"
+        )
+
     # Verify the save by reading back
     saved_config = mongo_storage.get_post_config(config.post_id)
     if saved_config and "site_ad_codes" in saved_config:
-        logging.info(f"[SAVE CONFIG] Verified site_ad_codes saved: {list(saved_config['site_ad_codes'].keys())}")
+        logging.info(
+            f"[SAVE CONFIG] Verified site_ad_codes saved: {list(saved_config['site_ad_codes'].keys())}"
+        )
     else:
-        logging.warning(f"[SAVE CONFIG] Warning: site_ad_codes not found in saved config!")
+        logging.warning(
+            f"[SAVE CONFIG] Warning: site_ad_codes not found in saved config!"
+        )
 
     response = {
         "success": True,
@@ -349,7 +372,9 @@ async def configure_post(config: PostConfig = Body(...)):
         response["extraction_mode"] = config.extraction_mode
     if config.promo_code_section_title:
         response["promo_code_section_title"] = config.promo_code_section_title
-    response["send_notifications"] = config.send_notifications if config.send_notifications is not None else False
+    response["send_notifications"] = (
+        config.send_notifications if config.send_notifications is not None else False
+    )
 
     if config.wp_site:
         response["wp_site"] = {
@@ -396,12 +421,16 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     logging.info(
         f"[UPDATE CONFIG] Received update_data keys: {list(update_data.keys())}"
     )
-    
+
     if "days_to_keep" in update_data:
-        logging.info(f"[UPDATE CONFIG] days_to_keep in update: {update_data['days_to_keep']}")
-    
+        logging.info(
+            f"[UPDATE CONFIG] days_to_keep in update: {update_data['days_to_keep']}"
+        )
+
     if "site_ad_codes" in update_data:
-        logging.info(f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites, keys: {list(update_data['site_ad_codes'].keys())}")
+        logging.info(
+            f"[UPDATE CONFIG] site_ad_codes in update: {len(update_data['site_ad_codes'])} sites, keys: {list(update_data['site_ad_codes'].keys())}"
+        )
 
     # Convert HttpUrl objects to strings if present
     if "source_urls" in update_data and update_data["source_urls"] is not None:
@@ -416,7 +445,7 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
     # Create the full updated configuration object to be saved
     # This ensures we don't accidentally remove fields
     final_config = {**existing_config, **update_data}
-    
+
     # Clean up any legacy ad_codes field that might exist
     final_config.pop("ad_codes", None)
 
@@ -428,10 +457,14 @@ async def update_post_config(post_id: int, config_update: PostConfigUpdate):
         updated = mongo_storage.get_post_config(post_id)
         if "site_ad_codes" in update_data and updated:
             if "site_ad_codes" in updated:
-                logging.info(f"[UPDATE CONFIG] Verified site_ad_codes saved: {list(updated['site_ad_codes'].keys())}")
+                logging.info(
+                    f"[UPDATE CONFIG] Verified site_ad_codes saved: {list(updated['site_ad_codes'].keys())}"
+                )
             else:
-                logging.warning(f"[UPDATE CONFIG] Warning: site_ad_codes not in saved config!")
-        
+                logging.warning(
+                    f"[UPDATE CONFIG] Warning: site_ad_codes not in saved config!"
+                )
+
         # Return the complete, updated configuration
         return updated
     else:
@@ -471,7 +504,9 @@ async def get_post_config_endpoint(post_id: int):
 
     logging.info(f"[GET CONFIG] Returning config for post {post_id}")
     if "site_ad_codes" in config:
-        logging.info(f"[GET CONFIG] site_ad_codes present with {len(config['site_ad_codes'])} sites: {list(config['site_ad_codes'].keys())}")
+        logging.info(
+            f"[GET CONFIG] site_ad_codes present with {len(config['site_ad_codes'])} sites: {list(config['site_ad_codes'].keys())}"
+        )
     else:
         logging.info(f"[GET CONFIG] No site_ad_codes in config")
 
@@ -615,7 +650,9 @@ class ManualLinkRequest(BaseModel):
     date: str  # YYYY-MM-DD format
     target: Optional[str] = None  # Deprecated: use target_sites instead
     target_sites: Optional[List[str]] = None  # NEW: Multiple sites to update
-    use_custom_button_title: Optional[bool] = False  # NEW: Toggle for custom button title
+    use_custom_button_title: Optional[bool] = (
+        False  # NEW: Toggle for custom button title
+    )
     custom_button_title: Optional[str] = None  # NEW: Custom title for all buttons
 
 
@@ -642,9 +679,15 @@ async def add_manual_links(request: ManualLinkRequest):
     # Convert manual links to Link objects
     # Apply custom button title if enabled
     if request.use_custom_button_title and request.custom_button_title:
-        logging.info(f"[MANUAL LINKS] Using custom button title: '{request.custom_button_title}'")
+        logging.info(
+            f"[MANUAL LINKS] Using custom button title: '{request.custom_button_title}'"
+        )
         manual_links = [
-            Link(title=request.custom_button_title, url=str(link.url), published_date_iso=request.date)
+            Link(
+                title=request.custom_button_title,
+                url=str(link.url),
+                published_date_iso=request.date,
+            )
             for link in request.links
         ]
     else:
@@ -659,57 +702,69 @@ async def add_manual_links(request: ManualLinkRequest):
 
     # Determine target sites (must use target_sites, no default)
     target_sites_list = request.target_sites if request.target_sites else []
-    
+
     if not target_sites_list:
         raise HTTPException(
             status_code=400,
-            detail="No target sites specified. Please select sites from the Sites tab."
+            detail="No target sites specified. Please select sites from the Sites tab.",
         )
-    
+
     logging.info(f"[MANUAL LINKS] Target sites: {target_sites_list}")
 
     # Determine targets to process
     targets_to_process = []
-    
+
     # Expand target sites
     for target_site in target_sites_list:
         if target_site == "all":
             # Fetch all configured sites from MongoDB
             sites = mongo_storage.get_all_wp_sites()
-            logging.info(f"[MANUAL LINKS] Expanding 'all' - found {len(sites)} configured sites")
-            
+            logging.info(
+                f"[MANUAL LINKS] Expanding 'all' - found {len(sites)} configured sites"
+            )
+
             # Add all configured sites
             if sites:
                 for site_key in sites:
                     site_post_id = resolve_post_id_for_site(config, site_key)
                     if site_post_id:
-                        targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
-                        logging.info(f"[MANUAL LINKS] Added target: site={site_key}, post_id={site_post_id}")
+                        targets_to_process.append(
+                            {"site_key": site_key, "post_id": site_post_id}
+                        )
+                        logging.info(
+                            f"[MANUAL LINKS] Added target: site={site_key}, post_id={site_post_id}"
+                        )
                     else:
-                        logging.warning(f"[MANUAL LINKS] No post ID for site {site_key} on post {request.post_id}")
-            
+                        logging.warning(
+                            f"[MANUAL LINKS] No post ID for site {site_key} on post {request.post_id}"
+                        )
+
             if not targets_to_process:
                 raise HTTPException(
                     status_code=400,
-                    detail="No sites configured. Please add sites in the Sites tab first."
+                    detail="No sites configured. Please add sites in the Sites tab first.",
                 )
             break  # 'all' means all sites, don't process other selections
-                
+
         else:
             # User selected a specific site
             resolved_id = resolve_post_id_for_site(config, target_site)
             if not resolved_id:
-                logging.warning(f"[MANUAL LINKS] No post ID mapping for site {target_site}, skipping")
+                logging.warning(
+                    f"[MANUAL LINKS] No post ID mapping for site {target_site}, skipping"
+                )
                 continue
             targets_to_process.append({"site_key": target_site, "post_id": resolved_id})
-            logging.info(f"[MANUAL LINKS] Added target: site={target_site}, post_id={resolved_id}")
-    
+            logging.info(
+                f"[MANUAL LINKS] Added target: site={target_site}, post_id={resolved_id}"
+            )
+
     if not targets_to_process:
         raise HTTPException(
             status_code=400,
-            detail="No valid targets found. Check your site configuration and post ID mappings."
+            detail="No valid targets found. Check your site configuration and post ID mappings.",
         )
-    
+
     # Remove duplicates based on site_key+post_id combination
     seen = set()
     unique_targets = []
@@ -719,90 +774,109 @@ async def add_manual_links(request: ManualLinkRequest):
             seen.add(key)
             unique_targets.append(target)
     targets_to_process = unique_targets
-    
-    logging.info(f"[MANUAL LINKS] Total unique targets to process: {len(targets_to_process)}")
+
+    logging.info(
+        f"[MANUAL LINKS] Total unique targets to process: {len(targets_to_process)}"
+    )
 
     total_links_added = 0
     total_sections_pruned = 0
     sites_updated_count = 0
     duplicates_count = 0
-    
+
     # Process each target
     for target_info in targets_to_process:
         target_site_key = target_info["site_key"]
         target_post_id = target_info["post_id"]
-        
-        logging.info(f"[MANUAL LINKS] Processing site={target_site_key or 'default'}, post_id={target_post_id}")
-        
+
+        logging.info(
+            f"[MANUAL LINKS] Processing site={target_site_key or 'default'}, post_id={target_post_id}"
+        )
+
         # Deduplicate against known links for this specific site
         known_fps = mongo_storage.get_known_fingerprints(
             target_post_id, request.date, target_site_key
         )
         new_links = dedupe_by_fingerprint(manual_links, known_fps)
-        
-        logging.info(f"[MANUAL LINKS] Site {target_site_key}: {len(manual_links)} provided, {len(new_links)} new after dedup")
-        
+
+        logging.info(
+            f"[MANUAL LINKS] Site {target_site_key}: {len(manual_links)} provided, {len(new_links)} new after dedup"
+        )
+
         if not new_links:
             duplicates_count += len(manual_links)
-            logging.info(f"[MANUAL LINKS] All links were duplicates for site {target_site_key}")
+            logging.info(
+                f"[MANUAL LINKS] All links were duplicates for site {target_site_key}"
+            )
             continue
 
         # Load site configuration from MongoDB
         site_config = mongo_storage.get_wp_site(target_site_key)
         if not site_config:
-            logging.warning(f"[MANUAL LINKS] Site config not found for {target_site_key}, using default")
+            logging.warning(
+                f"[MANUAL LINKS] Site config not found for {target_site_key}, using default"
+            )
             site_config = None
         else:
-            logging.info(f"[MANUAL LINKS] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+            logging.info(
+                f"[MANUAL LINKS] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}"
+            )
 
         # Update WordPress
         try:
             wp_result = await update_post_links_section(
                 target_post_id, new_links, target_site_key, config, site_config
             )
-            
+
             if not wp_result.get("error"):
                 total_links_added += wp_result.get("links_added", 0)
                 total_sections_pruned += wp_result.get("sections_pruned", 0)
                 sites_updated_count += 1
-                
-                logging.info(f"[MANUAL LINKS] Successfully updated site {target_site_key}: {len(new_links)} links added")
-                
+
+                logging.info(
+                    f"[MANUAL LINKS] Successfully updated site {target_site_key}: {len(new_links)} links added"
+                )
+
                 # Store fingerprints for deduplication
                 new_fps = {fingerprint(link) for link in new_links}
                 mongo_storage.save_new_links(
                     target_post_id, request.date, new_fps, target_site_key
                 )
             else:
-                error_msg = wp_result.get('error', 'Unknown error')
-                logging.error(f"[MANUAL LINKS] Error result from WordPress for site {target_site_key}: {error_msg}")
+                error_msg = wp_result.get("error", "Unknown error")
+                logging.error(
+                    f"[MANUAL LINKS] Error result from WordPress for site {target_site_key}: {error_msg}"
+                )
                 # Raise error for authentication issues so user knows to fix credentials
                 if target_site_key and len(targets_to_process) == 1:
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Failed to update site '{target_site_key}': {error_msg}. Check site credentials in Sites tab."
+                        detail=f"Failed to update site '{target_site_key}': {error_msg}. Check site credentials in Sites tab.",
                     )
         except HTTPException:
             raise  # Re-raise HTTP exceptions
         except Exception as e:
             error_str = str(e)
-            logging.error(f"[MANUAL LINKS] Exception updating site {target_site_key}: {error_str}")
+            logging.error(
+                f"[MANUAL LINKS] Exception updating site {target_site_key}: {error_str}"
+            )
             import traceback
+
             logging.error(traceback.format_exc())
-            
+
             # For authentication errors, provide clear message
             if "401" in error_str or "Unauthorized" in error_str:
                 site_name = target_site_key or "default"
                 raise HTTPException(
                     status_code=401,
-                    detail=f"WordPress authentication failed for site '{site_name}'. Please check the username and Application Password in the Sites tab."
+                    detail=f"WordPress authentication failed for site '{site_name}'. Please check the username and Application Password in the Sites tab.",
                 )
-            
+
             # For single site operations, raise the error
             if len(targets_to_process) == 1:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Failed to update site '{target_site_key}': {error_str}"
+                    detail=f"Failed to update site '{target_site_key}': {error_str}",
                 )
             # For multi-site, continue to next site
 
@@ -836,8 +910,6 @@ async def add_manual_links(request: ManualLinkRequest):
         "sections_pruned": total_sections_pruned,
         "sites_updated": sites_updated_count,
     }
-
-
 
 
 @app.get("/api/extractors/list")
@@ -900,10 +972,12 @@ async def list_wordpress_sites():
     """Get list of configured WordPress sites from MongoDB only."""
     # Load sites directly from MongoDB (no fallback to files or env vars)
     sites = mongo_storage.get_all_wp_sites()
-    
+
     # Log what we're returning
     for site_key, site_data in sites.items():
-        logging.info(f"[SITES LIST] {site_key}: button_style={site_data.get('button_style', 'NOT SET')}")
+        logging.info(
+            f"[SITES LIST] {site_key}: button_style={site_data.get('button_style', 'NOT SET')}"
+        )
 
     # Return sites with app password redacted for frontend safety
     redacted_sites = {}
@@ -921,78 +995,79 @@ async def list_wordpress_sites():
 async def get_cron_settings():
     """Get cron/scheduled update settings from MongoDB."""
     settings = mongo_storage.get_cron_settings()
-    
+
     if not settings:
         # Return default settings
-        return {
-            "enabled": False,
-            "schedule": "hourly",
-            "target_sites": []
-        }
-    
+        return {"enabled": False, "schedule": "hourly", "target_sites": []}
+
     return settings
 
 
 @app.post("/api/cron/settings")
 async def save_cron_settings(settings: dict):
     """Save cron/scheduled update settings to MongoDB."""
-    
+
     # Validate required fields
     if "enabled" not in settings:
         raise HTTPException(status_code=400, detail="Missing 'enabled' field")
-    
+
     if "schedule" not in settings:
         raise HTTPException(status_code=400, detail="Missing 'schedule' field")
-    
+
     # Default target_sites if not provided
     if "target_sites" not in settings or not settings["target_sites"]:
         settings["target_sites"] = []
-    
+
     if mongo_storage.set_cron_settings(settings):
-        logging.info(f"[CRON] Saved settings: enabled={settings['enabled']}, sites={settings['target_sites']}")
-        return {
-            "success": True,
-            "message": "Cron settings saved successfully"
-        }
+        logging.info(
+            f"[CRON] Saved settings: enabled={settings['enabled']}, sites={settings['target_sites']}"
+        )
+        return {"success": True, "message": "Cron settings saved successfully"}
     else:
-        raise HTTPException(status_code=500, detail="Failed to save cron settings to database")
+        raise HTTPException(
+            status_code=500, detail="Failed to save cron settings to database"
+        )
 
 
 @app.post("/api/sites/add")
 async def add_wordpress_site(site_data: dict):
     """Add a new WordPress site to configuration."""
-    
+
     site_key = site_data.get("site_key", "").strip()
     base_url = site_data.get("base_url", "").strip()
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
     display_name = site_data.get("display_name", site_key).strip()
     button_style = site_data.get("button_style", "default").strip()
-    
+
     if not all([site_key, base_url, username, app_password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
-    
+
     # Check if site_key already exists
     existing = mongo_storage.get_wp_site(site_key)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Site key '{site_key}' already exists")
-    
+        raise HTTPException(
+            status_code=400, detail=f"Site key '{site_key}' already exists"
+        )
+
     # Save to MongoDB
     site_config = {
         "base_url": base_url,
         "username": username,
         "app_password": app_password,
         "display_name": display_name,
-        "button_style": button_style
+        "button_style": button_style,
     }
-    
+
     if mongo_storage.set_wp_site(site_key, site_config):
-        logging.info(f"[SITES] Added new site: {site_key} ({display_name}) with button_style: {button_style}")
+        logging.info(
+            f"[SITES] Added new site: {site_key} ({display_name}) with button_style: {button_style}"
+        )
         return {
             "message": "Site added successfully",
             "site_key": site_key,
             "display_name": display_name,
-            "button_style": button_style
+            "button_style": button_style,
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to save site to database")
@@ -1001,44 +1076,48 @@ async def add_wordpress_site(site_data: dict):
 @app.put("/api/sites/{site_key}")
 async def update_wordpress_site(site_key: str, site_data: dict):
     """Update an existing WordPress site configuration."""
-    
+
     base_url = site_data.get("base_url", "").strip()
     username = site_data.get("username", "").strip()
     app_password = site_data.get("app_password", "").strip()
     display_name = site_data.get("display_name", site_key).strip()
     button_style = site_data.get("button_style", "default").strip()
-    
+
     if not all([base_url, username]):
         raise HTTPException(status_code=400, detail="Missing required fields")
-    
+
     # Check if site exists
     existing = mongo_storage.get_wp_site(site_key)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
-    
+
     # Keep existing password if none provided
     if not app_password:
         app_password = existing.get("app_password", "")
-    
+
     if not app_password:
-        raise HTTPException(status_code=400, detail="Site must have an application password")
-    
+        raise HTTPException(
+            status_code=400, detail="Site must have an application password"
+        )
+
     # Update site in MongoDB
     site_config = {
         "base_url": base_url,
         "username": username,
         "app_password": app_password,
         "display_name": display_name,
-        "button_style": button_style
+        "button_style": button_style,
     }
-    
+
     if mongo_storage.set_wp_site(site_key, site_config):
-        logging.info(f"[SITES] Updated site: {site_key} ({display_name}) with button_style: {button_style}")
+        logging.info(
+            f"[SITES] Updated site: {site_key} ({display_name}) with button_style: {button_style}"
+        )
         return {
             "message": "Site updated successfully",
             "site_key": site_key,
             "display_name": display_name,
-            "button_style": button_style
+            "button_style": button_style,
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update site in database")
@@ -1047,21 +1126,20 @@ async def update_wordpress_site(site_key: str, site_data: dict):
 @app.delete("/api/sites/{site_key}")
 async def delete_wordpress_site(site_key: str):
     """Delete a WordPress site from configuration."""
-    
+
     # Check if site exists
     existing = mongo_storage.get_wp_site(site_key)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Site key '{site_key}' not found")
-    
+
     # Delete from MongoDB
     if mongo_storage.delete_wp_site(site_key):
         logging.info(f"[SITES] Deleted site: {site_key}")
-        return {
-            "message": "Site deleted successfully",
-            "site_key": site_key
-        }
+        return {"message": "Site deleted successfully", "site_key": site_key}
     else:
-        raise HTTPException(status_code=500, detail="Failed to delete site from database")
+        raise HTTPException(
+            status_code=500, detail="Failed to delete site from database"
+        )
 
 
 @app.put("/api/posts/{post_id}/config")
@@ -1200,7 +1278,7 @@ async def update_post_now(
         if not target:
             raise HTTPException(
                 status_code=400,
-                detail="Target site must be specified. Use a site key from Sites tab or 'all'."
+                detail="Target site must be specified. Use a site key from Sites tab or 'all'.",
             )
 
         if target == "all":
@@ -1211,16 +1289,16 @@ async def update_post_now(
                 extractor_map=extractor_map,
                 config=config,
             )
-        
+
         if target == "all":
             # Get all configured sites
             sites = mongo_storage.get_all_wp_sites()
             if not sites:
                 raise HTTPException(
                     status_code=400,
-                    detail="No sites configured. Please add sites in the Sites tab."
+                    detail="No sites configured. Please add sites in the Sites tab.",
                 )
-            
+
             all_links = []
             errors = []
 
@@ -1239,7 +1317,9 @@ async def update_post_now(
                     all_links.extend(extracted_links)
                 except RetryError as e:
                     # RetryError wraps the last exception
-                    last_exception = e.last_attempt.exception() if e.last_attempt else None
+                    last_exception = (
+                        e.last_attempt.exception() if e.last_attempt else None
+                    )
                     error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
                     errors.append({"url": url, "error": error_msg})
                     print(f"RetryError for {url}: {error_msg}")
@@ -1248,7 +1328,9 @@ async def update_post_now(
                     errors.append({"url": url, "error": error_msg})
                     print(f"Timeout error for {url}: {error_msg}")
                 except httpx.HTTPStatusError as e:
-                    error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    error_msg = (
+                        f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    )
                     errors.append({"url": url, "error": error_msg})
                     print(f"HTTP error for {url}: {error_msg}")
                 except Exception as e:
@@ -1292,10 +1374,11 @@ async def update_post_now(
             # Step 3: Deduplicate against known links for this specific site using the correct post ID
             # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
             from .dedupe import get_fingerprints_with_lookback
+
             known_fps = get_fingerprints_with_lookback(
                 extractor, target_post_id, today_iso, target_site_key, mongo_storage
             )
-            
+
             new_links = dedupe_by_fingerprint(all_links, known_fps)
 
             print(
@@ -1317,11 +1400,15 @@ async def update_post_now(
                             # Load actual site configuration from MongoDB
                             site_config = mongo_storage.get_wp_site(wp_site)
                             if not site_config:
-                                logging.warning(f"[TRIGGER] Site config not found for {wp_site}, using default")
+                                logging.warning(
+                                    f"[TRIGGER] Site config not found for {wp_site}, using default"
+                                )
                                 site_config = None
                             else:
-                                logging.info(f"[TRIGGER] Loaded site config for {wp_site}, button_style: {site_config.get('button_style', 'default')}")
-                            
+                                logging.info(
+                                    f"[TRIGGER] Loaded site config for {wp_site}, button_style: {site_config.get('button_style', 'default')}"
+                                )
+
                             wp_result = await update_post_links_section(
                                 site_post_id, new_links, wp_site, config, site_config
                             )
@@ -1341,13 +1428,21 @@ async def update_post_now(
                                 # Load actual site configuration from MongoDB
                                 site_config = mongo_storage.get_wp_site(first_site_key)
                                 if not site_config:
-                                    logging.warning(f"[TRIGGER] Site config not found for {first_site_key}, using default")
+                                    logging.warning(
+                                        f"[TRIGGER] Site config not found for {first_site_key}, using default"
+                                    )
                                     site_config = None
                                 else:
-                                    logging.info(f"[TRIGGER] Loaded site config for {first_site_key}, button_style: {site_config.get('button_style', 'default')}")
-                                
+                                    logging.info(
+                                        f"[TRIGGER] Loaded site config for {first_site_key}, button_style: {site_config.get('button_style', 'default')}"
+                                    )
+
                                 wp_result = await update_post_links_section(
-                                    site_post_id, new_links, first_site_key, config, site_config
+                                    site_post_id,
+                                    new_links,
+                                    first_site_key,
+                                    config,
+                                    site_config,
                                 )
                         else:
                             wp_result = {"error": "No WordPress sites configured"}
@@ -1363,17 +1458,20 @@ async def update_post_now(
                     # Group links by their date to save fingerprints correctly
                     if new_links and not wp_result.get("error"):
                         from collections import defaultdict
+
                         fps_by_date = defaultdict(set)
                         for link in new_links:
                             fp = fingerprint(link)
                             fps_by_date[link.published_date_iso].add(fp)
-                        
+
                         # Save fingerprints for each date
                         for date_iso, fps in fps_by_date.items():
                             mongo_storage.save_new_links(
                                 target_post_id, date_iso, fps, target_site_key
                             )
-                            logging.info(f"[TRIGGER] Saved {len(fps)} fingerprints for date {date_iso}")
+                            logging.info(
+                                f"[TRIGGER] Saved {len(fps)} fingerprints for date {date_iso}"
+                            )
 
                         # Update last_updated timestamp
                         config["last_updated"] = datetime.utcnow().isoformat()
@@ -1441,7 +1539,9 @@ async def update_post_now(
                     all_links.extend(links)
                 except RetryError as e:
                     # RetryError wraps the last exception
-                    last_exception = e.last_attempt.exception() if e.last_attempt else None
+                    last_exception = (
+                        e.last_attempt.exception() if e.last_attempt else None
+                    )
                     error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
                     errors.append({"url": url, "error": error_msg})
                     print(f"RetryError for {url}: {error_msg}")
@@ -1450,7 +1550,9 @@ async def update_post_now(
                     errors.append({"url": url, "error": error_msg})
                     print(f"Timeout error for {url}: {error_msg}")
                 except httpx.HTTPStatusError as e:
-                    error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    error_msg = (
+                        f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    )
                     errors.append({"url": url, "error": error_msg})
                     print(f"HTTP error for {url}: {error_msg}")
                 except Exception as e:
@@ -1487,10 +1589,11 @@ async def update_post_now(
                     # Deduplicate against known links for THIS specific site using the correct post ID
                     # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
                     from .dedupe import get_fingerprints_with_lookback
+
                     known_fps = get_fingerprints_with_lookback(
                         extractor, site_post_id, today_iso, site_key, mongo_storage
                     )
-                    
+
                     new_links = dedupe_by_fingerprint(all_links, known_fps)
 
                     print(
@@ -1507,10 +1610,14 @@ async def update_post_now(
                     # Load site configuration from MongoDB
                     site_config = mongo_storage.get_wp_site(site_key)
                     if not site_config:
-                        logging.warning(f"[BATCH] Site config not found for {site_key}, using default")
+                        logging.warning(
+                            f"[BATCH] Site config not found for {site_key}, using default"
+                        )
                         site_config = None
                     else:
-                        logging.info(f"[BATCH] Loaded site config for {site_key}, button_style: {site_config.get('button_style', 'default')}")
+                        logging.info(
+                            f"[BATCH] Loaded site config for {site_key}, button_style: {site_config.get('button_style', 'default')}"
+                        )
 
                     # Update this site with resolved post ID
                     wp_result = await update_post_links_section(
@@ -1522,27 +1629,30 @@ async def update_post_now(
                     # Group links by their date to save fingerprints correctly
                     if not wp_result.get("error"):
                         from collections import defaultdict
+
                         fps_by_date = defaultdict(set)
                         for link in new_links:
                             fp = fingerprint(link)
                             fps_by_date[link.published_date_iso].add(fp)
-                        
+
                         # Save fingerprints for each date
                         for date_iso, fps in fps_by_date.items():
                             mongo_storage.save_new_links(
                                 site_post_id, date_iso, fps, site_key
                             )
-                            logging.info(f"[MULTI-SITE] Saved {len(fps)} fingerprints for site {site_key}, date {date_iso}")
+                            logging.info(
+                                f"[MULTI-SITE] Saved {len(fps)} fingerprints for site {site_key}, date {date_iso}"
+                            )
 
                 except Exception as e:
                     results[site_key] = {"error": str(e)}
 
             return JSONResponse(
                 {
-                    "success": True, 
-                    "post_id": post_id, 
+                    "success": True,
+                    "post_id": post_id,
                     "results": results,
-                    "errors": errors if errors else []
+                    "errors": errors if errors else [],
                 }
             )
 
@@ -1555,8 +1665,7 @@ async def update_post_now(
 
         # Should not reach here - target validation should have caught this
         raise HTTPException(
-            status_code=400,
-            detail="Invalid target. Must be a site key or 'all'."
+            status_code=400, detail="Invalid target. Must be a site key or 'all'."
         )
 
     # Background mode (for Cloud Scheduler parallel updates)
@@ -1844,10 +1953,11 @@ async def run_update_sync(
         # Step 2: Deduplicate against known links for this specific site using correct post ID
         # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
         from .dedupe import get_fingerprints_with_lookback
+
         known_fps = get_fingerprints_with_lookback(
             extractor, target_post_id, today_iso, target_site_key, mongo_storage
         )
-        
+
         new_links = dedupe_by_fingerprint(all_links, known_fps)
 
         # Load site configuration if target_site_key is available
@@ -1855,7 +1965,9 @@ async def run_update_sync(
         if target_site_key:
             site_config = mongo_storage.get_wp_site(target_site_key)
             if site_config:
-                logging.info(f"[SCRAPE ENDPOINT] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+                logging.info(
+                    f"[SCRAPE ENDPOINT] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}"
+                )
 
         # Step 3: Update WordPress using the resolved post ID
         wp_result = await update_post_links_section(
@@ -1866,17 +1978,20 @@ async def run_update_sync(
         # Group links by their date to save fingerprints correctly
         if new_links:
             from collections import defaultdict
+
             fps_by_date = defaultdict(set)
             for link in new_links:
                 fp = fingerprint(link)
                 fps_by_date[link.published_date_iso].add(fp)
-            
+
             # Save fingerprints for each date
             for date_iso, fps in fps_by_date.items():
                 mongo_storage.save_new_links(
                     target_post_id, date_iso, fps, target_site_key
                 )
-                logging.info(f"[SYNC UPDATE] Saved {len(fps)} fingerprints for date {date_iso}")
+                logging.info(
+                    f"[SYNC UPDATE] Saved {len(fps)} fingerprints for date {date_iso}"
+                )
 
         # Send push notification if enabled for this post and new links were added
         if config and is_notifications_enabled(config) and wp_result["links_added"] > 0:
@@ -2097,8 +2212,10 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         config = mongo_storage.get_post_config(post_id)
         if not config:
             raise Exception(f"Post {post_id} not configured")
-        
-        logging.info(f"[BATCH] Post {post_id} config loaded: days_to_keep={config.get('days_to_keep', 'not set')}, full_config_keys={list(config.keys())}")
+
+        logging.info(
+            f"[BATCH] Post {post_id} config loaded: days_to_keep={config.get('days_to_keep', 'not set')}, full_config_keys={list(config.keys())}"
+        )
 
         source_urls = config.get("source_urls", [])
         timezone = config.get("timezone", "Asia/Kolkata")
@@ -2149,7 +2266,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         tz = pytz.timezone(timezone)
         today = datetime.now(tz)
         today_iso = today.strftime("%Y-%m-%d")
-        
+
         # Get extraction mode from config (default: links only)
         extraction_mode = config.get("extraction_mode", "links")
         logging.info(f"[BATCH] Post {post_id} extraction_mode: {extraction_mode}")
@@ -2165,7 +2282,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
 
         all_links = []
         all_promo_codes = []
-        
+
         for url in source_urls:
             html = await fetch_html(url)
 
@@ -2185,7 +2302,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
 
             # Extract based on configured mode
             extracted_items = []
-            
+
             if extraction_mode in ("links", "both"):
                 # Extract links using the extractor's extract method
                 links = extractor.extract(html, today_iso)
@@ -2199,10 +2316,18 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     all_promo_codes.extend(promo_codes)
                     extracted_items.append(f"{len(promo_codes)} promo codes")
                 else:
-                    logging.warning(f"[BATCH] Extractor {extractor.__class__.__name__} does not support promo codes")
+                    logging.warning(
+                        f"[BATCH] Extractor {extractor.__class__.__name__} does not support promo codes"
+                    )
 
             # Record extraction for monitoring (links count)
-            monitor.record_extraction(url, today_iso, len(links) if extraction_mode in ("links", "both") else 0, 1.0, html)
+            monitor.record_extraction(
+                url,
+                today_iso,
+                len(links) if extraction_mode in ("links", "both") else 0,
+                1.0,
+                html,
+            )
 
             await manager.update_post_state(
                 request_id,
@@ -2215,9 +2340,15 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         # Check if we have anything to process
         has_links = len(all_links) > 0
         has_promo_codes = len(all_promo_codes) > 0
-        
+
         if not has_links and not has_promo_codes:
-            content_type = "links" if extraction_mode == "links" else "promo codes" if extraction_mode == "promo_codes" else "content"
+            content_type = (
+                "links"
+                if extraction_mode == "links"
+                else "promo codes"
+                if extraction_mode == "promo_codes"
+                else "content"
+            )
             await manager.update_post_state(
                 request_id,
                 post_id,
@@ -2236,7 +2367,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
             dedup_msg.append(f"{len(all_links)} links")
         if has_promo_codes:
             dedup_msg.append(f"{len(all_promo_codes)} promo codes")
-            
+
         await manager.update_post_state(
             request_id,
             post_id,
@@ -2247,21 +2378,25 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
 
         # Resolve the correct post ID for the target site
         targets_to_process = []
-        
+
         if target == "all":
             # Fetch all configured sites
             sites = get_configured_wp_sites()
             if not sites:
-                # If no sites configured, maybe fallback to default env? 
+                # If no sites configured, maybe fallback to default env?
                 # For now, let's assume at least one site or default env
                 targets_to_process.append({"site_key": None, "post_id": post_id})
             else:
                 for site_key in sites:
                     site_post_id = resolve_post_id_for_site(config, site_key)
                     if site_post_id:
-                        targets_to_process.append({"site_key": site_key, "post_id": site_post_id})
+                        targets_to_process.append(
+                            {"site_key": site_key, "post_id": site_post_id}
+                        )
                     else:
-                        print(f"[BATCH] Warning: No post ID for site {site_key} on post {post_id}")
+                        print(
+                            f"[BATCH] Warning: No post ID for site {site_key} on post {post_id}"
+                        )
         else:
             # For specific sites, resolve the site-specific post ID
             target_post_id = resolve_post_id_for_site(config, target)
@@ -2273,26 +2408,33 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
         total_sections_pruned = 0
         sites_updated_count = 0
         sites_failed = []
-        
+
         for target_info in targets_to_process:
             target_site_key = target_info["site_key"]
             target_post_id = target_info["post_id"]
-            
+
             try:
                 # Deduplicate against known links for this specific site
                 # Uses extractor's check_previous_days() to determine if we need to check previous days' fingerprints
-                from .dedupe import get_fingerprints_with_lookback, promo_code_fingerprint
-                
+                from .dedupe import (
+                    get_fingerprints_with_lookback,
+                    promo_code_fingerprint,
+                )
+
                 new_links = []
                 new_promo_codes = []
-                
+
                 # Deduplicate links if we have any
                 if has_links:
                     known_fps = get_fingerprints_with_lookback(
-                        extractor, target_post_id, today_iso, target_site_key, mongo_storage
+                        extractor,
+                        target_post_id,
+                        today_iso,
+                        target_site_key,
+                        mongo_storage,
                     )
                     new_links = dedupe_by_fingerprint(all_links, known_fps)
-                
+
                 # Deduplicate promo codes if we have any
                 if has_promo_codes:
                     # Get known promo code fingerprints
@@ -2301,7 +2443,8 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     )
                     # Filter out duplicates
                     new_promo_codes = [
-                        pc for pc in all_promo_codes 
+                        pc
+                        for pc in all_promo_codes
                         if promo_code_fingerprint(pc) not in known_promo_fps
                     ]
 
@@ -2310,7 +2453,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     update_msg_parts.append(f"{len(new_links)} links")
                 if new_promo_codes:
                     update_msg_parts.append(f"{len(new_promo_codes)} promo codes")
-                    
+
                 await manager.update_post_state(
                     request_id,
                     post_id,
@@ -2324,7 +2467,9 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                 if target_site_key:
                     site_config = mongo_storage.get_wp_site(target_site_key)
                     if site_config:
-                        logging.info(f"[BATCH UPDATE] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}")
+                        logging.info(
+                            f"[BATCH UPDATE] Loaded site config for {target_site_key}, button_style: {site_config.get('button_style', 'default')}"
+                        )
 
                 # Update WordPress with links
                 wp_links_result = {"links_added": 0, "sections_pruned": 0}
@@ -2332,44 +2477,52 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     wp_links_result = await update_post_links_section(
                         target_post_id, new_links, target_site_key, config, site_config
                     )
-                
+
                 # Update WordPress with promo codes
                 wp_promo_result = {"codes_added": 0}
                 if new_promo_codes:
                     from .wp import update_post_promo_codes_section
+
                     wp_promo_result = await update_post_promo_codes_section(
-                        target_post_id, new_promo_codes, target_site_key, config, site_config
+                        target_post_id,
+                        new_promo_codes,
+                        target_site_key,
+                        config,
+                        site_config,
                     )
-                
+
                 links_added = wp_links_result.get("links_added", 0)
                 codes_added = wp_promo_result.get("codes_added", 0)
-                
-                if not wp_links_result.get("error") and not wp_promo_result.get("error"):
+
+                if not wp_links_result.get("error") and not wp_promo_result.get(
+                    "error"
+                ):
                     total_links_added += links_added
                     total_sections_pruned += wp_links_result.get("sections_pruned", 0)
                     sites_updated_count += 1
-                    
+
                     success_msg_parts = []
                     if links_added > 0:
                         success_msg_parts.append(f"{links_added} links")
                     if codes_added > 0:
                         success_msg_parts.append(f"{codes_added} promo codes")
-                    
+
                     await manager.update_post_state(
                         request_id,
                         post_id,
                         log_message=f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Site '{target_site_key or 'default'}' updated successfully: {' + '.join(success_msg_parts) if success_msg_parts else 'no changes'}",
                     )
-                    
+
                     # Save fingerprints for this specific site
                     # Group links by their date to save fingerprints correctly
                     if new_links:
                         from collections import defaultdict
+
                         fps_by_date = defaultdict(set)
                         for link in new_links:
                             fp = fingerprint(link)
                             fps_by_date[link.published_date_iso].add(fp)
-                        
+
                         # Save fingerprints for each date
                         total_fps_saved = 0
                         for date_iso, fps in fps_by_date.items():
@@ -2377,24 +2530,32 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                                 target_post_id, date_iso, fps, target_site_key
                             )
                             total_fps_saved += len(fps)
-                            logging.info(f"[BATCH UPDATE] Saved {len(fps)} link fingerprints for date {date_iso}")
-                    
+                            logging.info(
+                                f"[BATCH UPDATE] Saved {len(fps)} link fingerprints for date {date_iso}"
+                            )
+
                     # Save promo code fingerprints
                     if new_promo_codes:
-                        promo_fps = {promo_code_fingerprint(pc) for pc in new_promo_codes}
+                        promo_fps = {
+                            promo_code_fingerprint(pc) for pc in new_promo_codes
+                        }
                         mongo_storage.save_new_promo_codes(
                             target_post_id, today_iso, promo_fps, target_site_key
                         )
-                        logging.info(f"[BATCH UPDATE] Saved {len(promo_fps)} promo code fingerprints")
-                        
+                        logging.info(
+                            f"[BATCH UPDATE] Saved {len(promo_fps)} promo code fingerprints"
+                        )
+
                         await manager.update_post_state(
                             request_id,
                             post_id,
                             log_message=f"[{datetime.now().strftime('%H:%M:%S')}] Saved fingerprints for site {target_site_key or 'default'}",
                         )
                 else:
-                    error_msg = wp_links_result.get('error') or wp_promo_result.get('error', 'Unknown error')
-                    sites_failed.append(target_site_key or 'default')
+                    error_msg = wp_links_result.get("error") or wp_promo_result.get(
+                        "error", "Unknown error"
+                    )
+                    sites_failed.append(target_site_key or "default")
                     await manager.update_post_state(
                         request_id,
                         post_id,
@@ -2402,7 +2563,7 @@ async def process_post_update(request_id: str, post_id: int, target: str = "all"
                     )
             except Exception as site_error:
                 # Log the error but continue processing other sites
-                sites_failed.append(target_site_key or 'default')
+                sites_failed.append(target_site_key or "default")
                 await manager.update_post_state(
                     request_id,
                     post_id,
@@ -2618,11 +2779,12 @@ async def get_links_trend_analytics(days: int = 30):
 async def get_all_button_styles():
     """
     Get all available button style templates.
-    
+
     Returns:
         Dict with all button styles, including name, description, and CSS properties
     """
     from . import button_styles
+
     return {"styles": button_styles.get_all_button_styles()}
 
 
@@ -2630,17 +2792,20 @@ async def get_all_button_styles():
 async def get_button_style(style_name: str):
     """
     Get a specific button style by name.
-    
+
     Args:
         style_name: Name of the style (e.g., 'default', 'gradient_blue')
-        
+
     Returns:
         Button style configuration with CSS and hover properties
     """
     from . import button_styles
+
     style = button_styles.get_button_style(style_name)
     if not style:
-        raise HTTPException(status_code=404, detail=f"Button style '{style_name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Button style '{style_name}' not found"
+        )
     return {"style_name": style_name, "style": style}
 
 
@@ -2648,23 +2813,18 @@ async def get_button_style(style_name: str):
 async def preview_button_style(style_name: str):
     """
     Generate preview HTML for a button style.
-    
+
     Args:
         style_name: Name of the style to preview
-        
+
     Returns:
         HTML snippet showing the button in action
     """
     from . import button_styles
-    
+
     # Sample link for preview
-    sample_link = {
-        "url": "#",
-        "title": "Sample Link",
-        "order": 1,
-        "target": "_blank"
-    }
-    
+    sample_link = {"url": "#", "title": "Sample Link", "order": 1, "target": "_blank"}
+
     button_html = button_styles.generate_button_html(sample_link, style_name)
     return {"style_name": style_name, "html": button_html}
 
@@ -2672,17 +2832,23 @@ async def preview_button_style(style_name: str):
 # ==================== Travel Rewards API ====================
 
 
-def _build_rewards_response(post_id: int, static_label: Optional[str] = None) -> Dict[str, Any]:
+def _build_rewards_response(
+    post_id: int, static_label: Optional[str] = None
+) -> Dict[str, Any]:
     """Build grouped rewards response from fingerprints for a specific post."""
     # Get timezone (default to Asia/Kolkata or use post config)
     post_config = mongo_storage.get_post_config(post_id)
-    timezone_str = post_config.get("timezone", "Asia/Kolkata") if post_config else "Asia/Kolkata"
+    timezone_str = (
+        post_config.get("timezone", "Asia/Kolkata") if post_config else "Asia/Kolkata"
+    )
     tz = pytz.timezone(timezone_str)
 
     # Calculate date range (last 5 days)
     now = datetime.now(tz)
     today_date = now.date()
-    dates_to_fetch = [(today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
+    dates_to_fetch = [
+        (today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)
+    ]
 
     # Fetch fingerprints for all dates as ordered lists (newest-added last → reverse for newest-first)
     # Use find() (not find_one) to aggregate across ALL site_keys for the same (post_id, date_iso)
@@ -2731,7 +2897,7 @@ def _build_rewards_response(post_id: int, static_label: Optional[str] = None) ->
 
         rewards.append(
             {
-                "id": f"reward_{idx+1:03d}",
+                "id": f"reward_{idx + 1:03d}",
                 "label": label,
                 "icon": icon,
                 "code": url,  # Using URL as code (can be customized)
@@ -2756,7 +2922,7 @@ async def get_rewards():
     """
     Get all rewards from post 206 fingerprints for the last 5 days.
     Groups rewards by date sections: Today, Yesterday, This Week, Older.
-    
+
     Returns rewards in the format:
     {
         "success": true,
@@ -2787,8 +2953,8 @@ async def get_rewards():
             content={
                 "success": False,
                 "error": "Failed to fetch rewards",
-                "message": str(e)
-            }
+                "message": str(e),
+            },
         )
 
 
@@ -2812,6 +2978,26 @@ async def get_gossip_energy_rewards():
         )
 
 
+@app.get("/api/rewards/domino-rewards")
+async def get_domino_rewards():
+    """
+    Get all rewards from post 259 fingerprints for the last 5 days.
+    Uses a static label for all links: '2X Free Coins'.
+    """
+    try:
+        return _build_rewards_response(post_id=259, static_label="2X Free Coins")
+    except Exception as e:
+        logging.error(f"Error fetching domino rewards: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Failed to fetch domino rewards",
+                "message": str(e),
+            },
+        )
+
+
 def _extract_label_from_url(url: str) -> str:
     """
     Extract a human-readable label from a URL.
@@ -2821,13 +3007,13 @@ def _extract_label_from_url(url: str) -> str:
     if "_" in last_segment:
         suffix = last_segment.rsplit("_", 1)[-1].upper()
         suffix_energy_map = {
-            "FCB":     "25 Energy",
+            "FCB": "25 Energy",
             "TRADING": "10 Energy",
-            "INS":     "15 Energy",
-            "TWI":     "10 Energy",
-            "WA":      "20 Energy",
-            "PUSH":    "25 Energy",
-            "CHATB":   "10 Energy",
+            "INS": "15 Energy",
+            "TWI": "10 Energy",
+            "WA": "20 Energy",
+            "PUSH": "25 Energy",
+            "CHATB": "10 Energy",
         }
         if suffix in suffix_energy_map:
             return suffix_energy_map[suffix]
@@ -2841,14 +3027,14 @@ def _determine_icon_type(label: str) -> str:
     Returns: 'energy', 'coins', or 'gems'
     """
     label_lower = label.lower()
-    
+
     if "energy" in label_lower or "energies" in label_lower:
         return "energy"
     elif "coin" in label_lower or "coins" in label_lower:
         return "coins"
     elif "gem" in label_lower or "gems" in label_lower:
         return "gems"
-    
+
     # Default to energy
     return "energy"
 
@@ -2898,6 +3084,7 @@ def _group_rewards_by_sections(rewards: List[Dict], now: datetime, tz) -> List[D
 # Push Notification Endpoints
 # ---------------------------------------------------------------------------
 
+
 class PushTokenRequest(BaseModel):
     token: str
     device_type: str  # "android" or "ios"
@@ -2906,8 +3093,10 @@ class PushTokenRequest(BaseModel):
     notifications_enabled: bool = True
     app_id: str = "travel_town"  # Identifies which game app this token belongs to
 
+
 class UpdateTokenStateRequest(BaseModel):
     notifications_enabled: bool
+
 
 class SendRewardsNotificationRequest(BaseModel):
     app_id: str
@@ -2991,7 +3180,12 @@ async def send_new_rewards_notification(req: SendRewardsNotificationRequest):
 
         all_tokens = mongo_storage.list_push_tokens()
         if not all_tokens:
-            return {"success": True, "message": "No tokens registered", "sent": 0, "failed": 0}
+            return {
+                "success": True,
+                "message": "No tokens registered",
+                "sent": 0,
+                "failed": 0,
+            }
 
         app_tokens = {
             token_id: token_data
@@ -3091,5 +3285,3 @@ async def list_tokens_for_app(app_id: str):
     except Exception as e:
         logging.error(f"Error listing tokens for app_id '{app_id}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-

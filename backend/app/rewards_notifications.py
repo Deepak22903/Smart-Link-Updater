@@ -13,6 +13,7 @@ from .push_notifications import notify_new_rewards
 POST_NOTIFICATION_APP_MAP: Dict[int, str] = {
     206: "travel_town",  # Travel Town rewards app
     1149: "gossip_energy",  # Gossip Energy rewards app
+    259: "domino_rewards",  # Domino Rewards app
 }
 
 

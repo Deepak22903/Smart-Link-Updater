@@ -22,6 +22,8 @@ COPY .env .env
 # Copy Firebase service account (if exists)
 # For production, use Secret Manager instead (see FIREBASE_DEPLOY_GUIDE.md)
 COPY firebase-adminsdk.json ./firebase-adminsdk.json
+COPY firebase-adminsdk-gossip-energy.json ./firebase-adminsdk-gossip-energy.json
+COPY firebase-adminsdk-domino-rewards.json ./firebase-adminsdk-domino-rewards.json
 
 # Create data directory for runtime files (MongoDB handles data persistence)
 RUN mkdir -p backend/data
