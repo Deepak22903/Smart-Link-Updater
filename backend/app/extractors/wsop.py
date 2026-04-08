@@ -5,6 +5,7 @@ from .base import BaseExtractor
 from ..models import Link
 from ..extractors import register_extractor
 from datetime import datetime, timedelta
+import os
 import logging
 
 @register_extractor("wsop")
@@ -14,8 +15,22 @@ class WSOPExtractor(BaseExtractor):
     def can_handle(self, url: str) -> bool:
         url_lower = url.lower()
         return any(domain in url_lower for domain in ["wsopga.me", "freechipswsop.com", "wsopchipsfree.com"])
-    
-    # Note: Using default check_previous_days() which returns 1 (today + yesterday)
+
+    def check_previous_days(self) -> int:
+        """
+        Number of historical days to include along with the target date.
+
+        Controlled via env var `WSOP_PREVIOUS_DAYS` (fallback: `WSOP_LOOKBACK_DAYS`).
+        Example: 3 means fetch target date + previous 3 days (4 days total).
+        """
+        raw_value = os.getenv("WSOP_PREVIOUS_DAYS", os.getenv("WSOP_LOOKBACK_DAYS", "1"))
+        try:
+            return max(0, min(int(raw_value), 30))
+        except (TypeError, ValueError):
+            logging.warning(
+                f"[WSOPExtractor] Invalid WSOP_PREVIOUS_DAYS value '{raw_value}', defaulting to 1"
+            )
+            return 1
 
     def _generate_date_patterns(self, date_obj: datetime) -> List[str]:
         """Generate all possible date format variations for matching headings."""
@@ -52,23 +67,26 @@ class WSOPExtractor(BaseExtractor):
             except ValueError:
                 logging.warning(f"[WSOPExtractor] Could not parse date: {date}")
                 return []
-        
-        # Calculate yesterday's date
-        yesterday_obj = date_obj - timedelta(days=1)
-        
-        # Generate date patterns
-        today_patterns = self._generate_date_patterns(date_obj)
-        yesterday_patterns = self._generate_date_patterns(yesterday_obj)
-        
-        date_iso = date_obj.strftime("%Y-%m-%d")
-        yesterday_iso = yesterday_obj.strftime("%Y-%m-%d")
-        
-        logging.info(f"[WSOPExtractor] Looking for TODAY ({date_iso}) and YESTERDAY ({yesterday_iso})")
-        logging.debug(f"[WSOPExtractor] Today patterns: {today_patterns}")
-        logging.debug(f"[WSOPExtractor] Yesterday patterns: {yesterday_patterns}")
 
-        today_links = OrderedDict()
-        yesterday_links = OrderedDict()
+        lookback_days = self.check_previous_days()
+
+        # Build target dates: day 0 (target date), day 1 (yesterday), ... day N
+        target_dates = [date_obj - timedelta(days=i) for i in range(0, lookback_days + 1)]
+        date_configs = []
+        for i, target_date_obj in enumerate(target_dates):
+            target_iso = target_date_obj.strftime("%Y-%m-%d")
+            patterns = self._generate_date_patterns(target_date_obj)
+            date_configs.append({
+                "offset": i,
+                "iso": target_iso,
+                "patterns": [p.lower() for p in patterns],
+                "links": OrderedDict()
+            })
+
+        logging.info(
+            f"[WSOPExtractor] Looking for target date + previous {lookback_days} day(s) "
+            f"({target_dates[0].strftime('%Y-%m-%d')} back to {target_dates[-1].strftime('%Y-%m-%d')})"
+        )
         
         # Find all <p><strong>DATE</strong></p> headings
         for p in soup.find_all("p"):
@@ -77,19 +95,23 @@ class WSOPExtractor(BaseExtractor):
                 continue
             
             strong_text = strong.get_text(strip=True).rstrip(':')
-            
-            # Determine if this is today's or yesterday's heading
-            is_today = any(pattern.lower() == strong_text.lower() for pattern in today_patterns)
-            is_yesterday = any(pattern.lower() == strong_text.lower() for pattern in yesterday_patterns)
-            
-            if not is_today and not is_yesterday:
+
+            # Determine which target day this heading belongs to
+            strong_text_lower = strong_text.lower()
+            matched_config = None
+            for cfg in date_configs:
+                if strong_text_lower in cfg["patterns"]:
+                    matched_config = cfg
+                    break
+
+            if not matched_config:
                 continue
-            
-            target_dict = today_links if is_today else yesterday_links
-            target_date_iso = date_iso if is_today else yesterday_iso
-            day_label = "TODAY" if is_today else "YESTERDAY"
-            
-            logging.info(f"[WSOPExtractor] Found {day_label}'s heading: {strong_text}")
+
+            target_dict = matched_config["links"]
+            target_date_iso = matched_config["iso"]
+            day_label = f"DAY-{matched_config['offset']}"
+
+            logging.info(f"[WSOPExtractor] Found {day_label} heading: {strong_text}")
             
             # Walk subsequent siblings to find <ol> or <ul> lists
             for sibling in p.find_next_siblings():
@@ -116,15 +138,15 @@ class WSOPExtractor(BaseExtractor):
                                     date=target_date_iso,
                                     published_date_iso=target_date_iso
                                 )
-        
-        logging.info(f"[WSOPExtractor] Found {len(today_links)} TODAY links, {len(yesterday_links)} YESTERDAY links")
-        
-        # Combine: today's links first, then yesterday's (without duplicates)
-        for href, link in today_links.items():
-            url_map[href] = link
-        for href, link in yesterday_links.items():
-            if href not in url_map:
-                url_map[href] = link
+
+        per_day_counts = [f"DAY-{cfg['offset']}={len(cfg['links'])}" for cfg in date_configs]
+        logging.info(f"[WSOPExtractor] Found links by day: {', '.join(per_day_counts)}")
+
+        # Combine links newest to oldest, deduped by URL
+        for cfg in date_configs:
+            for href, link in cfg["links"].items():
+                if href not in url_map:
+                    url_map[href] = link
         
         total = len(url_map)
         logging.info(f"[WSOPExtractor] Total links extracted (deduped): {total}")

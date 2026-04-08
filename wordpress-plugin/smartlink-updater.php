@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://cables-bare-rentals-embassy.trycloudflare.com';
+    private $api_base_url = 'https://kidney-bookmarks-jewel-stood.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
@@ -3026,9 +3026,9 @@ class SmartLinkUpdater {
                     configData.content_slug = contentSlug;
                 }
                 
-                if (siteConfig.autoUpdateSites.length > 0) {
-                    configData.auto_update_sites = siteConfig.autoUpdateSites;
-                }
+                // Always send auto_update_sites, even when empty.
+                // This allows edit mode to clear previously saved toggles.
+                configData.auto_update_sites = siteConfig.autoUpdateSites;
                 
                 if (daysToKeep > 0 && daysToKeep <= 30) {
                     configData.days_to_keep = daysToKeep;
