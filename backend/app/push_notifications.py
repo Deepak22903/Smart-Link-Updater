@@ -18,6 +18,7 @@ APP_ID_TO_FIREBASE_APP_NAME: Dict[str, str] = {
     "travel_town": "travel_town",
     "gossip_energy": "gossip_energy",
     "domino_rewards": "domino_rewards",
+    "match_rewards": "match_rewards",
 }
 
 # Default credential file candidates per app_id.
@@ -34,6 +35,10 @@ APP_ID_CREDENTIAL_CANDIDATES: Dict[str, List[Path]] = {
     "domino_rewards": [
         Path("/app/firebase-adminsdk-domino-rewards.json"),
         Path(__file__).parent.parent.parent / "firebase-adminsdk-domino-rewards.json",
+    ],
+    "match_rewards": [
+        Path("/app/firebase-adminsdk-match-rewards.json"),
+        Path(__file__).parent.parent.parent / "firebase-adminsdk-match-rewards.json",
     ],
 }
 

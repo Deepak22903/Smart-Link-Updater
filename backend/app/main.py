@@ -2998,6 +2998,26 @@ async def get_domino_rewards():
         )
 
 
+@app.get("/api/rewards/match-rewards")
+async def get_match_rewards():
+    """
+    Get all rewards from post 1285 fingerprints for the last 5 days.
+    Uses a static label for all links: '1+ Free Gifts'.
+    """
+    try:
+        return _build_rewards_response(post_id=1285, static_label="1+ Free Gifts")
+    except Exception as e:
+        logging.error(f"Error fetching match rewards: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "Failed to fetch match rewards",
+                "message": str(e),
+            },
+        )
+
+
 def _extract_label_from_url(url: str) -> str:
     """
     Extract a human-readable label from a URL.

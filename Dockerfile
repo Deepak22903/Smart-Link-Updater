@@ -24,6 +24,8 @@ COPY .env .env
 COPY firebase-adminsdk.json ./firebase-adminsdk.json
 COPY firebase-adminsdk-gossip-energy.json ./firebase-adminsdk-gossip-energy.json
 COPY firebase-adminsdk-domino-rewards.json ./firebase-adminsdk-domino-rewards.json
+COPY firebase-adminsdk-match-rewards.json ./firebase-adminsdk-match-rewards.json
+
 
 # Create data directory for runtime files (MongoDB handles data persistence)
 RUN mkdir -p backend/data
