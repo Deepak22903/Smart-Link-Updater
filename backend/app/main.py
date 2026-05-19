@@ -2981,11 +2981,11 @@ async def get_gossip_energy_rewards():
 @app.get("/api/rewards/domino-rewards")
 async def get_domino_rewards():
     """
-    Get all rewards from post 259 fingerprints for the last 5 days.
+    Get all rewards from post 1328 fingerprints for the last 5 days.
     Uses a static label for all links: '2X Free Coins'.
     """
     try:
-        return _build_rewards_response(post_id=259, static_label="2X Free Coins")
+        return _build_rewards_response(post_id=1328, static_label="2X Free Coins")
     except Exception as e:
         logging.error(f"Error fetching domino rewards: {e}")
         return JSONResponse(

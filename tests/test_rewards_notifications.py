@@ -184,7 +184,7 @@ async def test_notify_rewards_update_keeps_domino_rewards_mapping(monkeypatch):
         rewards_notifications, "notify_new_rewards", fake_notify_new_rewards
     )
 
-    await rewards_notifications.notify_rewards_update_for_post(259, 4)
+    await rewards_notifications.notify_rewards_update_for_post(1328, 4)
 
     assert set(sent["tokens"].keys()) == {"a", "c"}
     assert sent["count"] == 4

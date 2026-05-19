@@ -4,7 +4,7 @@ from backend.app import main
 
 
 @pytest.mark.asyncio
-async def test_get_domino_rewards_uses_post_259_and_static_label(monkeypatch):
+async def test_get_domino_rewards_uses_post_1328_and_static_label(monkeypatch):
     captured = {}
 
     def fake_build_rewards_response(post_id: int, static_label=None):
@@ -17,5 +17,5 @@ async def test_get_domino_rewards_uses_post_259_and_static_label(monkeypatch):
     result = await main.get_domino_rewards()
 
     assert result["success"] is True
-    assert captured["post_id"] == 259
+    assert captured["post_id"] == 1328
     assert captured["static_label"] == "2X Free Coins"
