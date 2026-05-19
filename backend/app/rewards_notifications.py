@@ -38,7 +38,23 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
     if links_added <= 0:
         return
 
+    # First try direct mapping using the provided post_id.
+    # If not found, resolve canonical config post_id (handles site-specific IDs).
+    mapped_post_id = post_id
     app_id = POST_NOTIFICATION_APP_MAP.get(post_id)
+
+    if not app_id:
+        try:
+            config = mongo_storage.get_post_config(post_id)
+            canonical_post_id = config.get("post_id") if config else None
+            if isinstance(canonical_post_id, int):
+                mapped_post_id = canonical_post_id
+                app_id = POST_NOTIFICATION_APP_MAP.get(canonical_post_id)
+        except Exception as resolve_error:
+            logging.warning(
+                f"[NOTIFY] Failed canonical post_id lookup for {post_id}: {resolve_error}"
+            )
+
     if not app_id:
         logging.info(
             f"[NOTIFY] No app_id mapping for post {post_id} in POST_NOTIFICATION_APP_MAP, skipping notification"
@@ -55,7 +71,7 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
 
         if not app_tokens:
             logging.info(
-                f"[NOTIFY] No tokens registered for app_id='{app_id}' (post {post_id}), skipping"
+                f"[NOTIFY] No tokens registered for app_id='{app_id}' (post {mapped_post_id}), skipping"
             )
             return
 
@@ -63,7 +79,7 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
         sent = len(result.get("success", []))
         failed = len(result.get("failed", []))
         logging.info(
-            f"[NOTIFY] Post {post_id} (app='{app_id}'): Notified {sent}/{sent + failed} devices, {links_added} new links"
+            f"[NOTIFY] Post {mapped_post_id} (app='{app_id}'): Notified {sent}/{sent + failed} devices, {links_added} new links"
         )
     except Exception as e:
         logging.error(f"[NOTIFY] Failed to send notification for post {post_id}: {e}")

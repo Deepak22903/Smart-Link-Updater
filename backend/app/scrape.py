@@ -5,6 +5,17 @@ from tenacity import retry, stop_after_attempt, wait_exponential, RetryError
 
 SCRAPER_API_URL = os.getenv("SCRAPER_API_URL")  # e.g., https://api.scraperapi.com
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY")
+DEFAULT_HEADERS = {
+    "User-Agent": os.getenv(
+        "SCRAPER_USER_AGENT",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
@@ -16,12 +27,12 @@ async def fetch_html(url: str, timeout: float = 30.0) -> str:
     # If configured, use ScraperAPI-like service; else fetch directly
     if SCRAPER_API_URL and SCRAPER_API_KEY:
         params = {"api_key": SCRAPER_API_KEY, "url": url, "render": "true"}
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers=DEFAULT_HEADERS) as client:
             r = await client.get(SCRAPER_API_URL, params=params)
             r.raise_for_status()
             return r.text
     else:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers=DEFAULT_HEADERS) as client:
             r = await client.get(url)
             r.raise_for_status()
             return r.text

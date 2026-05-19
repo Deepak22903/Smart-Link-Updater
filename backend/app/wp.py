@@ -276,7 +276,19 @@ async def update_post_links_section(
 
     # Parse existing content to remove old "links-for-today" sections
     # Keep only sections from the last N days (configurable per post, default 5)
-    days_to_keep = post_config.get("days_to_keep", 5) if post_config else 5
+    raw_days_to_keep = post_config.get("days_to_keep", 5) if post_config else 5
+    try:
+        days_to_keep = int(raw_days_to_keep)
+    except (TypeError, ValueError):
+        logging.warning(
+            f"[WP] Invalid days_to_keep value '{raw_days_to_keep}' for post {post_id}; defaulting to 5"
+        )
+        days_to_keep = 5
+    if days_to_keep < 1:
+        logging.warning(
+            f"[WP] days_to_keep={days_to_keep} for post {post_id} is < 1; clamping to 1"
+        )
+        days_to_keep = 1
     logging.info(
         f"[WP] Post {post_id} config: days_to_keep = {days_to_keep} (from config: {post_config.get('days_to_keep') if post_config else 'not set'})"
     )
@@ -365,6 +377,7 @@ async def update_post_links_section(
 
     # Find and filter sections (check both new block format and old format)
     sections_to_remove = []
+    sections_pruned_old = 0
     existing_links = []
     total_sections_found = 0  # Track total sections before removal
     sections_to_keep_count = 0  # Track how many non-today sections we're keeping
@@ -401,6 +414,7 @@ async def update_post_links_section(
                 sections_to_remove.append((match.start(), match.end(), section_text))
             elif not should_keep_section(section_text, section_date_str):
                 sections_to_remove.append((match.start(), match.end(), section_text))
+                sections_pruned_old += 1
             else:
                 # This section will be kept
                 sections_to_keep_count += 1
@@ -440,6 +454,7 @@ async def update_post_links_section(
                 sections_to_remove.append((match.start(), match.end(), section_text))
             elif not should_keep_section(section_text, section_date_str):
                 sections_to_remove.append((match.start(), match.end(), section_text))
+                sections_pruned_old += 1
             else:
                 # This section will be kept
                 sections_to_keep_count += 1
@@ -666,7 +681,7 @@ async def update_post_links_section(
     # 3. If no sections existed at all: insert after first H2 (fresh post)
 
     # Use the same pattern - match to the "Last updated" timestamp as anchor
-    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>\s*</div>'
+    smartlink_block_pattern = r'<div class="wp-block-group smartlink-updater-section[^>]*>.*?<p class="has-text-color"[^>]*>.*?Last updated:.*?</p>\s*</div>'
 
     # Check if any SmartLink sections remain after pruning (using sections_to_keep_count)
     # We already calculated how many sections we're keeping, so use that instead of re-searching
@@ -952,7 +967,7 @@ async def update_post_links_section(
 
     # Return info about what happened
     return {
-        "sections_pruned": len(sections_to_remove),
+        "sections_pruned": sections_pruned_old,
         "links_added": len(links),
         "total_links_in_section": len(merged_links),
         "existing_links_preserved": len(existing_links),
@@ -1065,7 +1080,20 @@ async def update_post_promo_codes_section(
         return {"codes_added": 0, "updated": False}
 
     # Get configuration
-    days_to_keep = post_config.get("days_to_keep", 5) if post_config else 5
+    raw_days_to_keep = post_config.get("days_to_keep", 5) if post_config else 5
+    try:
+        days_to_keep = int(raw_days_to_keep)
+    except (TypeError, ValueError):
+        logging.warning(
+            f"[WP PROMO] Invalid days_to_keep value '{raw_days_to_keep}' for post {post_id}; defaulting to 5"
+        )
+        days_to_keep = 5
+    if days_to_keep < 1:
+        logging.warning(
+            f"[WP PROMO] days_to_keep={days_to_keep} for post {post_id} is < 1; clamping to 1"
+        )
+        days_to_keep = 1
+
     section_title = (
         post_config.get("promo_code_section_title", None) if post_config else None
     )

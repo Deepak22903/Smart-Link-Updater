@@ -88,38 +88,28 @@ class WSOPExtractor(BaseExtractor):
             f"({target_dates[0].strftime('%Y-%m-%d')} back to {target_dates[-1].strftime('%Y-%m-%d')})"
         )
         
-        # Find all <p><strong>DATE</strong></p> headings
-        for p in soup.find_all("p"):
-            strong = p.find("strong")
-            if not strong:
-                continue
-            
-            strong_text = strong.get_text(strip=True).rstrip(':')
-
-            # Determine which target day this heading belongs to
-            strong_text_lower = strong_text.lower()
-            matched_config = None
+        def _match_heading_to_config(heading_text: str):
+            heading_text_lower = heading_text.lower()
             for cfg in date_configs:
-                if strong_text_lower in cfg["patterns"]:
-                    matched_config = cfg
-                    break
+                if heading_text_lower in cfg["patterns"]:
+                    return cfg
+            return None
 
+        def _extract_links_after_heading(heading_tag, heading_text: str, stop_on_tag_names):
+            matched_config = _match_heading_to_config(heading_text)
             if not matched_config:
-                continue
+                return
 
             target_dict = matched_config["links"]
             target_date_iso = matched_config["iso"]
             day_label = f"DAY-{matched_config['offset']}"
 
-            logging.info(f"[WSOPExtractor] Found {day_label} heading: {strong_text}")
-            
-            # Walk subsequent siblings to find <ol> or <ul> lists
-            for sibling in p.find_next_siblings():
-                # Stop at next <p><strong> (next date heading)
-                if sibling.name == 'p' and sibling.find('strong'):
+            logging.info(f"[WSOPExtractor] Found {day_label} heading: {heading_text}")
+
+            for sibling in heading_tag.find_next_siblings():
+                if sibling.name in stop_on_tag_names:
                     break
-                
-                # Process ordered/unordered lists
+
                 if sibling.name in ('ol', 'ul'):
                     for li in sibling.find_all('li'):
                         for a in li.find_all('a', href=True):
@@ -128,7 +118,7 @@ class WSOPExtractor(BaseExtractor):
                                 continue
                             if 'wsopga.me' not in href:
                                 continue
-                            
+
                             title = a.get_text(strip=True) or "Free Chips"
                             if href not in target_dict:
                                 logging.info(f"[WSOPExtractor] Extracted: {href} | Title: {title}")
@@ -138,6 +128,28 @@ class WSOPExtractor(BaseExtractor):
                                     date=target_date_iso,
                                     published_date_iso=target_date_iso
                                 )
+
+        # Find all <p><strong>DATE</strong></p> headings
+        for p in soup.find_all("p"):
+            strong = p.find("strong")
+            if not strong:
+                continue
+
+            strong_text = strong.get_text(strip=True).rstrip(':')
+            _extract_links_after_heading(
+                heading_tag=p,
+                heading_text=strong_text,
+                stop_on_tag_names={'p', 'h3'}
+            )
+
+        # Find all <h3 class="wp-block-heading">DATE</h3> headings
+        for h3 in soup.find_all("h3"):
+            heading_text = h3.get_text(strip=True).rstrip(':')
+            _extract_links_after_heading(
+                heading_tag=h3,
+                heading_text=heading_text,
+                stop_on_tag_names={'p', 'h3'}
+            )
 
         per_day_counts = [f"DAY-{cfg['offset']}={len(cfg['links'])}" for cfg in date_configs]
         logging.info(f"[WSOPExtractor] Found links by day: {', '.join(per_day_counts)}")
