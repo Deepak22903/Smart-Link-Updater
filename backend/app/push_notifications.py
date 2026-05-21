@@ -69,15 +69,28 @@ def _resolve_credential_path_for_app(app_id: str) -> Path | None:
     env_path = os.getenv(env_key)
     if env_path:
         candidate = Path(env_path)
+        logger.debug(
+            f"Checking credential override for app_id '{app_id}': {candidate}"
+        )
         if candidate.exists():
+            logger.info(
+                f"Using credential override for app_id '{app_id}' from {candidate}"
+            )
             return candidate
         logger.error(
             f"Credential override path from {env_key} not found: {candidate}"
         )
 
     candidates = APP_ID_CREDENTIAL_CANDIDATES.get(app_id, [])
+    logger.debug(
+        f"Resolving credentials for app_id '{app_id}' from {len(candidates)} candidates"
+    )
     for candidate in candidates:
+        logger.debug(f"Checking credential path: {candidate}")
         if candidate.exists():
+            logger.info(
+                f"Using default credential path for app_id '{app_id}' from {candidate}"
+            )
             return candidate
 
     logger.error(
@@ -91,6 +104,7 @@ def _resolve_credential_path_for_app(app_id: str) -> Path | None:
 def initialize_firebase(app_id: str):
     """Initialize and return Firebase Admin app for a specific app_id."""
     try:
+        logger.debug(f"Initializing Firebase app for app_id '{app_id}'")
         app_name = APP_ID_TO_FIREBASE_APP_NAME.get(app_id)
         if not app_name:
             logger.error(f"Unsupported app_id '{app_id}' for Firebase send")
@@ -98,9 +112,15 @@ def initialize_firebase(app_id: str):
 
         # Return existing named app if already initialized
         try:
-            return firebase_admin.get_app(app_name)
+            existing_app = firebase_admin.get_app(app_name)
+            logger.debug(
+                f"Reusing existing Firebase app instance for app_id '{app_id}'"
+            )
+            return existing_app
         except ValueError:
-            pass
+            logger.debug(
+                f"No existing Firebase app for app_id '{app_id}', initializing new instance"
+            )
 
         cred_path = _resolve_credential_path_for_app(app_id)
         if not cred_path:
@@ -154,14 +174,20 @@ async def send_push_notification(
         Dict with success/failed token lists
     """
     if not tokens:
+        logger.warning("[FCM] No tokens provided for send_push_notification")
         return {"success": [], "failed": [], "error": "No tokens provided"}
     
     if not app_id:
+        logger.error("[FCM] app_id is required for send_push_notification")
         return {"success": [], "failed": [], "error": "app_id is required"}
 
     # Initialize Firebase app for scoped app_id
+    logger.info(
+        f"[FCM] Starting single-send for app_id '{app_id}' to {len(tokens)} token(s)"
+    )
     fb_app = initialize_firebase(app_id)
     if not fb_app:
+        logger.error(f"[FCM] Firebase initialization failed for app_id '{app_id}'")
         return {
             "success": [],
             "failed": [],
@@ -178,10 +204,16 @@ async def send_push_notification(
     
     # Convert data values to strings (FCM requirement)
     fcm_data = {k: str(v) for k, v in (data or {}).items()}
+    logger.debug(
+        f"[FCM] Payload details app_id '{app_id}': title='{title}', body_length={len(body or '')}, data_keys={list(fcm_data.keys())}"
+    )
     
     # Send to each token
-    for token in tokens:
+    for idx, token in enumerate(tokens, start=1):
         try:
+            logger.debug(
+                f"[FCM] Sending to token {idx}/{len(tokens)}: {token[:20]}..."
+            )
             message = messaging.Message(
                 notification=notification,
                 data=fcm_data,
@@ -262,14 +294,20 @@ async def send_multicast_notification(
         Dict with success/failed counts and details
     """
     if not tokens:
+        logger.warning("[FCM] No tokens provided for send_multicast_notification")
         return {"success": [], "failed": [], "error": "No tokens provided"}
     
     if not app_id:
+        logger.error("[FCM] app_id is required for send_multicast_notification")
         return {"success": [], "failed": [], "error": "app_id is required"}
 
     # Initialize Firebase app for scoped app_id
+    logger.info(
+        f"[FCM] Starting multicast send for app_id '{app_id}' to {len(tokens)} token(s)"
+    )
     fb_app = initialize_firebase(app_id)
     if not fb_app:
+        logger.error(f"[FCM] Firebase initialization failed for app_id '{app_id}'")
         return {
             "success": [],
             "failed": [],
@@ -278,6 +316,9 @@ async def send_multicast_notification(
     
     # Convert data values to strings
     fcm_data = {k: str(v) for k, v in (data or {}).items()}
+    logger.debug(
+        f"[FCM] Multicast payload app_id '{app_id}': title='{title}', body_length={len(body or '')}, data_keys={list(fcm_data.keys())}"
+    )
     
     # Create multicast message
     message = messaging.MulticastMessage(
@@ -329,7 +370,9 @@ async def send_multicast_notification(
                     logger.warning(f"Invalid/foreign token from multicast: {token[:20]}... — removing from DB")
                     _cleanup_stale_token(token)
         
-        logger.info(f"FCM multicast sent: {response.success_count} success, {response.failure_count} failed")
+        logger.info(
+            f"FCM multicast sent: {response.success_count} success, {response.failure_count} failed"
+        )
         return results
         
     except Exception as e:
@@ -358,6 +401,7 @@ async def notify_new_rewards(
         Dict with notification send results
     """
     if not app_id:
+        logger.error("[NOTIFY] app_id is required for notify_new_rewards")
         return {"success": [], "failed": [], "message": "app_id is required"}
 
     if app_id not in APP_ID_TO_FIREBASE_APP_NAME:
@@ -368,11 +412,26 @@ async def notify_new_rewards(
         }
 
     # Filter tokens by app_id and notifications_enabled=True
-    tokens_list = [
-        data["token"]
-        for data in push_tokens_dict.values()
-        if data.get("notifications_enabled", True) and data.get("app_id") == app_id
-    ]
+    total_tokens = len(push_tokens_dict)
+    enabled_tokens = 0
+    app_matched_tokens = 0
+    tokens_list = []
+    for token_id, data in push_tokens_dict.items():
+        if not data.get("notifications_enabled", True):
+            continue
+        enabled_tokens += 1
+        if data.get("app_id") != app_id:
+            continue
+        app_matched_tokens += 1
+        tokens_list.append(data["token"])
+
+    logger.debug(
+        "[NOTIFY] Token filter summary for app_id '%s': total=%d, enabled=%d, app_matched=%d",
+        app_id,
+        total_tokens,
+        enabled_tokens,
+        app_matched_tokens,
+    )
 
     if not tokens_list:
         logger.warning("No push tokens registered for notification or all tokens disabled")
@@ -381,10 +440,13 @@ async def notify_new_rewards(
     title = title or "New Rewards Available! 🎁"
     body = body or (f"{count} new rewards added!" if count else "Check out the latest rewards")
     
-    logger.info(f"Sending FCM notification to {len(tokens_list)} devices")
+    logger.info(
+        f"Sending FCM notification to {len(tokens_list)} devices (app_id='{app_id}')"
+    )
     
     # Use multicast for better performance if many tokens
     if len(tokens_list) > 10:
+        logger.debug("[NOTIFY] Using multicast send strategy")
         result = await send_multicast_notification(
             tokens=tokens_list,
             title=title,
@@ -393,6 +455,7 @@ async def notify_new_rewards(
             app_id=app_id,
         )
     else:
+        logger.debug("[NOTIFY] Using single-send strategy")
         result = await send_push_notification(
             tokens=tokens_list,
             title=title,

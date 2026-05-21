@@ -36,13 +36,20 @@ def is_notifications_enabled(config: Dict[str, Any] | None) -> bool:
 async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None:
     """Send a rewards notification to tokens belonging to the post's mapped app."""
     if links_added <= 0:
+        logging.debug(
+            f"[NOTIFY] Skipping notifications for post {post_id} (links_added={links_added})"
+        )
         return
 
     # First try direct mapping using the provided post_id.
-    # If not found, resolve canonical config post_id (handles site-specific IDs).
+    # If not found, resolve canonical config post_id and any site_post_ids (multi-site).
     mapped_post_id = post_id
     app_id = POST_NOTIFICATION_APP_MAP.get(post_id)
+    logging.debug(
+        f"[NOTIFY] Resolving app_id for post {post_id}: initial app_id='{app_id}'"
+    )
 
+    config = None
     if not app_id:
         try:
             config = mongo_storage.get_post_config(post_id)
@@ -50,10 +57,30 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
             if isinstance(canonical_post_id, int):
                 mapped_post_id = canonical_post_id
                 app_id = POST_NOTIFICATION_APP_MAP.get(canonical_post_id)
+                logging.debug(
+                    f"[NOTIFY] Canonical post_id resolved for {post_id} -> {canonical_post_id}, app_id='{app_id}'"
+                )
         except Exception as resolve_error:
             logging.warning(
                 f"[NOTIFY] Failed canonical post_id lookup for {post_id}: {resolve_error}"
             )
+
+    if not app_id and config:
+        site_post_ids = config.get("site_post_ids") or {}
+        if isinstance(site_post_ids, dict) and site_post_ids:
+            candidate_ids = [pid for pid in site_post_ids.values() if isinstance(pid, int)]
+            logging.debug(
+                f"[NOTIFY] Checking site_post_ids for post {post_id}: {candidate_ids}"
+            )
+            for candidate_id in candidate_ids:
+                candidate_app_id = POST_NOTIFICATION_APP_MAP.get(candidate_id)
+                if candidate_app_id:
+                    mapped_post_id = candidate_id
+                    app_id = candidate_app_id
+                    logging.info(
+                        f"[NOTIFY] Found app_id mapping via site_post_ids: post_id {candidate_id} -> app_id '{app_id}'"
+                    )
+                    break
 
     if not app_id:
         logging.info(
@@ -63,11 +90,17 @@ async def notify_rewards_update_for_post(post_id: int, links_added: int) -> None
 
     try:
         all_tokens = mongo_storage.list_push_tokens()  # Dict[token_id, data]
+        logging.debug(
+            f"[NOTIFY] Loaded {len(all_tokens)} total push tokens from storage"
+        )
         app_tokens = {
             tid: data
             for tid, data in all_tokens.items()
             if data.get("app_id") == app_id
         }
+        logging.debug(
+            f"[NOTIFY] Filtered {len(app_tokens)} tokens for app_id='{app_id}'"
+        )
 
         if not app_tokens:
             logging.info(

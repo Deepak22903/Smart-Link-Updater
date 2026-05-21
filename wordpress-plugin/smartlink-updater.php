@@ -28,7 +28,7 @@ if (!defined('ABSPATH')) {
 class SmartLinkUpdater {
     
     // TEMPORARY: Using ngrok for local debugging - revert before production!
-    private $api_base_url = 'https://spas-science-mlb-labor.trycloudflare.com';
+    private $api_base_url = 'https://probability-december-camps-recycling.trycloudflare.com';
     // Production URL: https://smartlink-api-601738079869.us-central1.run.app
     
     public function __construct() {
