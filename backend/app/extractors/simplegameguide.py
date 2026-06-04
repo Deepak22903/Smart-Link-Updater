@@ -18,6 +18,10 @@ from .base import BaseExtractor
 from ..models import Link
 import re
 from datetime import datetime
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def register_extractor(name):
@@ -47,6 +51,11 @@ class SimpleGameGuideExtractor(BaseExtractor):
         Then extracts links from the section following the heading.
         Stops when it encounters the previous day's date.
         """
+        logger.info("simplegameguide: starting extraction", extra={"date": date})
+        if not html:
+            logger.warning("simplegameguide: empty html payload", extra={"date": date})
+            return []
+
         soup = BeautifulSoup(html, 'html.parser')
         links = []
         
@@ -60,7 +69,11 @@ class SimpleGameGuideExtractor(BaseExtractor):
             # Format 2: "Nov 4, 2025:" (abbreviated month, no leading zero)
             format2 = f"{dt.strftime('%b')} {dt.day}, {dt.strftime('%Y')}:"
 
+            # Format 3: "November 4, 2025:" (full month name, no leading zero)
+            format3 = f"{dt.strftime('%B')} {dt.day}, {dt.strftime('%Y')}:"
+
         except ValueError:
+            logger.error("simplegameguide: invalid date format", extra={"date": date})
             return links
         
         # Find all potential date headers (h4 or div/strong combinations)
@@ -81,21 +94,40 @@ class SimpleGameGuideExtractor(BaseExtractor):
                 # Only add if strong tag contains most of the div's content
                 if strong_text and len(strong_text) > len(div_text) * 0.7:
                     date_elements.append(div)
+
+        logger.debug(
+            "simplegameguide: collected date elements",
+            extra={"date": date, "count": len(date_elements)}
+        )
         
         # Find the start element for today's date
         start_element = None
         for elem in date_elements:
             elem_text = elem.get_text(strip=True)
-            if format1 in elem_text or format2 in elem_text:
+            if format1 in elem_text or format2 in elem_text or format3 in elem_text:
                 start_element = elem
                 break
+
+        if not start_element:
+            logger.warning(
+                "simplegameguide: no matching date header found",
+                extra={"date": date, "format1": format1, "format2": format2, "format3": format3}
+            )
 
         # If today's date header is found, process all subsequent siblings
         # until the next date header is encountered.
         if start_element:
+            logger.info(
+                "simplegameguide: found date header",
+                extra={"date": date, "header_text": start_element.get_text(strip=True)}
+            )
             for sibling in start_element.find_next_siblings():
                 # If the sibling is another date header, stop processing.
                 if sibling in date_elements:
+                    logger.debug(
+                        "simplegameguide: encountered next date header; stopping",
+                        extra={"date": date, "header_text": sibling.get_text(strip=True)}
+                    )
                     break
 
                 # Find links within the current sibling element
@@ -106,6 +138,10 @@ class SimpleGameGuideExtractor(BaseExtractor):
                     title = a.get_text(strip=True) or "Link"
                     
                     if href and href.startswith('http'):
+                        logger.debug(
+                            "simplegameguide: found button link",
+                            extra={"date": date, "title": title, "url": href}
+                        )
                         links.append(Link(
                             title=title,
                             url=href,
@@ -119,10 +155,18 @@ class SimpleGameGuideExtractor(BaseExtractor):
                     title = span.get_text(strip=True) if span else "Link"
                     
                     if href and href.startswith('http'):
+                        logger.debug(
+                            "simplegameguide: found data-link",
+                            extra={"date": date, "title": title, "url": href}
+                        )
                         links.append(Link(
                             title=title,
                             url=href,
                             published_date_iso=date
                         ))
         
+        logger.info(
+            "simplegameguide: extraction complete",
+            extra={"date": date, "link_count": len(links)}
+        )
         return links
