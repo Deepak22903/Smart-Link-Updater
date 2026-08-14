@@ -19,7 +19,7 @@ load_dotenv(dotenv_path=env_path)
 
 from .queue_app import celery_app
 from . import mongo_storage
-from .scrape import fetch_html
+from .scrape import fetch_html, MAX_ATTEMPTS
 from .extraction import extract_links_with_heading_filter
 from .dedupe import dedupe_by_fingerprint, fingerprint
 from .wp import update_post_links_section, get_configured_wp_sites
@@ -28,7 +28,6 @@ from .html_monitor import get_monitor
 from .notifications import process_unnotified_alerts
 from .batch_manager import get_batch_manager, UpdateStatus
 from .analytics import get_analytics_engine
-from tenacity import RetryError
 import httpx
 import hashlib
 from datetime import datetime, timedelta
@@ -66,6 +65,13 @@ app.add_middleware(
 task_status: Dict[str, dict] = {}
 
 # ==================== Helper Functions ====================
+
+
+def _attempts_suffix(status_code: int) -> str:
+    """Note the retry budget for statuses fetch_html retries (429 / 5xx)."""
+    if status_code == 429 or 500 <= status_code < 600:
+        return f" (after {MAX_ATTEMPTS} attempts)"
+    return ""
 
 
 def resolve_post_id_for_site(config: Dict, site_key: str) -> int:
@@ -1315,21 +1321,17 @@ async def update_post_now(
                         f"Extracted {len(extracted_links)} links from {url}: {extracted_links}"
                     )
                     all_links.extend(extracted_links)
-                except RetryError as e:
-                    # RetryError wraps the last exception
-                    last_exception = (
-                        e.last_attempt.exception() if e.last_attempt else None
-                    )
-                    error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
-                    errors.append({"url": url, "error": error_msg})
-                    print(f"RetryError for {url}: {error_msg}")
                 except httpx.TimeoutException as e:
-                    error_msg = f"Request timeout: {str(e)}"
+                    error_msg = (
+                        f"Request timeout after {MAX_ATTEMPTS} attempts: {str(e)}"
+                    )
                     errors.append({"url": url, "error": error_msg})
                     print(f"Timeout error for {url}: {error_msg}")
                 except httpx.HTTPStatusError as e:
                     error_msg = (
-                        f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                        f"HTTP {e.response.status_code}"
+                        f"{_attempts_suffix(e.response.status_code)}: "
+                        f"{e.response.text[:200]}"
                     )
                     errors.append({"url": url, "error": error_msg})
                     print(f"HTTP error for {url}: {error_msg}")
@@ -1537,21 +1539,17 @@ async def update_post_now(
                     )
                     links = extracted_links
                     all_links.extend(links)
-                except RetryError as e:
-                    # RetryError wraps the last exception
-                    last_exception = (
-                        e.last_attempt.exception() if e.last_attempt else None
-                    )
-                    error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
-                    errors.append({"url": url, "error": error_msg})
-                    print(f"RetryError for {url}: {error_msg}")
                 except httpx.TimeoutException as e:
-                    error_msg = f"Request timeout: {str(e)}"
+                    error_msg = (
+                        f"Request timeout after {MAX_ATTEMPTS} attempts: {str(e)}"
+                    )
                     errors.append({"url": url, "error": error_msg})
                     print(f"Timeout error for {url}: {error_msg}")
                 except httpx.HTTPStatusError as e:
                     error_msg = (
-                        f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                        f"HTTP {e.response.status_code}"
+                        f"{_attempts_suffix(e.response.status_code)}: "
+                        f"{e.response.text[:200]}"
                     )
                     errors.append({"url": url, "error": error_msg})
                     print(f"HTTP error for {url}: {error_msg}")
@@ -1735,17 +1733,22 @@ async def run_update_sync_all_sites(
             extracted_links = extractor.extract(html, today_iso)
             extracted_sources.append((extractor, extracted_links))
             all_links.extend(extracted_links)
-        except RetryError as e:
-            last_exception = e.last_attempt.exception() if e.last_attempt else None
-            error_msg = f"Failed after 3 retries: {str(last_exception) if last_exception else 'Connection error'}"
-            errors.append({"url": url, "error": error_msg})
         except httpx.TimeoutException as e:
-            errors.append({"url": url, "error": f"Request timeout: {str(e)}"})
+            errors.append(
+                {
+                    "url": url,
+                    "error": f"Request timeout after {MAX_ATTEMPTS} attempts: {str(e)}",
+                }
+            )
         except httpx.HTTPStatusError as e:
             errors.append(
                 {
                     "url": url,
-                    "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+                    "error": (
+                        f"HTTP {e.response.status_code}"
+                        f"{_attempts_suffix(e.response.status_code)}: "
+                        f"{e.response.text[:200]}"
+                    ),
                 }
             )
         except Exception as e:
